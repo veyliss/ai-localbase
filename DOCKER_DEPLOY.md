@@ -84,7 +84,14 @@ docker compose -f docker-compose.prod.yml exec backend curl http://host.docker.i
 
 ### 首次设置
 
-GitHub Actions 工作流已配置，首次推送后会自动运行：
+GitHub Actions 工作流已配置，首次推送后会自动运行。
+
+当前维护流程已拆分为两个独立工作流：
+
+- [`Build and Push Docker Images`](.github/workflows/docker-build.yml)：负责构建并推送 GHCR 镜像
+- [`Create GitHub Release`](.github/workflows/release.yml)：负责在推送版本标签时自动创建 GitHub Release
+
+首次推送主分支时，通常会触发镜像构建；推送版本标签时，会同时触发镜像版本构建和 Release 创建：
 
 ```bash
 # 在本地构建并测试
@@ -108,11 +115,16 @@ git push origin main
 # 创建版本标签
 git tag v1.0.0
 git push origin v1.0.0
-
-# GitHub Actions 会自动构建并标记镜像为:
-# - ghcr.io/veyliss/ai-localbase-backend:v1.0.0
-# - ghcr.io/veyliss/ai-localbase-frontend:v1.0.0
 ```
+
+推送版本标签后，GitHub Actions 会自动执行两件事：
+
+1. 构建并推送版本镜像：
+   - `ghcr.io/veyliss/ai-localbase-backend:v1.0.0`
+   - `ghcr.io/veyliss/ai-localbase-frontend:v1.0.0`
+2. 在 GitHub Releases 页面自动创建对应版本发布
+
+如果只想构建镜像、不创建 GitHub Release，请不要推送版本标签，而是直接推送到 [`main`](DOCKER_DEPLOY.md:13) 或 [`develop`](DOCKER_DEPLOY.md:14)。
 
 ### 本地测试预构建镜像
 
@@ -214,7 +226,8 @@ QDRANT_VECTOR_SIZE=1024 docker compose -f docker-compose.prod.yml up -d
 
 ## 相关文件
 
-- `.github/workflows/docker-build.yml` - GitHub Actions 工作流配置
+- `.github/workflows/docker-build.yml` - Docker 镜像构建与推送工作流
+- `.github/workflows/release.yml` - GitHub Release 自动创建工作流
 - `docker-compose.prod.yml` - 生产环境配置（使用 GHCR 镜像）
 - `docker-compose.yml` - 开发环境配置（本地构建）
 - `docker/backend.Dockerfile` - 后端镜像定义

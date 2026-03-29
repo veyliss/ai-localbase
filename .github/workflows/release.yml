@@ -1,0 +1,35 @@
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Docker Images
+
+            - Backend: `ghcr.io/veyliss/ai-localbase-backend:${{ github.ref_name }}`
+            - Frontend: `ghcr.io/veyliss/ai-localbase-frontend:${{ github.ref_name }}`
+
+            ## Quick Start
+
+            ```bash
+            docker compose -f docker-compose.prod.yml up -d
+            ```
+
+            更多部署说明见 [`DOCKER_DEPLOY.md`](./DOCKER_DEPLOY.md)。

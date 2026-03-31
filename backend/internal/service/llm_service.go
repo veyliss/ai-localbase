@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -15,8 +17,15 @@ import (
 )
 
 type LLMService struct {
-	client *http.Client
+	client       *http.Client
+	streamClient *http.Client
 }
+
+const (
+	defaultChatRequestTimeout   = 75 * time.Second
+	defaultStreamHeaderTimeout  = 45 * time.Second
+	defaultStreamRequestTimeout = 150 * time.Second
+)
 
 // ── OpenAI-compatible structs ────────────────────────────────────────────────
 
@@ -83,8 +92,27 @@ type ollamaChatResponse struct {
 // ── Constructor ──────────────────────────────────────────────────────────────
 
 func NewLLMService() *LLMService {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: defaultStreamHeaderTimeout,
+		DisableCompression:    false,
+	}
+
 	return &LLMService{
-		client: &http.Client{Timeout: 90 * time.Second},
+		client: &http.Client{
+			Timeout:   defaultChatRequestTimeout,
+			Transport: transport,
+		},
+		streamClient: &http.Client{
+			Transport: transport.Clone(),
+		},
 	}
 }
 
@@ -96,33 +124,25 @@ func (s *LLMService) Chat(req model.ChatCompletionRequest) (model.ChatCompletion
 		return model.ChatCompletionResponse{}, err
 	}
 
-	var result model.ChatCompletionResponse
+	ctx, cancel := context.WithTimeout(context.Background(), defaultChatRequestTimeout)
+	defer cancel()
+
 	if cfg.Provider == "ollama" {
-		result, err = s.ollamaChat(cfg, req)
-	} else {
-		result, err = s.openAIChat(cfg, req)
+		var result model.ChatCompletionResponse
+		err = sharedModelRuntimeScheduler.run(ctx, modelRuntimePriorityHigh, func(runCtx context.Context) error {
+			var callErr error
+			result, callErr = s.ollamaChat(runCtx, cfg, req)
+			return callErr
+		})
+		if err != nil {
+			return degradedChatResponse(cfg, req, err), nil
+		}
+		return result, nil
 	}
 
+	result, err := s.openAIChat(ctx, cfg, req)
 	if err != nil {
-		fallbackContent := buildModelFallbackMessage(req)
-		return model.ChatCompletionResponse{
-			ID:      "chatcmpl-fallback",
-			Object:  "chat.completion",
-			Created: time.Now().Unix(),
-			Model:   cfg.Model,
-			Choices: []model.ChatCompletionChoice{{
-				Index: 0,
-				Message: model.ChatMessage{
-					Role:    "assistant",
-					Content: fallbackContent,
-				},
-			}},
-			Metadata: map[string]any{
-				"degraded":         true,
-				"fallbackStrategy": "local-message",
-				"upstreamError":    err.Error(),
-			},
-		}, nil
+		return degradedChatResponse(cfg, req, err), nil
 	}
 
 	return result, nil
@@ -134,10 +154,15 @@ func (s *LLMService) StreamChat(req model.ChatCompletionRequest, onChunk func(st
 		return err
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), defaultStreamRequestTimeout)
+	defer cancel()
+
 	if cfg.Provider == "ollama" {
-		err = s.ollamaStreamChat(cfg, req, onChunk)
+		err = sharedModelRuntimeScheduler.run(ctx, modelRuntimePriorityHigh, func(runCtx context.Context) error {
+			return s.ollamaStreamChat(runCtx, cfg, req, onChunk)
+		})
 	} else {
-		err = s.openAIStreamChat(cfg, req, onChunk)
+		err = s.openAIStreamChat(ctx, cfg, req, onChunk)
 	}
 
 	if err != nil {
@@ -150,7 +175,7 @@ func (s *LLMService) StreamChat(req model.ChatCompletionRequest, onChunk func(st
 
 // ── OpenAI-compatible implementation ─────────────────────────────────────────
 
-func (s *LLMService) openAIChat(cfg model.ChatModelConfig, req model.ChatCompletionRequest) (model.ChatCompletionResponse, error) {
+func (s *LLMService) openAIChat(ctx context.Context, cfg model.ChatModelConfig, req model.ChatCompletionRequest) (model.ChatCompletionResponse, error) {
 	payload := openAIChatRequest{
 		Model:       cfg.Model,
 		Messages:    req.Messages,
@@ -164,8 +189,8 @@ func (s *LLMService) openAIChat(cfg model.ChatModelConfig, req model.ChatComplet
 
 	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
 	var result model.ChatCompletionResponse
-	err = retryWithBackoff(context.Background(), 3, 250*time.Millisecond, func() error {
-		httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	err = retryModelCall(ctx, 3, 250*time.Millisecond, func() error {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("failed to create model request")
 		}
@@ -215,7 +240,7 @@ func (s *LLMService) openAIChat(cfg model.ChatModelConfig, req model.ChatComplet
 	return result, err
 }
 
-func (s *LLMService) openAIStreamChat(cfg model.ChatModelConfig, req model.ChatCompletionRequest, onChunk func(string) error) error {
+func (s *LLMService) openAIStreamChat(ctx context.Context, cfg model.ChatModelConfig, req model.ChatCompletionRequest, onChunk func(string) error) error {
 	payload := openAIChatStreamRequest{
 		Model:       cfg.Model,
 		Messages:    req.Messages,
@@ -229,8 +254,8 @@ func (s *LLMService) openAIStreamChat(cfg model.ChatModelConfig, req model.ChatC
 	}
 
 	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
-	return retryWithBackoff(context.Background(), 2, 200*time.Millisecond, func() error {
-		httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	return retryModelCall(ctx, 2, 200*time.Millisecond, func() error {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("failed to create model request")
 		}
@@ -240,7 +265,7 @@ func (s *LLMService) openAIStreamChat(cfg model.ChatModelConfig, req model.ChatC
 			httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 		}
 
-		resp, err := s.client.Do(httpReq)
+		resp, err := s.streamClient.Do(httpReq)
 		if err != nil {
 			return fmt.Errorf("failed to call model api: %w", err)
 		}
@@ -303,7 +328,7 @@ func (s *LLMService) openAIStreamChat(cfg model.ChatModelConfig, req model.ChatC
 
 // ── Ollama native implementation ──────────────────────────────────────────────
 
-func (s *LLMService) ollamaChat(cfg model.ChatModelConfig, req model.ChatCompletionRequest) (model.ChatCompletionResponse, error) {
+func (s *LLMService) ollamaChat(ctx context.Context, cfg model.ChatModelConfig, req model.ChatCompletionRequest) (model.ChatCompletionResponse, error) {
 	payload := ollamaChatRequest{
 		Model:    cfg.Model,
 		Messages: req.Messages,
@@ -320,8 +345,8 @@ func (s *LLMService) ollamaChat(cfg model.ChatModelConfig, req model.ChatComplet
 
 	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/api/chat"
 	var result model.ChatCompletionResponse
-	err = retryWithBackoff(context.Background(), 3, 250*time.Millisecond, func() error {
-		httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	err = retryModelCall(ctx, 3, 250*time.Millisecond, func() error {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("failed to create model request")
 		}
@@ -370,7 +395,7 @@ func (s *LLMService) ollamaChat(cfg model.ChatModelConfig, req model.ChatComplet
 	return result, err
 }
 
-func (s *LLMService) ollamaStreamChat(cfg model.ChatModelConfig, req model.ChatCompletionRequest, onChunk func(string) error) error {
+func (s *LLMService) ollamaStreamChat(ctx context.Context, cfg model.ChatModelConfig, req model.ChatCompletionRequest, onChunk func(string) error) error {
 	payload := ollamaChatRequest{
 		Model:    cfg.Model,
 		Messages: req.Messages,
@@ -386,14 +411,14 @@ func (s *LLMService) ollamaStreamChat(cfg model.ChatModelConfig, req model.ChatC
 	}
 
 	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/api/chat"
-	return retryWithBackoff(context.Background(), 2, 200*time.Millisecond, func() error {
-		httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	return retryModelCall(ctx, 2, 200*time.Millisecond, func() error {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return fmt.Errorf("failed to create model request")
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 
-		resp, err := s.client.Do(httpReq)
+		resp, err := s.streamClient.Do(httpReq)
 		if err != nil {
 			return fmt.Errorf("failed to call model api: %w", err)
 		}
@@ -451,6 +476,106 @@ func (s *LLMService) ollamaStreamChat(cfg model.ChatModelConfig, req model.ChatC
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+func degradedChatResponse(cfg model.ChatModelConfig, req model.ChatCompletionRequest, err error) model.ChatCompletionResponse {
+	fallbackContent := buildModelFallbackMessage(req)
+	return model.ChatCompletionResponse{
+		ID:      "chatcmpl-fallback",
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   cfg.Model,
+		Choices: []model.ChatCompletionChoice{{
+			Index: 0,
+			Message: model.ChatMessage{
+				Role:    "assistant",
+				Content: fallbackContent,
+			},
+		}},
+		Metadata: map[string]any{
+			"degraded":         true,
+			"fallbackStrategy": "local-message",
+			"upstreamError":    describeModelError(err),
+		},
+	}
+}
+
+func retryModelCall(ctx context.Context, attempts int, baseDelay time.Duration, fn func() error) error {
+	return retryWithBackoff(ctx, attempts, baseDelay, func() error {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if !isRetryableModelError(err) {
+			return stopRetryError{err: err}
+		}
+		return err
+	})
+}
+
+type stopRetryError struct {
+	err error
+}
+
+func (e stopRetryError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e stopRetryError) Unwrap() error {
+	return e.err
+}
+
+func isRetryableModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "model not found") ||
+		strings.Contains(message, "model is required") ||
+		strings.Contains(message, "invalid model response format") ||
+		strings.Contains(message, "returned empty choices") ||
+		strings.Contains(message, "returned empty response") {
+		return false
+	}
+	if strings.Contains(message, "http 429") ||
+		strings.Contains(message, "http 502") ||
+		strings.Contains(message, "http 503") ||
+		strings.Contains(message, "http 504") ||
+		strings.Contains(message, "connection reset") ||
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "timeout") ||
+		strings.Contains(message, "temporarily unavailable") ||
+		strings.Contains(message, "failed to call model api") ||
+		strings.Contains(message, "failed to read model stream") {
+		return true
+	}
+	return false
+}
+
+func describeModelError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, errModelRuntimeBusy) {
+		return "本地模型当前繁忙，系统已启用降级回复"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "本地模型响应超时，请稍后重试或切换更轻量模型"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "请求已取消"
+	}
+	message := err.Error()
+	if strings.TrimSpace(message) == "" {
+		return "模型调用失败"
+	}
+	return message
+}
+
 func normalizeChatConfig(req model.ChatCompletionRequest) (model.ChatModelConfig, error) {
 	cfg := req.Config
 	if strings.TrimSpace(cfg.Model) == "" {
@@ -477,11 +602,11 @@ func buildModelFallbackMessage(req model.ChatCompletionRequest) string {
 	if modelName == "" {
 		modelName = strings.TrimSpace(req.Model)
 	}
-	hint := ""
+
+	hint := "当前请求已触发本地降级回复，常见原因包括：流式首包过慢、检索链路耗时较长、模型当前繁忙，或本地 Ollama 响应超时。"
 	if modelName != "" {
-		hint = fmt.Sprintf("请检查模型 **%s** 是否已在 Ollama 中下载（`ollama pull %s`），或在设置中更换为可用模型。", modelName, modelName)
-	} else {
-		hint = "请在设置中配置正确的 Chat 模型。"
+		hint = fmt.Sprintf("模型 **%s** 本次未在超时时间内稳定返回结果。常见原因包括：流式首包过慢、检索链路耗时较长、模型当前繁忙，或本地 Ollama 响应超时。", modelName)
 	}
-	return fmt.Sprintf("⚠️ AI 模型调用失败\n\n%s", hint)
+
+	return fmt.Sprintf("⚠️ AI 模型调用已降级\n\n%s\n\n若 Ollama 一直在运行，建议优先检查当前问题是否触发了较重的检索/总结链路，或先切换更轻量模型后重试。", hint)
 }

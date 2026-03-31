@@ -1296,6 +1296,9 @@ interface ChatAreaProps {
   selectedDocument: DocumentItem | null
   config: AppConfig
   isLoading: boolean
+  isGlobalGenerating: boolean
+  generatingConversationTitle: string
+  enforceSingleFlight: boolean
   onSendMessage: (content: string) => Promise<void>
   onClearConversation: () => void
 }
@@ -1319,6 +1322,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   selectedDocument,
   config,
   isLoading,
+  isGlobalGenerating,
+  generatingConversationTitle,
+  enforceSingleFlight,
   onSendMessage,
   onClearConversation,
 }) => {
@@ -1326,7 +1332,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
-  const canSend = inputValue.trim().length > 0 && !isLoading
+  const canSend = inputValue.trim().length > 0 && !(enforceSingleFlight && isGlobalGenerating)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1414,10 +1420,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         <div className="chat-topbar-right">
+          {enforceSingleFlight && isGlobalGenerating && (
+            <span className="chat-topbar-hint" aria-live="polite">
+              正在后台生成：{generatingConversationTitle}
+            </span>
+          )}
           <button
             type="button"
             className="chat-clear-btn"
             onClick={onClearConversation}
+            disabled={isLoading}
           >
             清空对话
           </button>
@@ -1583,7 +1595,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             key={prompt}
             type="button"
             className="prompt-chip"
-            disabled={isLoading}
+            disabled={enforceSingleFlight && isGlobalGenerating}
             onClick={() => {
               void onSendMessage(prompt)
             }}
@@ -1599,7 +1611,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入您的问题，Enter 发送，Shift + Enter 换行"
+            placeholder={
+              enforceSingleFlight && isGlobalGenerating
+                ? `当前正在后台生成「${generatingConversationTitle}」，请等待完成后再发送`
+                : '输入您的问题，Enter 发送，Shift + Enter 换行'
+            }
             rows={3}
           />
           <button
@@ -1610,7 +1626,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             disabled={!canSend}
             className="send-btn"
           >
-            {isLoading ? '发送中...' : '发送'}
+            {isLoading ? '发送中...' : enforceSingleFlight && isGlobalGenerating ? '排队中' : '发送'}
           </button>
         </div>
       </div>

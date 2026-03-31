@@ -9,10 +9,12 @@ import (
 	"hash/fnv"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -172,9 +174,23 @@ type ollamaEmbedResponse struct {
 }
 
 func NewRagService() *RagService {
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 45 * time.Second,
+	}
 	return &RagService{
-		client: &http.Client{},
-		cache:  newLRUEmbeddingCache(2048),
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: transport,
+		},
+		cache: newLRUEmbeddingCache(2048),
 	}
 }
 
@@ -496,8 +512,18 @@ func (s *RagService) requestEmbeddings(ctx context.Context, cfg model.EmbeddingM
 		return nil, fmt.Errorf("embedding config is incomplete")
 	}
 
-	if strings.TrimSpace(cfg.Provider) == "ollama" {
-		return s.requestOllamaEmbeddings(ctx, cfg, baseURL, modelName, texts)
+	provider := strings.TrimSpace(cfg.Provider)
+	if provider == "ollama" {
+		var embeddings [][]float64
+		err := sharedModelRuntimeScheduler.run(ctx, modelRuntimePriorityLow, func(runCtx context.Context) error {
+			var callErr error
+			embeddings, callErr = s.requestOllamaEmbeddings(runCtx, cfg, baseURL, modelName, texts)
+			return callErr
+		})
+		if err != nil {
+			return nil, err
+		}
+		return embeddings, nil
 	}
 	return s.requestOpenAIEmbeddings(ctx, cfg, baseURL, modelName, texts)
 }

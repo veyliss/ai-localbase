@@ -110,8 +110,15 @@ interface StreamEventPayload {
   metadata?: ChatMessageMetadata
 }
 
+interface HealthResponse {
+  status?: string
+}
+
 const API_BASE_PATH = ''
 const AI_CONFIG_STORAGE_KEY = 'ai-localbase:app-config'
+const STREAM_FIRST_CHUNK_TIMEOUT_MS = 60000
+const STREAM_REQUEST_TIMEOUT_MS = 150000
+const FALLBACK_REQUEST_TIMEOUT_MS = 90000
 
 const createId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -333,6 +340,8 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
+  const [backendReady, setBackendReady] = useState(false)
+  const [backendWarmupRequired, setBackendWarmupRequired] = useState(true)
   const [conversations, setConversations] = useState<Conversation[]>(() => {
     const initialConversation = createWelcomeConversation()
     return [initialConversation]
@@ -347,6 +356,8 @@ function App() {
   )
   const [directoryUploadPendingFiles, setDirectoryUploadPendingFiles] = useState<UploadQueueItem[]>([])
   const directoryUploadCancelRef = useRef(false)
+  const chatAbortControllerRef = useRef<AbortController | null>(null)
+  const activeChatRequestRef = useRef<{ requestId: string; conversationId: string } | null>(null)
 
   const loadConversationDetail = async (conversationId: string): Promise<Conversation> => {
     const response = await fetch(`${API_BASE_PATH}/api/conversations/${conversationId}`)
@@ -355,6 +366,33 @@ function App() {
     }
 
     return normalizeConversation((await response.json()) as BackendConversation)
+  }
+
+  const waitForBackendReady = async (attempts = 12, delayMs = 1500) => {
+    for (let index = 0; index < attempts; index += 1) {
+      try {
+        const response = await fetch(`${API_BASE_PATH}/health`)
+        if (response.ok) {
+          const health = (await response.json()) as HealthResponse
+          if ((health.status ?? '').toLowerCase() === 'ok') {
+            setBackendReady(true)
+            setBackendWarmupRequired(true)
+            return true
+          }
+        }
+      } catch {
+        // 忽略启动阶段探活错误，交给下一轮重试
+      }
+
+      if (index < attempts - 1) {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, delayMs)
+        })
+      }
+    }
+
+    setBackendReady(false)
+    return false
   }
   const [config, setConfig] = useState<AppConfig>(() => {
     const defaultConfig: AppConfig = {
@@ -394,6 +432,24 @@ function App() {
     }
   })
 
+  const persistConfigToBackend = async (nextConfig: AppConfig) => {
+    const response = await fetch(`${API_BASE_PATH}/api/config`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(nextConfig),
+    })
+
+    if (!response.ok) {
+      throw new Error(await extractErrorMessage(response))
+    }
+
+    const savedConfig = (await response.json()) as ConfigResponse
+    setConfig(savedConfig)
+    setBackendReady(true)
+  }
+
   const activeConversation = useMemo(
     () =>
       conversations.find((conversation) => conversation.id === activeConversationId) ??
@@ -426,6 +482,11 @@ function App() {
   useEffect(() => {
     const bootstrapApp = async () => {
       try {
+        const isReady = await waitForBackendReady()
+        if (!isReady) {
+          throw new Error('后端服务尚未就绪，请稍后刷新页面重试。')
+        }
+
         const [knowledgeBaseResponse, configResponse, conversationsResponse] = await Promise.all([
           fetch(`${API_BASE_PATH}/api/knowledge-bases`),
           fetch(`${API_BASE_PATH}/api/config`),
@@ -450,30 +511,8 @@ function App() {
         const conversationsData =
           (await conversationsResponse.json()) as ConversationListResponse
         const nextKnowledgeBases = knowledgeBaseData.items.map(normalizeKnowledgeBase)
-        const cachedConfig =
-          typeof window === 'undefined'
-            ? null
-            : window.localStorage.getItem(AI_CONFIG_STORAGE_KEY)
-
         setKnowledgeBases(nextKnowledgeBases)
-        setConfig((current) => {
-          if (!cachedConfig) {
-            return configData
-          }
-
-          return {
-            ...configData,
-            ...current,
-            chat: {
-              ...configData.chat,
-              ...current.chat,
-            },
-            embedding: {
-              ...configData.embedding,
-              ...current.embedding,
-            },
-          }
-        })
+        setConfig(configData)
         setSelectedKnowledgeBaseId((current) => current ?? nextKnowledgeBases[0]?.id ?? null)
         setSelectedDocumentId(null)
 
@@ -500,6 +539,7 @@ function App() {
           setActiveConversationId(firstConversation.id)
         }
       } catch (error) {
+        setBackendReady(false)
         const message =
           error instanceof Error ? error.message : '初始化知识库失败，请检查后端服务。'
 
@@ -534,6 +574,19 @@ function App() {
 
     window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config))
   }, [config])
+
+  const cancelActiveChatRequest = () => {
+    chatAbortControllerRef.current?.abort()
+    chatAbortControllerRef.current = null
+    activeChatRequestRef.current = null
+    setStreamingConversationId(null)
+  }
+
+  const isOllamaSingleFlightMode =
+    config.chat.provider === 'ollama' || config.embedding.provider === 'ollama'
+
+  const generatingConversationTitle =
+    conversations.find((conversation) => conversation.id === streamingConversationId)?.title ?? '当前会话'
 
   const handleCreateConversation = () => {
     const conversation = createWelcomeConversation()
@@ -684,6 +737,11 @@ function App() {
 
   const handleClearConversation = () => {
     if (!activeConversation) {
+      return
+    }
+
+    if (streamingConversationId === activeConversation.id) {
+      window.alert('当前会话仍在后台生成，请等待完成后再清空。')
       return
     }
 
@@ -1083,11 +1141,68 @@ function App() {
   }
 
   const handleSendMessage = async (content: string) => {
-    if (!activeConversation || streamingConversationId) {
+    if (!activeConversation) {
       return
     }
 
+    if (isOllamaSingleFlightMode && streamingConversationId) {
+      setConversations((prev) =>
+        prev.map((conversation) => {
+          if (conversation.id !== activeConversation.id) {
+            return conversation
+          }
+
+          const now = new Date().toISOString()
+          return {
+            ...conversation,
+            messages: [
+              ...conversation.messages,
+              {
+                id: createId(),
+                role: 'assistant',
+                content: `当前模型正在后台处理会话「${generatingConversationTitle}」，请等待其完成后再发起新问题。`,
+                timestamp: now,
+              },
+            ],
+            updatedAt: now,
+          }
+        }),
+      )
+      return
+    }
+
+    if (!backendReady) {
+      setConversations((prev) =>
+        prev.map((conversation) => {
+          if (conversation.id !== activeConversation.id) {
+            return conversation
+          }
+
+          const now = new Date().toISOString()
+          return {
+            ...conversation,
+            messages: [
+              ...conversation.messages,
+              {
+                id: createId(),
+                role: 'assistant',
+                content: '后端服务正在启动或尚未就绪，请稍后再试。若刚刚重启服务，建议等待健康检查完成后再发送问题。',
+                timestamp: now,
+              },
+            ],
+            updatedAt: now,
+          }
+        }),
+      )
+      return
+    }
+
+    const streamAbortController = new AbortController()
+    chatAbortControllerRef.current = streamAbortController
+
     const conversationId = activeConversation.id
+    const requestId = createId()
+    activeChatRequestRef.current = { requestId, conversationId }
     const timestamp = new Date().toISOString()
     const userMessage: ChatMessage = {
       id: createId(),
@@ -1118,9 +1233,16 @@ function App() {
       })),
     }
 
-    const updateAssistantMessage = (
-      updater: (current: ChatMessage) => ChatMessage,
-    ) => {
+    const isCurrentRequestActive = () => {
+      const activeRequest = activeChatRequestRef.current
+      return activeRequest?.requestId === requestId && activeRequest.conversationId === conversationId
+    }
+
+    const updateAssistantMessage = (updater: (current: ChatMessage) => ChatMessage) => {
+      if (!isCurrentRequestActive()) {
+        return
+      }
+
       setConversations((prev) =>
         prev.map((conversation) => {
           if (conversation.id !== conversationId) {
@@ -1143,10 +1265,7 @@ function App() {
       )
     }
 
-    const finalizeAssistantMessage = (
-      contentOverride?: string,
-      metadata?: ChatMessageMetadata,
-    ) => {
+    const finalizeAssistantMessage = (contentOverride?: string, metadata?: ChatMessageMetadata) => {
       updateAssistantMessage((current) => ({
         ...current,
         content:
@@ -1157,40 +1276,116 @@ function App() {
       }))
     }
 
-    const requestWithFallback = async () => {
-      const streamResponse = await fetch(`${API_BASE_PATH}/v1/chat/completions/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'text/event-stream',
-        },
-        body: JSON.stringify(requestBody),
-      })
+    const buildFriendlyChatError = (error: unknown) => {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return '请求已取消。'
+      }
 
-      if (!streamResponse.ok) {
-        const fallbackResponse = await fetch(`${API_BASE_PATH}/v1/chat/completions`, {
+      if (error instanceof Error) {
+        const message = error.message.trim()
+        if (!message) {
+          return '聊天接口调用失败，请检查后端服务是否启动。'
+        }
+        if (message === 'stream-first-chunk-timeout') {
+          return '本地模型首包超时，已自动切换为普通请求重试。'
+        }
+        if (message === 'fallback-request-timeout') {
+          return '普通请求等待超时，请稍后重试或切换更轻量模型。'
+        }
+        if (message === 'stream-request-timeout') {
+          return '流式连接等待超时，请稍后重试或切换更轻量模型。'
+        }
+        if (message.includes('Failed to fetch')) {
+          return '无法连接后端服务，请检查服务是否启动，以及 Docker / Ollama 网络是否可达。'
+        }
+        return `聊天接口调用失败：${message}`
+      }
+
+      return '聊天接口调用失败，请检查后端服务是否启动。'
+    }
+
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string) => {
+      let timer = 0
+      try {
+        return await Promise.race([
+          promise,
+          new Promise<T>((_, reject) => {
+            timer = window.setTimeout(() => {
+              reject(new Error(timeoutMessage))
+            }, timeoutMs)
+          }),
+        ])
+      } finally {
+        window.clearTimeout(timer)
+      }
+    }
+
+    const requestFallbackCompletion = async (controller: AbortController) => {
+      const fallbackResponse = await withTimeout(
+        fetch(`${API_BASE_PATH}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        }),
+        FALLBACK_REQUEST_TIMEOUT_MS,
+        'fallback-request-timeout',
+      )
+
+      if (!fallbackResponse.ok) {
+        throw new Error(await extractErrorMessage(fallbackResponse))
+      }
+
+      if (!isCurrentRequestActive()) {
+        return
+      }
+
+      const data = (await fallbackResponse.json()) as ChatCompletionResponse
+      finalizeAssistantMessage(
+        data.choices[0]?.message?.content || '后端未返回有效回答。',
+        data.metadata
+          ? {
+              degraded: data.metadata.degraded,
+              fallbackStrategy: data.metadata.fallbackStrategy,
+              upstreamError: data.metadata.upstreamError,
+            }
+          : undefined,
+      )
+    }
+
+    const requestWithFallback = async () => {
+      if (backendWarmupRequired) {
+        const warmupAbortController = new AbortController()
+        chatAbortControllerRef.current = warmupAbortController
+        await requestFallbackCompletion(warmupAbortController)
+        setBackendWarmupRequired(false)
+        return
+      }
+
+      let streamResponse: Response
+      try {
+        streamResponse = await fetch(`${API_BASE_PATH}/v1/chat/completions/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify(requestBody),
+          signal: streamAbortController.signal,
         })
+      } catch {
+        const fallbackAbortController = new AbortController()
+        chatAbortControllerRef.current = fallbackAbortController
+        await requestFallbackCompletion(fallbackAbortController)
+        return
+      }
 
-        if (!fallbackResponse.ok) {
-          throw new Error(await extractErrorMessage(fallbackResponse))
-        }
-
-        const data = (await fallbackResponse.json()) as ChatCompletionResponse
-        finalizeAssistantMessage(
-          data.choices[0]?.message?.content || '后端未返回有效回答。',
-          data.metadata
-            ? {
-                degraded: data.metadata.degraded,
-                fallbackStrategy: data.metadata.fallbackStrategy,
-                upstreamError: data.metadata.upstreamError,
-              }
-            : undefined,
-        )
+      if (!streamResponse.ok) {
+        const fallbackAbortController = new AbortController()
+        chatAbortControllerRef.current = fallbackAbortController
+        await requestFallbackCompletion(fallbackAbortController)
         return
       }
 
@@ -1202,8 +1397,26 @@ function App() {
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
       let streamCompleted = false
+      let receivedFirstChunk = false
+      let firstChunkTimer = window.setTimeout(() => {
+        streamAbortController.abort()
+      }, STREAM_FIRST_CHUNK_TIMEOUT_MS)
+      let requestTimer = window.setTimeout(() => {
+        streamAbortController.abort()
+      }, STREAM_REQUEST_TIMEOUT_MS)
+
+      const markChunkReceived = () => {
+        if (!receivedFirstChunk) {
+          receivedFirstChunk = true
+          window.clearTimeout(firstChunkTimer)
+        }
+      }
 
       const processEventBlock = (block: string) => {
+        if (!isCurrentRequestActive()) {
+          return
+        }
+
         const normalizedBlock = block.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
         const lines = normalizedBlock.split('\n')
         const eventLine = lines.find((line) => line.startsWith('event:'))
@@ -1217,7 +1430,12 @@ function App() {
 
         const payload = JSON.parse(rawData) as StreamEventPayload
 
+        if (eventName === 'meta') {
+          return
+        }
+
         if (eventName === 'chunk') {
+          markChunkReceived()
           if (payload.content) {
             updateAssistantMessage((current) => ({
               ...current,
@@ -1228,6 +1446,7 @@ function App() {
         }
 
         if (eventName === 'done') {
+          markChunkReceived()
           const degradedMetadata =
             payload.metadata ??
             (payload.content && isDegradedFallbackContent(payload.content)
@@ -1246,26 +1465,40 @@ function App() {
         }
       }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
-        const normalizedBuffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+          const normalizedBuffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
 
-        const blocks = normalizedBuffer.split('\n\n')
-        buffer = blocks.pop() ?? ''
+          const blocks = normalizedBuffer.split('\n\n')
+          buffer = blocks.pop() ?? ''
 
-        for (const block of blocks) {
-          processEventBlock(block)
+          for (const block of blocks) {
+            processEventBlock(block)
+          }
+
+          if (done) {
+            break
+          }
         }
 
-        if (done) {
-          break
+        const rest = buffer.trim()
+        if (rest) {
+          processEventBlock(rest)
         }
-      }
-
-      const rest = buffer.trim()
-      if (rest) {
-        processEventBlock(rest)
+      } catch (error) {
+        if (!receivedFirstChunk && error instanceof DOMException && error.name === 'AbortError') {
+          const fallbackAbortController = new AbortController()
+          chatAbortControllerRef.current = fallbackAbortController
+          await requestFallbackCompletion(fallbackAbortController)
+          return
+        }
+        throw error
+      } finally {
+        window.clearTimeout(firstChunkTimer)
+        window.clearTimeout(requestTimer)
+        reader.releaseLock()
       }
 
       if (!streamCompleted) {
@@ -1295,15 +1528,23 @@ function App() {
     try {
       await requestWithFallback()
     } catch (error) {
+      if (error instanceof Error && error.message.includes('Failed to fetch')) {
+        setBackendReady(false)
+        void waitForBackendReady(8, 1500)
+      }
       updateAssistantMessage((current) => ({
         ...current,
-        content:
-          error instanceof Error
-            ? `聊天接口调用失败：${error.message}`
-            : '聊天接口调用失败，请检查后端服务是否启动。',
+        content: buildFriendlyChatError(error),
       }))
     } finally {
-      setStreamingConversationId(null)
+      const activeRequest = activeChatRequestRef.current
+      if (activeRequest?.requestId === requestId && activeRequest.conversationId === conversationId) {
+        activeChatRequestRef.current = null
+        chatAbortControllerRef.current = null
+        setStreamingConversationId((current) =>
+          current === conversationId ? null : current,
+        )
+      }
     }
   }
 
@@ -1311,29 +1552,37 @@ function App() {
     key: K,
     value: ChatConfig[K],
   ) => {
-    setConfig((prev) => ({
-      ...prev,
-      chat: {
-        ...prev.chat,
-        [key]:
-          key === 'contextMessageLimit'
-            ? Math.max(1, Math.min(100, Number(value) || 1))
-            : value,
-      },
-    }))
+    setConfig((prev) => {
+      const nextConfig = {
+        ...prev,
+        chat: {
+          ...prev.chat,
+          [key]:
+            key === 'contextMessageLimit'
+              ? Math.max(1, Math.min(100, Number(value) || 1))
+              : value,
+        },
+      }
+      void persistConfigToBackend(nextConfig)
+      return nextConfig
+    })
   }
 
   const handleEmbeddingConfigChange = <K extends keyof EmbeddingConfig>(
     key: K,
     value: EmbeddingConfig[K],
   ) => {
-    setConfig((prev) => ({
-      ...prev,
-      embedding: {
-        ...prev.embedding,
-        [key]: value,
-      },
-    }))
+    setConfig((prev) => {
+      const nextConfig = {
+        ...prev,
+        embedding: {
+          ...prev.embedding,
+          [key]: value,
+        },
+      }
+      void persistConfigToBackend(nextConfig)
+      return nextConfig
+    })
   }
 
   const handleToggleSettings = () => {
@@ -1395,6 +1644,9 @@ function App() {
         selectedDocument={selectedDocument}
         config={config}
         isLoading={streamingConversationId === activeConversation?.id}
+        isGlobalGenerating={Boolean(streamingConversationId)}
+        generatingConversationTitle={generatingConversationTitle}
+        enforceSingleFlight={isOllamaSingleFlightMode}
         onSendMessage={handleSendMessage}
         onClearConversation={handleClearConversation}
       />

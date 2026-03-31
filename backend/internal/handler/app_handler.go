@@ -273,12 +273,13 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 	}
 
 	fullAssistantContent := assistantContent.String()
+	responseMetadata := streamResponseMetadata(fullAssistantContent)
 	_, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
 		ID:              req.ConversationID,
 		Title:           "",
 		KnowledgeBaseID: req.KnowledgeBaseID,
 		DocumentID:      req.DocumentID,
-		Messages:        buildStoredConversationMessages(req.Messages, fullAssistantContent, nil),
+		Messages:        buildStoredConversationMessages(req.Messages, fullAssistantContent, responseMetadata),
 	})
 	if saveErr != nil {
 		c.SSEvent("error", gin.H{"error": saveErr.Error()})
@@ -286,7 +287,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		return
 	}
 
-	c.SSEvent("done", gin.H{"content": fullAssistantContent})
+	c.SSEvent("done", gin.H{"content": fullAssistantContent, "metadata": responseMetadata})
 	flusher.Flush()
 }
 
@@ -618,4 +619,18 @@ func firstAssistantChoice(response model.ChatCompletionResponse) *model.ChatMess
 
 func writeError(c *gin.Context, statusCode int, message string) {
 	c.JSON(statusCode, model.APIError{Error: message})
+}
+
+func streamResponseMetadata(content string) map[string]any {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return nil
+	}
+	if !strings.HasPrefix(trimmed, "⚠️ AI 模型调用失败") && !strings.HasPrefix(trimmed, "⚠ AI 模型调用失败") {
+		return nil
+	}
+	return map[string]any{
+		"degraded":         true,
+		"fallbackStrategy": "stream-fallback-message",
+	}
 }

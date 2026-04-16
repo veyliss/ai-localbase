@@ -61,7 +61,8 @@ ai-localbase/
 │   └── frontend.Dockerfile
 ├── docs/
 │   ├── architecture.md                  # 本文档
-│   ├── development-plan.md              # 开发计划与进度
+│   ├── mcp.md                           # MCP 接入说明
+│   ├── getting-started.md               # 快速开始与运行补充说明
 │   └── retrieval-improvement-plan.md    # 检索命中优化方案
 ├── docker-compose.yml                   # 完整三服务编排（Qdrant + 后端 + 前端）
 ├── docker-compose.qdrant.yml            # 仅 Qdrant

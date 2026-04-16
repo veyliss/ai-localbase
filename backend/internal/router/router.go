@@ -2,13 +2,16 @@ package router
 
 import (
 	"net/http"
+	"strings"
 
 	"ai-localbase/internal/handler"
+	"ai-localbase/internal/mcp"
+	"ai-localbase/internal/model"
 
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(appHandler *handler.AppHandler) *gin.Engine {
+func NewRouter(appHandler *handler.AppHandler, serverConfig model.ServerConfig, mcpServer *mcp.Server) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware())
 
@@ -20,6 +23,7 @@ func NewRouter(appHandler *handler.AppHandler) *gin.Engine {
 	{
 		api.GET("/config", appHandler.GetConfig)
 		api.PUT("/config", appHandler.UpdateConfig)
+		api.POST("/config/mcp/reset-token", appHandler.ResetMCPToken)
 		api.GET("/conversations", appHandler.ListConversations)
 		api.GET("/conversations/:id", appHandler.GetConversation)
 		api.PUT("/conversations/:id", appHandler.SaveConversation)
@@ -36,6 +40,14 @@ func NewRouter(appHandler *handler.AppHandler) *gin.Engine {
 	{
 		v1.POST("/chat/completions", appHandler.ChatCompletions)
 		v1.POST("/chat/completions/stream", appHandler.ChatCompletionsStream)
+	}
+
+	if serverConfig.EnableMCP && mcpServer != nil {
+		basePath := strings.TrimSpace(serverConfig.MCPBasePath)
+		if basePath == "" {
+			basePath = "/mcp"
+		}
+		mcpServer.RegisterRoutes(r.Group(basePath))
 	}
 
 	return r

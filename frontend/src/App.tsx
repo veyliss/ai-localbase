@@ -58,9 +58,16 @@ export interface EmbeddingConfig {
   apiKey: string
 }
 
+export interface MCPConfig {
+  enabled: boolean
+  basePath: string
+  token: string
+}
+
 export interface AppConfig {
   chat: ChatConfig
   embedding: EmbeddingConfig
+  mcp: MCPConfig
 }
 
 interface ChatCompletionResponse {
@@ -147,6 +154,7 @@ interface KnowledgeBaseListResponse {
 interface ConfigResponse {
   chat: ChatConfig
   embedding: EmbeddingConfig
+  mcp: MCPConfig
 }
 
 interface BackendConversationListItem {
@@ -410,6 +418,11 @@ function App() {
         model: 'nomic-embed-text',
         apiKey: '',
       },
+      mcp: {
+        enabled: true,
+        basePath: '/mcp',
+        token: '',
+      },
     }
 
     if (typeof window === 'undefined') {
@@ -447,6 +460,31 @@ function App() {
 
     const savedConfig = (await response.json()) as ConfigResponse
     setConfig(savedConfig)
+    setBackendReady(true)
+  }
+
+  const handleCopyMcpToken = async () => {
+    if (!config.mcp.token || typeof navigator === 'undefined' || !navigator.clipboard) {
+      return
+    }
+
+    await navigator.clipboard.writeText(config.mcp.token)
+  }
+
+  const handleResetMcpToken = async () => {
+    const response = await fetch(`${API_BASE_PATH}/api/config/mcp/reset-token`, {
+      method: 'POST',
+    })
+
+    if (!response.ok) {
+      throw new Error(await extractErrorMessage(response))
+    }
+
+    const payload = (await response.json()) as { mcp: MCPConfig }
+    setConfig((prev) => ({
+      ...prev,
+      mcp: payload.mcp,
+    }))
     setBackendReady(true)
   }
 
@@ -1636,6 +1674,8 @@ function App() {
         onToggleKnowledgePanel={handleToggleKnowledgePanel}
         onChatConfigChange={handleChatConfigChange}
         onEmbeddingConfigChange={handleEmbeddingConfigChange}
+        onCopyMcpToken={handleCopyMcpToken}
+        onResetMcpToken={handleResetMcpToken}
       />
       <ChatArea
         sidebarOpen={sidebarOpen}

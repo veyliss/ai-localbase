@@ -7,6 +7,7 @@ import (
 
 	"ai-localbase/internal/config"
 	"ai-localbase/internal/handler"
+	"ai-localbase/internal/mcp"
 	"ai-localbase/internal/router"
 	"ai-localbase/internal/service"
 )
@@ -40,8 +41,11 @@ func main() {
 
 	appService := service.NewAppService(qdrantService, stateStore, chatHistoryStore, serverConfig)
 	llmService := service.NewLLMService()
-	appHandler := handler.NewAppHandler(serverConfig, appService, llmService)
-	r := router.NewRouter(appHandler)
+	mcpRegistry := mcp.DefaultRegistry(appService)
+	toolPlanner := mcp.NewToolUsePlanner(mcpRegistry)
+	appHandler := handler.NewAppHandler(serverConfig, appService, llmService, toolPlanner)
+	mcpServer := mcp.NewServer(mcpRegistry, appService, serverConfig)
+	r := router.NewRouter(appHandler, serverConfig, mcpServer)
 
 	log.Printf("backend server listening on :%s", serverConfig.Port)
 	if err := r.Run(":" + serverConfig.Port); err != nil {

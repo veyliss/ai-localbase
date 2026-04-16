@@ -42,6 +42,8 @@ interface SidebarProps {
     key: K,
     value: EmbeddingConfig[K],
   ) => void
+  onCopyMcpToken: () => Promise<void>
+  onResetMcpToken: () => Promise<void>
 }
 
 const formatDateTime = (value: string) =>
@@ -81,6 +83,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleKnowledgePanel,
   onChatConfigChange,
   onEmbeddingConfigChange,
+  onCopyMcpToken,
+  onResetMcpToken,
 }) => {
   const [collapsedKnowledgeBases, setCollapsedKnowledgeBases] = useState<
     Record<string, boolean>
@@ -294,6 +298,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           onClose={onToggleSettings}
           onChatConfigChange={onChatConfigChange}
           onEmbeddingConfigChange={onEmbeddingConfigChange}
+          onCopyMcpToken={onCopyMcpToken}
+          onResetMcpToken={onResetMcpToken}
         />
       )}
 

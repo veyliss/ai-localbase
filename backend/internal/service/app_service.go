@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -352,6 +354,11 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 	if len(service.state.KnowledgeBases) == 0 {
 		service.state = defaultAppState(serverConfig)
 	}
+	service.state.Config.MCP.Enabled = serverConfig.EnableMCP
+	service.state.Config.MCP.BasePath = defaultMCPBasePath(service.state.Config.MCP.BasePath)
+	if strings.TrimSpace(service.state.Config.MCP.Token) == "" {
+		service.state.Config.MCP.Token = generateMCPToken()
+	}
 
 	for kbID := range service.state.KnowledgeBases {
 		if err := service.ensureKnowledgeBaseCollection(kbID); err != nil {
@@ -419,6 +426,11 @@ func defaultAppState(serverConfig model.ServerConfig) *model.AppState {
 				Model:    "nomic-embed-text",
 				APIKey:   "",
 			},
+			MCP: model.MCPConfig{
+				Enabled:  serverConfig.EnableMCP,
+				BasePath: defaultMCPBasePath(serverConfig.MCPBasePath),
+				Token:    generateMCPToken(),
+			},
 		},
 		KnowledgeBases: map[string]model.KnowledgeBase{
 			kbID: {
@@ -462,7 +474,30 @@ func (s *AppService) GetConfig() model.AppConfig {
 	if cfg.Chat.ContextMessageLimit <= 0 {
 		cfg.Chat.ContextMessageLimit = 12
 	}
+	cfg.MCP.BasePath = defaultMCPBasePath(cfg.MCP.BasePath)
+	if strings.TrimSpace(cfg.MCP.Token) == "" {
+		cfg.MCP.Token = generateMCPToken()
+	}
 	return cfg
+}
+
+func defaultMCPBasePath(basePath string) string {
+	trimmed := strings.TrimSpace(basePath)
+	if trimmed == "" {
+		return "/mcp"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "/" + trimmed
+	}
+	return trimmed
+}
+
+func generateMCPToken() string {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		return util.NextID("mcp")
+	}
+	return "mcp_" + hex.EncodeToString(buffer)
 }
 
 func IsSensitiveStructuredFileExtension(ext string) bool {
@@ -536,6 +571,12 @@ func (s *AppService) UpdateConfig(req model.ConfigUpdateRequest) (model.AppConfi
 		return model.AppConfig{}, fmt.Errorf("context message limit must be between 1 and 100")
 	}
 
+	mcpBasePath := defaultMCPBasePath(req.MCP.BasePath)
+	mcpToken := strings.TrimSpace(req.MCP.Token)
+	if mcpToken == "" {
+		mcpToken = generateMCPToken()
+	}
+
 	nextConfig := model.AppConfig{
 		Chat: model.ChatConfig{
 			Provider:            chatProvider,
@@ -550,6 +591,11 @@ func (s *AppService) UpdateConfig(req model.ConfigUpdateRequest) (model.AppConfi
 			BaseURL:  embedBaseURL,
 			Model:    embedModel,
 			APIKey:   strings.TrimSpace(req.Embedding.APIKey),
+		},
+		MCP: model.MCPConfig{
+			Enabled:  req.MCP.Enabled,
+			BasePath: mcpBasePath,
+			Token:    mcpToken,
 		},
 	}
 	if s.hasSensitiveStructuredDocuments() && !IsLocalOllamaConfig(nextConfig.Chat, nextConfig.Embedding) {
@@ -568,6 +614,30 @@ func (s *AppService) UpdateConfig(req model.ConfigUpdateRequest) (model.AppConfi
 		return model.AppConfig{}, err
 	}
 	return nextConfig, nil
+}
+
+func (s *AppService) ResetMCPToken() (model.MCPConfig, error) {
+	if s == nil {
+		return model.MCPConfig{}, fmt.Errorf("app service is nil")
+	}
+
+	s.state.Mu.Lock()
+	previousConfig := s.state.Config
+	nextConfig := s.state.Config
+	nextConfig.MCP.Enabled = s.serverConfig.EnableMCP
+	nextConfig.MCP.BasePath = defaultMCPBasePath(nextConfig.MCP.BasePath)
+	nextConfig.MCP.Token = generateMCPToken()
+	s.state.Config = nextConfig
+	s.state.Mu.Unlock()
+
+	if err := s.saveState(); err != nil {
+		s.state.Mu.Lock()
+		s.state.Config = previousConfig
+		s.state.Mu.Unlock()
+		return model.MCPConfig{}, err
+	}
+
+	return nextConfig.MCP, nil
 }
 
 func (s *AppService) ListKnowledgeBases() []model.KnowledgeBase {

@@ -19,6 +19,10 @@ type ServerConfig struct {
 	EnableSemanticCache      bool
 	EnableContextCompression bool
 	OllamaBaseURL            string
+	EnableMCP                bool
+	MCPBasePath              string
+	MCPRequestTimeoutSeconds int
+	MCPRequestsPerMinute     int
 }
 
 type AppState struct {
@@ -49,9 +53,16 @@ type EmbeddingConfig struct {
 	APIKey   string `json:"apiKey"`
 }
 
+type MCPConfig struct {
+	Enabled  bool   `json:"enabled"`
+	BasePath string `json:"basePath"`
+	Token    string `json:"token"`
+}
+
 type AppConfig struct {
 	Chat      ChatConfig      `json:"chat"`
 	Embedding EmbeddingConfig `json:"embedding"`
+	MCP       MCPConfig       `json:"mcp"`
 }
 
 type KnowledgeBase struct {
@@ -130,9 +141,20 @@ type ChatCompletionResponse struct {
 	Metadata map[string]any         `json:"metadata"`
 }
 
+type ToolUseMetadata struct {
+	ToolName        string         `json:"toolName"`
+	Reason          string         `json:"reason"`
+	PermissionLevel string         `json:"permissionLevel"`
+	Arguments       map[string]any `json:"arguments,omitempty"`
+	Data            map[string]any `json:"data,omitempty"`
+	IsError         bool           `json:"isError,omitempty"`
+	Error           string         `json:"error,omitempty"`
+}
+
 type ConfigUpdateRequest struct {
 	Chat      ChatConfig      `json:"chat"`
 	Embedding EmbeddingConfig `json:"embedding"`
+	MCP       MCPConfig       `json:"mcp"`
 }
 
 type Conversation struct {

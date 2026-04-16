@@ -62,6 +62,7 @@ qdrant_storage/
 backend/data/*
 !backend/data/.gitkeep
 backend/data/*.json
+backend/internal/router/data/uploads/
 
 # Evaluation artifacts (generated locally, do not commit)
 backend/eval/results/

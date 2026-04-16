@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { AppConfig, ChatConfig, EmbeddingConfig } from '../../App'
 
 interface SettingsPanelProps {
@@ -9,6 +9,8 @@ interface SettingsPanelProps {
     key: K,
     value: EmbeddingConfig[K],
   ) => void
+  onCopyMcpToken: () => Promise<void>
+  onResetMcpToken: () => Promise<void>
 }
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -16,7 +18,29 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onClose,
   onChatConfigChange,
   onEmbeddingConfigChange,
+  onCopyMcpToken,
+  onResetMcpToken,
 }) => {
+  const [mcpFeedback, setMcpFeedback] = useState('')
+  const [isMcpTokenVisible, setIsMcpTokenVisible] = useState(false)
+
+  const handleCopyToken = async () => {
+    try {
+      await onCopyMcpToken()
+      setMcpFeedback('Token 已复制')
+    } catch {
+      setMcpFeedback('复制失败')
+    }
+  }
+
+  const handleResetToken = async () => {
+    try {
+      await onResetMcpToken()
+      setMcpFeedback('Token 已重置')
+    } catch {
+      setMcpFeedback('重置失败')
+    }
+  }
   return (
     <div className="settings-modal-backdrop" onClick={onClose}>
       <div className="settings-modal settings-modal-single" onClick={(event) => event.stopPropagation()}>
@@ -165,6 +189,55 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   onChange={(event) => onEmbeddingConfigChange('apiKey', event.target.value)}
                   placeholder="选填"
                 />
+              </label>
+            </div>
+          </section>
+
+          <section className="settings-panel-block ai-config-panel single-column">
+            <div className="section-title-row knowledge-panel-header">
+              <h3>MCP 设置</h3>
+            </div>
+
+            <div className="ai-config-fields">
+              <label className="settings-field">
+                <span>状态</span>
+                <input value={config.mcp.enabled ? '已启用' : '未启用'} readOnly />
+              </label>
+
+              <label className="settings-field">
+                <span>Base Path</span>
+                <input value={config.mcp.basePath} readOnly />
+              </label>
+
+              <label className="settings-field settings-field-full">
+                <span>Token</span>
+                <div className="settings-inline-actions">
+                  <input
+                    type={isMcpTokenVisible ? 'text' : 'password'}
+                    value={config.mcp.token}
+                    readOnly
+                    className="settings-token-input"
+                  />
+                  <button
+                    type="button"
+                    className="ghost-btn settings-visibility-btn"
+                    onClick={() => setIsMcpTokenVisible((visible) => !visible)}
+                    aria-label={isMcpTokenVisible ? '隐藏 Token' : '显示 Token'}
+                    title={isMcpTokenVisible ? '隐藏 Token' : '显示 Token'}
+                  >
+                    {isMcpTokenVisible ? '🙈' : '👁'}
+                  </button>
+                  <button type="button" className="ghost-btn" onClick={() => void handleCopyToken()}>
+                    复制
+                  </button>
+                  <button type="button" className="ghost-btn" onClick={() => void handleResetToken()}>
+                    重置
+                  </button>
+                </div>
+                <small>
+                  用于访问 MCP 接口的 Bearer Token。重置后旧 Token 会立刻失效。
+                </small>
+                {mcpFeedback ? <small className="settings-feedback">{mcpFeedback}</small> : null}
               </label>
             </div>
           </section>

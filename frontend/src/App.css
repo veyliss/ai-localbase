@@ -2011,6 +2011,75 @@
   grid-column: 1 / -1;
 }
 
+.settings-inline-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.settings-inline-actions .ghost-btn {
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 9px 14px;
+  background: #eef2ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+  text-align: center;
+  font-weight: 600;
+}
+
+.settings-inline-actions .ghost-btn:hover {
+  background: #e0e7ff;
+  color: #312e81;
+}
+
+.settings-inline-actions .ghost-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+.settings-visibility-btn {
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.settings-token-input {
+  flex: 1;
+  min-width: 0;
+  color: #0f172a;
+  letter-spacing: 0.02em;
+}
+
+.settings-token-input[type='password'] {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
+.settings-feedback {
+  display: inline-block;
+  margin-top: 6px;
+  color: #4338ca;
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .settings-inline-actions {
+    align-items: stretch;
+  }
+
+  .settings-token-input {
+    width: 100%;
+    flex-basis: 100%;
+  }
+}
+
 
 /* ==============================================
    Markdown 消息渲染样式（统一版）

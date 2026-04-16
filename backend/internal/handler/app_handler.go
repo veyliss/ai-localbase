@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-localbase/internal/mcp"
 	"ai-localbase/internal/model"
 	"ai-localbase/internal/service"
 	"ai-localbase/internal/util"
@@ -20,13 +22,15 @@ type AppHandler struct {
 	serverConfig model.ServerConfig
 	appService   *service.AppService
 	llmService   *service.LLMService
+	toolPlanner  *mcp.ToolUsePlanner
 }
 
-func NewAppHandler(serverConfig model.ServerConfig, appService *service.AppService, llmService *service.LLMService) *AppHandler {
+func NewAppHandler(serverConfig model.ServerConfig, appService *service.AppService, llmService *service.LLMService, toolPlanner *mcp.ToolUsePlanner) *AppHandler {
 	return &AppHandler{
 		serverConfig: serverConfig,
 		appService:   appService,
 		llmService:   llmService,
+		toolPlanner:  toolPlanner,
 	}
 }
 
@@ -48,6 +52,16 @@ func (h *AppHandler) Health(c *gin.Context) {
 
 func (h *AppHandler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, h.appService.GetConfig())
+}
+
+func (h *AppHandler) ResetMCPToken(c *gin.Context) {
+	mcpConfig, err := h.appService.ResetMCPToken()
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"mcp": mcpConfig})
 }
 
 func (h *AppHandler) ListConversations(c *gin.Context) {
@@ -190,7 +204,7 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	preparedReq, sources, err := h.prepareChatRequest(req)
+	preparedReq, sources, err := h.prepareChatRequest(c.Request.Context(), req)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
@@ -208,6 +222,7 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 	response.Metadata["sources"] = sources
 	response.Metadata["knowledgeBaseId"] = req.KnowledgeBaseID
 	response.Metadata["documentId"] = req.DocumentID
+	response.Metadata["toolUse"] = buildToolUseMetadata(sources)
 
 	if assistantMessage := firstAssistantChoice(response); assistantMessage != nil {
 		_, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
@@ -233,7 +248,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		return
 	}
 
-	preparedReq, sources, err := h.prepareChatRequest(req)
+	preparedReq, sources, err := h.prepareChatRequest(c.Request.Context(), req)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
@@ -255,6 +270,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		"sources":         sources,
 		"knowledgeBaseId": req.KnowledgeBaseID,
 		"documentId":      req.DocumentID,
+		"toolUse":         buildToolUseMetadata(sources),
 	}
 	c.SSEvent("meta", initialMeta)
 	flusher.Flush()
@@ -291,7 +307,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 	flusher.Flush()
 }
 
-func (h *AppHandler) prepareChatRequest(req model.ChatCompletionRequest) (model.ChatCompletionRequest, []map[string]string, error) {
+func (h *AppHandler) prepareChatRequest(ctx context.Context, req model.ChatCompletionRequest) (model.ChatCompletionRequest, []map[string]string, error) {
 	if len(req.Messages) == 0 {
 		return model.ChatCompletionRequest{}, nil, fmt.Errorf("messages cannot be empty")
 	}
@@ -301,15 +317,27 @@ func (h *AppHandler) prepareChatRequest(req model.ChatCompletionRequest) (model.
 		return model.ChatCompletionRequest{}, nil, err
 	}
 
+	toolUseContext := ""
+	toolUseSources := []map[string]string(nil)
+	if h.toolPlanner != nil {
+		plannedCalls := h.toolPlanner.Plan(req)
+		toolExecutions := h.toolPlanner.Execute(ctx, plannedCalls)
+		toolUseContext, toolUseSources = mcp.BuildToolUseContext(toolExecutions)
+	}
+
 	contextSummary, sources, err := h.appService.BuildChatContext(req)
 	if err != nil {
 		return model.ChatCompletionRequest{}, nil, err
 	}
 
 	allSources := append(retrievalSources, sources...)
-	contextParts := make([]string, 0, 2)
+	allSources = append(allSources, toolUseSources...)
+	contextParts := make([]string, 0, 3)
 	if strings.TrimSpace(retrievalContext) != "" {
 		contextParts = append(contextParts, "检索命中的文档片段：\n"+retrievalContext)
+	}
+	if strings.TrimSpace(toolUseContext) != "" {
+		contextParts = append(contextParts, "MCP 工具调用结果：\n"+toolUseContext)
 	}
 	if strings.TrimSpace(contextSummary) != "" {
 		contextParts = append(contextParts, contextSummary)
@@ -541,6 +569,21 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 			KnowledgeBase: knowledgeBaseID,
 			Uploaded:      uploaded,
 		})
+}
+
+func buildToolUseMetadata(sources []map[string]string) []model.ToolUseMetadata {
+	items := make([]model.ToolUseMetadata, 0)
+	for _, source := range sources {
+		toolName := strings.TrimSpace(source["toolName"])
+		if toolName == "" {
+			continue
+		}
+		items = append(items, model.ToolUseMetadata{
+			ToolName:        toolName,
+			PermissionLevel: source["permissionLevel"],
+		})
+	}
+	return items
 }
 
 func validateUploadFile(file *multipart.FileHeader, cfg model.AppConfig) error {

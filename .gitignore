@@ -33,6 +33,10 @@ backend/eval/cmd/eval_main
 frontend/node_modules/
 frontend/dist/
 frontend/build/
+
+# Backend embed dist (keep .gitkeep placeholder)
+backend/dist/*
+!backend/dist/.gitkeep
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -99,3 +103,7 @@ out/
 
 Session.vim
 .exrc
+
+
+# data 
+data/*

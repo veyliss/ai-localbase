@@ -15,6 +15,10 @@ func NextID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, id)
 }
 
+func NextRequestID() string {
+	return NextID("req")
+}
+
 func NowUnixNano() int64 {
 	return time.Now().UnixNano()
 }

@@ -683,7 +683,46 @@ func firstAssistantChoice(response model.ChatCompletionResponse) *model.ChatMess
 }
 
 func writeError(c *gin.Context, statusCode int, message string) {
-	c.JSON(statusCode, model.APIError{Error: message})
+	requestID := strings.TrimSpace(c.GetHeader("X-Request-Id"))
+	if requestID == "" {
+		requestID = strings.TrimSpace(c.GetString("requestId"))
+	}
+
+	c.JSON(statusCode, model.APIError{
+		Error: model.ErrorDetail{
+			Code:      errorCodeFromStatus(statusCode),
+			Message:   strings.TrimSpace(message),
+			RequestID: requestID,
+		},
+	})
+}
+
+func errorCodeFromStatus(statusCode int) string {
+	switch statusCode {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusBadGateway:
+		return "upstream_error"
+	case http.StatusServiceUnavailable:
+		return "service_unavailable"
+	case http.StatusGatewayTimeout:
+		return "timeout"
+	default:
+		if statusCode >= http.StatusInternalServerError {
+			return "internal_error"
+		}
+		return "request_failed"
+	}
 }
 
 func streamResponseMetadata(content string) map[string]any {

@@ -108,7 +108,11 @@ interface ChatRequestBody {
 }
 
 interface ApiErrorResponse {
-  error?: string
+  error?: string | {
+    code?: string
+    message?: string
+    requestId?: string
+  }
 }
 
 interface StreamEventPayload {
@@ -322,7 +326,10 @@ const createWelcomeConversation = (): Conversation => {
 const extractErrorMessage = async (response: Response) => {
   try {
     const errorBody = (await response.json()) as ApiErrorResponse
-    return errorBody.error || '请求失败'
+    if (typeof errorBody.error === 'string') {
+      return errorBody.error || '请求失败'
+    }
+    return errorBody.error?.message || '请求失败'
   } catch {
     return '请求失败'
   }

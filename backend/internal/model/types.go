@@ -3,26 +3,33 @@ package model
 import "sync"
 
 type ServerConfig struct {
-	Port                     string
-	UploadDir                string
-	StateFile                string
-	ChatHistoryFile          string
-	QdrantURL                string
-	QdrantAPIKey             string
-	QdrantCollectionPrefix   string
-	QdrantVectorSize         int
-	QdrantDistance           string
-	QdrantTimeoutSeconds     int
-	EnableHybridSearch       bool
-	EnableSemanticReranker   bool
-	EnableQueryRewrite       bool
-	EnableSemanticCache      bool
-	EnableContextCompression bool
-	OllamaBaseURL            string
-	EnableMCP                bool
-	MCPBasePath              string
-	MCPRequestTimeoutSeconds int
-	MCPRequestsPerMinute     int
+	Port                           string
+	UploadDir                      string
+	StateFile                      string
+	ChatHistoryFile                string
+	QdrantURL                      string
+	QdrantAPIKey                   string
+	QdrantCollectionPrefix         string
+	QdrantVectorSize               int
+	QdrantDistance                 string
+	QdrantTimeoutSeconds           int
+	EnableHybridSearch             bool
+	EnableSemanticReranker         bool
+	EnableQueryRewrite             bool
+	EnableSemanticCache            bool
+	EnableContextCompression       bool
+	OllamaBaseURL                  string
+	EnableMCP                      bool
+	MCPBasePath                    string
+	MCPRequestTimeoutSeconds       int
+	MCPRequestsPerMinute           int
+	RetrievalTopKDocument          int
+	RetrievalCandidateTopKDocument int
+	RetrievalTopKKnowledgeBase     int
+	RetrievalCandidateTopKAllDocs  int
+	RetrievalMaxChunksPerDocument  int
+	RetrievalMaxContextChars       int
+	RetrievalEnableAutoExpand      bool
 }
 
 type AppState struct {

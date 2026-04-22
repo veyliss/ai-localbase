@@ -52,6 +52,32 @@ func TestRagServiceBuildDocumentChunks(t *testing.T) {
 	}
 }
 
+func TestRagServiceBuildDocumentChunksStructuredSummaryFirst(t *testing.T) {
+	rag := NewRagService()
+	document := model.Document{
+		ID:              "doc-structured",
+		KnowledgeBaseID: "kb-1",
+		Name:            "users.csv",
+	}
+	text := strings.Join([]string{
+		"文件：users.csv。字段：城市、人数、状态。数据行数：4。",
+		"统计摘要：文件《users.csv》共有4条数据记录。",
+		"统计摘要：字段“城市”为类别列，共4个非空值，主要分布为：武汉(2)、上海(1)、杭州(1)。",
+		"第2行：城市：武汉。人数：120。状态：活跃。",
+	}, "\n")
+
+	chunks := rag.BuildDocumentChunks(document, text)
+	if len(chunks) == 0 {
+		t.Fatal("expected structured chunks")
+	}
+	if chunks[0].Kind != "structured_summary" {
+		t.Fatalf("expected first chunk kind structured_summary, got %s", chunks[0].Kind)
+	}
+	if !strings.Contains(chunks[0].Text, "统计摘要：") {
+		t.Fatalf("expected structured summary chunk first, got %q", chunks[0].Text)
+	}
+}
+
 func TestRagServiceEmbedTextsFallback(t *testing.T) {
 	rag := NewRagService()
 	cfg := model.EmbeddingModelConfig{

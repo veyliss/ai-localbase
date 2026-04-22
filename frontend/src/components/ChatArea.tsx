@@ -2,7 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import mermaid from 'mermaid'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AppConfig, Conversation, DocumentItem, KnowledgeBase } from '../App'
+import {
+  AppConfig,
+  ChatMode,
+  ChatModeSettings,
+  Conversation,
+  DocumentItem,
+  KnowledgeBase,
+} from '../App'
 
 /**
  * 修复 LLM 输出的 Markdown 格式问题：
@@ -1295,10 +1302,13 @@ interface ChatAreaProps {
   selectedKnowledgeBase: KnowledgeBase | null
   selectedDocument: DocumentItem | null
   config: AppConfig
+  chatMode: ChatMode
+  chatModeSettings: ChatModeSettings
   isLoading: boolean
   isGlobalGenerating: boolean
   generatingConversationTitle: string
   enforceSingleFlight: boolean
+  onChatModeChange: (mode: ChatMode) => void
   onSendMessage: (content: string) => Promise<void>
   onClearConversation: () => void
 }
@@ -1321,10 +1331,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   selectedKnowledgeBase,
   selectedDocument,
   config,
+  chatMode,
+  chatModeSettings,
   isLoading,
   isGlobalGenerating,
   generatingConversationTitle,
   enforceSingleFlight,
+  onChatModeChange,
   onSendMessage,
   onClearConversation,
 }) => {
@@ -1355,14 +1368,19 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       ? `知识库问答：${selectedKnowledgeBase.name}`
       : '未选择知识库'
 
+  const activeModeModel =
+    chatMode === 'think'
+      ? chatModeSettings.thinkModel || config.chat.model
+      : chatModeSettings.fastModel || config.chat.model
+
   const toolbarItems = [
     {
       icon: '📚',
       text: scopeText,
     },
     {
-      icon: '🤖',
-      text: config.chat.model,
+      icon: chatMode === 'think' ? '🧠' : '⚡',
+      text: `${chatMode === 'think' ? '思考模式' : '快速模式'} · ${activeModeModel}`,
     },
     {
       icon: '💬',
@@ -1606,6 +1624,38 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       </div>
 
       <div className="input-area">
+        <div className="input-mode-bar">
+          <div className="input-mode-group" role="tablist" aria-label="回答模式选择">
+            <button
+              type="button"
+              className={`input-mode-btn ${chatMode === 'fast' ? 'active' : ''}`}
+              onClick={() => onChatModeChange('fast')}
+              disabled={isLoading}
+            >
+              ⚡ 快速模式
+            </button>
+            <button
+              type="button"
+              className={`input-mode-btn ${chatMode === 'think' ? 'active' : ''}`}
+              onClick={() => onChatModeChange('think')}
+              disabled={isLoading}
+            >
+              🧠 思考模式
+            </button>
+          </div>
+          <div className="input-mode-hint">
+            <div>
+              当前使用：{chatMode === 'think' ? '思考模式' : '快速模式'}
+              {' · '}
+              模型：{activeModeModel}
+            </div>
+            <div className="input-mode-description">
+              {chatMode === 'think'
+                ? '质量优先，适合复杂分析与推理，响应会更慢。'
+                : '速度优先，适合日常问答与知识库检索。'}
+            </div>
+          </div>
+        </div>
         <div className="input-container">
           <textarea
             value={inputValue}

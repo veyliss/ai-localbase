@@ -130,3 +130,26 @@ func TestExtractDocumentTextFromXLSX(t *testing.T) {
 		t.Fatalf("expected xlsx row, got %q", text)
 	}
 }
+
+func TestExtractStructuredTableSummaryFromCSV(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.csv")
+	content := "城市,人数,状态\n武汉,120,活跃\n上海,80,活跃\n武汉,100,停用\n杭州,60,活跃\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write csv: %v", err)
+	}
+
+	text, err := ExtractDocumentText(path)
+	if err != nil {
+		t.Fatalf("extract csv: %v", err)
+	}
+	if !strings.Contains(text, "统计摘要：文件《users.csv》共有4条数据记录。") {
+		t.Fatalf("expected table-level summary, got %q", text)
+	}
+	if !strings.Contains(text, "统计摘要：字段“城市”为类别列，共4个非空值，主要分布为：武汉(2)、上海(1)、杭州(1)。") {
+		t.Fatalf("expected category summary, got %q", text)
+	}
+	if !strings.Contains(text, "统计摘要：字段“人数”为数值列，非空值4个，最小值60.00，最大值120.00，平均值90.00。") {
+		t.Fatalf("expected numeric summary, got %q", text)
+	}
+}

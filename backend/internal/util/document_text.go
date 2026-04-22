@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -235,6 +237,12 @@ func buildDelimitedTableText(fileName, sheetName string, rows [][]string) string
 		fmt.Fprintf(builder, "文件：%s。字段：%s。数据行数：%d。\n", fileName, strings.Join(headers, "、"), len(dataRows))
 	}
 
+	summary := buildStructuredTableSummary(fileName, sheetName, headers, dataRows)
+	if strings.TrimSpace(summary) != "" {
+		builder.WriteString(summary)
+		builder.WriteString("\n")
+	}
+
 	for index, row := range dataRows {
 		line := buildTableRowLine(headers, row)
 		if line == "" {
@@ -248,6 +256,126 @@ func buildDelimitedTableText(fileName, sheetName string, rows [][]string) string
 	}
 
 	return strings.TrimSpace(builder.String())
+}
+
+func buildStructuredTableSummary(fileName, sheetName string, headers []string, rows [][]string) string {
+	if len(headers) == 0 || len(rows) == 0 {
+		return ""
+	}
+
+	builder := &strings.Builder{}
+	prefix := fmt.Sprintf("文件《%s》", fileName)
+	if sheetName != "" {
+		prefix += fmt.Sprintf("工作表《%s》", sheetName)
+	}
+	fmt.Fprintf(builder, "统计摘要：%s共有%d条数据记录。\n", prefix, len(rows))
+
+	for index, header := range headers {
+		summary := summarizeTableColumn(header, columnValues(rows, index))
+		if strings.TrimSpace(summary) == "" {
+			continue
+		}
+		fmt.Fprintf(builder, "统计摘要：%s\n", summary)
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func columnValues(rows [][]string, index int) []string {
+	values := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if index >= len(row) {
+			continue
+		}
+		value := strings.TrimSpace(row[index])
+		if value == "" {
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
+func summarizeTableColumn(header string, values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	if numericValues, ok := parseNumericColumn(values); ok {
+		minValue, maxValue, avgValue := numericValues[0], numericValues[0], 0.0
+		for _, value := range numericValues {
+			if value < minValue {
+				minValue = value
+			}
+			if value > maxValue {
+				maxValue = value
+			}
+			avgValue += value
+		}
+		avgValue /= float64(len(numericValues))
+		return fmt.Sprintf("字段“%s”为数值列，非空值%d个，最小值%.2f，最大值%.2f，平均值%.2f。", header, len(numericValues), minValue, maxValue, avgValue)
+	}
+
+	counts := make(map[string]int)
+	for _, value := range values {
+		counts[value]++
+	}
+	if len(counts) == 0 {
+		return ""
+	}
+
+	type categoryCount struct {
+		label string
+		count int
+	}
+	items := make([]categoryCount, 0, len(counts))
+	for label, count := range counts {
+		items = append(items, categoryCount{label: label, count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].count == items[j].count {
+			return items[i].label < items[j].label
+		}
+		return items[i].count > items[j].count
+	})
+	limit := 3
+	if len(items) < limit {
+		limit = len(items)
+	}
+	parts := make([]string, 0, limit)
+	for _, item := range items[:limit] {
+		parts = append(parts, fmt.Sprintf("%s(%d)", item.label, item.count))
+	}
+	return fmt.Sprintf("字段“%s”为类别列，共%d个非空值，主要分布为：%s。", header, len(values), strings.Join(parts, "、"))
+}
+
+func parseNumericColumn(values []string) ([]float64, bool) {
+	numeric := make([]float64, 0, len(values))
+	for _, value := range values {
+		parsed, ok := parseLooseNumber(value)
+		if !ok {
+			return nil, false
+		}
+		numeric = append(numeric, parsed)
+	}
+	return numeric, len(numeric) > 0
+}
+
+func parseLooseNumber(value string) (float64, bool) {
+	cleaned := strings.TrimSpace(value)
+	if cleaned == "" {
+		return 0, false
+	}
+	cleaned = strings.ReplaceAll(cleaned, ",", "")
+	cleaned = strings.TrimSuffix(cleaned, "%")
+	if matched, _ := regexp.MatchString(`^[+-]?\d+(\.\d+)?$`, cleaned); !matched {
+		return 0, false
+	}
+	parsed, err := strconv.ParseFloat(cleaned, 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
 }
 
 func normalizeTableHeaders(row []string) []string {

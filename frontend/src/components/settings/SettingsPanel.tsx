@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { AppConfig, ChatConfig, EmbeddingConfig } from '../../App'
+import { AppConfig, ChatConfig, ChatModeSettings, EmbeddingConfig } from '../../App'
 
 interface SettingsPanelProps {
   config: AppConfig
@@ -9,6 +9,8 @@ interface SettingsPanelProps {
     key: K,
     value: EmbeddingConfig[K],
   ) => void
+  chatModeSettings: ChatModeSettings
+  onThinkModelChange: (value: string) => void
   onCopyMcpToken: () => Promise<void>
   onResetMcpToken: () => Promise<void>
 }
@@ -18,6 +20,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onClose,
   onChatConfigChange,
   onEmbeddingConfigChange,
+  chatModeSettings,
+  onThinkModelChange,
   onCopyMcpToken,
   onResetMcpToken,
 }) => {
@@ -133,6 +137,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   placeholder="12"
                 />
                 <small>限制每次发送给模型的最近消息条数，范围 1-100。</small>
+              </label>
+              <label className="settings-field settings-field-full">
+                <span>思考模式模型</span>
+                <input
+                  value={chatModeSettings.thinkModel}
+                  onChange={(event) => onThinkModelChange(event.target.value)}
+                  placeholder="deepseek-r1:8b"
+                />
+                <small>用于“思考模式”的专用模型，建议填写推理更强但更慢的模型。</small>
               </label>
             </div>
           </section>

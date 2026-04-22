@@ -134,6 +134,7 @@ type DocumentChunk struct {
 	DocumentName    string
 	Text            string
 	Index           int
+	Kind            string
 }
 
 // SparseVector 稀疏向量（词项索引 -> 权重）
@@ -212,18 +213,88 @@ func (s *RagService) ChunkText(text string) []string {
 func (s *RagService) BuildDocumentChunks(document model.Document, text string) []DocumentChunk {
 	parts := s.ChunkText(text)
 	chunks := make([]DocumentChunk, 0, len(parts))
+	nextIndex := 0
 	for index, part := range parts {
+		kind := classifyDocumentChunkKind(part)
 		chunks = append(chunks, DocumentChunk{
 			ID:              fmt.Sprintf("%s-chunk-%d", document.ID, index),
 			KnowledgeBaseID: document.KnowledgeBaseID,
 			DocumentID:      document.ID,
 			DocumentName:    document.Name,
 			Text:            part,
-			Index:           index,
+			Index:           nextIndex,
+			Kind:            kind,
 		})
+		nextIndex++
 	}
 
+	summaryChunks := buildStructuredSummaryChunks(document, text, nextIndex)
+	chunks = append(summaryFirstChunks(summaryChunks), chunks...)
 	return chunks
+}
+
+func buildStructuredSummaryChunks(document model.Document, text string, startIndex int) []DocumentChunk {
+	blocks := extractStructuredSummaryBlocks(text)
+	if len(blocks) == 0 {
+		return nil
+	}
+	chunks := make([]DocumentChunk, 0, len(blocks))
+	for i, block := range blocks {
+		chunks = append(chunks, DocumentChunk{
+			ID:              fmt.Sprintf("%s-summary-%d", document.ID, i),
+			KnowledgeBaseID: document.KnowledgeBaseID,
+			DocumentID:      document.ID,
+			DocumentName:    document.Name,
+			Text:            block,
+			Index:           startIndex + i,
+			Kind:            "structured_summary",
+		})
+	}
+	return chunks
+}
+
+func extractStructuredSummaryBlocks(text string) []string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	blocks := make([]string, 0)
+	current := make([]string, 0)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "统计摘要：") {
+			if len(current) > 0 {
+				blocks = append(blocks, strings.Join(current, "\n"))
+				current = current[:0]
+			}
+			continue
+		}
+		current = append(current, trimmed)
+	}
+	if len(current) > 0 {
+		blocks = append(blocks, strings.Join(current, "\n"))
+	}
+	return blocks
+}
+
+func classifyDocumentChunkKind(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "text"
+	}
+	if strings.HasPrefix(trimmed, "统计摘要：") {
+		return "structured_summary"
+	}
+	if strings.Contains(trimmed, "第") && strings.Contains(trimmed, "行：") {
+		return "structured_row"
+	}
+	return "text"
+}
+
+func summaryFirstChunks(chunks []DocumentChunk) []DocumentChunk {
+	if len(chunks) == 0 {
+		return nil
+	}
+	out := make([]DocumentChunk, len(chunks))
+	copy(out, chunks)
+	return out
 }
 
 func (s *RagService) EmbedTexts(ctx context.Context, cfg model.EmbeddingModelConfig, texts []string, vectorSize int) ([][]float64, error) {
@@ -512,10 +583,20 @@ func (s *RagService) requestEmbeddings(ctx context.Context, cfg model.EmbeddingM
 		return nil, fmt.Errorf("embedding config is incomplete")
 	}
 
+	embedCtx := ctx
+	if embedCtx == nil {
+		embedCtx = context.Background()
+	}
+	if _, hasDeadline := embedCtx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		embedCtx, cancel = context.WithTimeout(embedCtx, 12*time.Second)
+		defer cancel()
+	}
+
 	provider := strings.TrimSpace(cfg.Provider)
 	if provider == "ollama" {
 		var embeddings [][]float64
-		err := sharedModelRuntimeScheduler.run(ctx, modelRuntimePriorityLow, func(runCtx context.Context) error {
+		err := sharedEmbeddingRuntimeScheduler.run(embedCtx, modelRuntimePriorityHigh, func(runCtx context.Context) error {
 			var callErr error
 			embeddings, callErr = s.requestOllamaEmbeddings(runCtx, cfg, baseURL, modelName, texts)
 			return callErr
@@ -525,7 +606,7 @@ func (s *RagService) requestEmbeddings(ctx context.Context, cfg model.EmbeddingM
 		}
 		return embeddings, nil
 	}
-	return s.requestOpenAIEmbeddings(ctx, cfg, baseURL, modelName, texts)
+	return s.requestOpenAIEmbeddings(embedCtx, cfg, baseURL, modelName, texts)
 }
 
 func (s *RagService) requestOllamaEmbeddings(ctx context.Context, cfg model.EmbeddingModelConfig, baseURL, modelName string, texts []string) ([][]float64, error) {

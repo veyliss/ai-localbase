@@ -70,6 +70,13 @@ export interface AppConfig {
   mcp: MCPConfig
 }
 
+export type ChatMode = 'fast' | 'think'
+
+export interface ChatModeSettings {
+  fastModel: string
+  thinkModel: string
+}
+
 interface ChatCompletionResponse {
   id: string
   object: string
@@ -127,6 +134,7 @@ interface HealthResponse {
 
 const API_BASE_PATH = ''
 const AI_CONFIG_STORAGE_KEY = 'ai-localbase:app-config'
+const THINK_MODEL_STORAGE_KEY = 'ai-localbase:think-model'
 const STREAM_FIRST_CHUNK_TIMEOUT_MS = 60000
 const STREAM_REQUEST_TIMEOUT_MS = 150000
 const FALLBACK_REQUEST_TIMEOUT_MS = 90000
@@ -451,6 +459,21 @@ function App() {
       return defaultConfig
     }
   })
+
+  const [chatMode, setChatMode] = useState<ChatMode>('fast')
+  const [thinkModel, setThinkModel] = useState(() => {
+    if (typeof window === 'undefined') {
+      return 'deepseek-r1:8b'
+    }
+    return window.localStorage.getItem(THINK_MODEL_STORAGE_KEY)?.trim() || 'deepseek-r1:8b'
+  })
+  const chatModeSettings = useMemo<ChatModeSettings>(
+    () => ({
+      fastModel: config.chat.model,
+      thinkModel,
+    }),
+    [config.chat.model, thinkModel],
+  )
 
   const persistConfigToBackend = async (nextConfig: AppConfig) => {
     const response = await fetch(`${API_BASE_PATH}/api/config`, {
@@ -1304,12 +1327,20 @@ function App() {
     }
 
     const nextMessages = [...activeConversation.messages, userMessage]
+    const selectedChatModel =
+      chatMode === 'think'
+        ? chatModeSettings.thinkModel || config.chat.model
+        : chatModeSettings.fastModel || config.chat.model
+
     const requestBody: ChatRequestBody = {
       conversationId,
-      model: config.chat.model,
+      model: selectedChatModel,
       knowledgeBaseId: selectedKnowledgeBaseId ?? '',
       documentId: selectedDocumentId ?? '',
-      config: config.chat,
+      config: {
+        ...config.chat,
+        model: selectedChatModel,
+      },
       embedding: config.embedding,
       messages: nextMessages.map((message) => ({
         role: message.role,
@@ -1669,6 +1700,18 @@ function App() {
     })
   }
 
+  const handleThinkModelChange = (value: string) => {
+    const nextValue = value.trim()
+    setThinkModel(nextValue)
+    if (typeof window !== 'undefined') {
+      if (nextValue) {
+        window.localStorage.setItem(THINK_MODEL_STORAGE_KEY, nextValue)
+      } else {
+        window.localStorage.removeItem(THINK_MODEL_STORAGE_KEY)
+      }
+    }
+  }
+
   const handleToggleSettings = () => {
     setIsSettingsOpen((prev) => {
       const next = !prev
@@ -1720,6 +1763,8 @@ function App() {
         onToggleKnowledgePanel={handleToggleKnowledgePanel}
         onChatConfigChange={handleChatConfigChange}
         onEmbeddingConfigChange={handleEmbeddingConfigChange}
+        chatModeSettings={chatModeSettings}
+        onThinkModelChange={handleThinkModelChange}
         onCopyMcpToken={handleCopyMcpToken}
         onResetMcpToken={handleResetMcpToken}
       />
@@ -1729,10 +1774,13 @@ function App() {
         selectedKnowledgeBase={selectedKnowledgeBase}
         selectedDocument={selectedDocument}
         config={config}
+        chatMode={chatMode}
+        chatModeSettings={chatModeSettings}
         isLoading={streamingConversationId === activeConversation?.id}
         isGlobalGenerating={Boolean(streamingConversationId)}
         generatingConversationTitle={generatingConversationTitle}
         enforceSingleFlight={isOllamaSingleFlightMode}
+        onChatModeChange={setChatMode}
         onSendMessage={handleSendMessage}
         onClearConversation={handleClearConversation}
       />

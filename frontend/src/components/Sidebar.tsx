@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react'
 import {
   AppConfig,
   ChatConfig,
+  ChatModeSettings,
   Conversation,
   DirectoryUploadTask,
   EmbeddingConfig,
@@ -42,6 +43,8 @@ interface SidebarProps {
     key: K,
     value: EmbeddingConfig[K],
   ) => void
+  chatModeSettings: ChatModeSettings
+  onThinkModelChange: (value: string) => void
   onCopyMcpToken: () => Promise<void>
   onResetMcpToken: () => Promise<void>
 }
@@ -83,6 +86,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onToggleKnowledgePanel,
   onChatConfigChange,
   onEmbeddingConfigChange,
+  chatModeSettings,
+  onThinkModelChange,
   onCopyMcpToken,
   onResetMcpToken,
 }) => {
@@ -298,6 +303,8 @@ const Sidebar: React.FC<SidebarProps> = ({
           onClose={onToggleSettings}
           onChatConfigChange={onChatConfigChange}
           onEmbeddingConfigChange={onEmbeddingConfigChange}
+          chatModeSettings={chatModeSettings}
+          onThinkModelChange={onThinkModelChange}
           onCopyMcpToken={onCopyMcpToken}
           onResetMcpToken={onResetMcpToken}
         />

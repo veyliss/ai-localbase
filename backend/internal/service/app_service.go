@@ -880,20 +880,60 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 }
 
 func (s *AppService) BuildRetrievalContext(req model.ChatCompletionRequest) (string, []map[string]string, error) {
+	startedAt := time.Now()
 	chunks, err := s.EvaluateRetrieve(req)
 	if err != nil {
 		return "", nil, err
 	}
 
-	chunks = deduplicateRetrievedChunks(chunks)
 	query := latestUserMessage(req.Messages)
+	dedupStartedAt := time.Now()
+	chunks = deduplicateRetrievedChunks(chunks)
+	logRetrievalStageMetrics(req, query, "context_deduplicate", dedupStartedAt, map[string]any{
+		"status":           "ok",
+		"remaining_chunks": len(chunks),
+	})
+
+	maxContextChars := s.retrievalMaxContextChars()
+	trimStartedAt := time.Now()
+	if maxContextChars > 0 {
+		chunks = trimRetrievedChunksToContextLimit(chunks, maxContextChars)
+	}
+	logRetrievalStageMetrics(req, query, "context_trim", trimStartedAt, map[string]any{
+		"status":            "ok",
+		"remaining_chunks":  len(chunks),
+		"max_context_chars": maxContextChars,
+		"context_chars":     chunksTotalChars(chunks),
+	})
+
+	buildStartedAt := time.Now()
 	contextText, sources := s.rag.BuildContext(chunks)
-	if s.contextCompressor != nil && chunksTotalChars(chunks) > 2000 {
+	logRetrievalStageMetrics(req, query, "context_build", buildStartedAt, map[string]any{
+		"status":        "ok",
+		"sources":       len(sources),
+		"context_chars": len(contextText),
+	})
+	if s.contextCompressor != nil && maxContextChars > 0 && chunksTotalChars(chunks) > maxContextChars {
+		compressStartedAt := time.Now()
 		compressed, err := s.contextCompressor.Compress(context.Background(), query, chunks)
 		if err == nil && strings.TrimSpace(compressed) != "" {
 			contextText = compressed
+			logRetrievalStageMetrics(req, query, "context_compress", compressStartedAt, map[string]any{
+				"status":           "ok",
+				"compressed_chars": len(contextText),
+			})
+		} else {
+			logRetrievalStageMetrics(req, query, "context_compress", compressStartedAt, map[string]any{
+				"status": "error",
+				"error":  fmt.Sprint(err),
+			})
 		}
 	}
+	logRetrievalStageMetrics(req, query, "build_retrieval_context_total", startedAt, map[string]any{
+		"status":        "ok",
+		"sources":       len(sources),
+		"context_chars": len(contextText),
+	})
 	return contextText, sources, nil
 }
 
@@ -902,21 +942,45 @@ func (s *AppService) EvaluateRetrieve(req model.ChatCompletionRequest) ([]Retrie
 		return nil, fmt.Errorf("app service is nil")
 	}
 
+	startedAt := time.Now()
 	query := latestUserMessage(req.Messages)
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
 
 	var queryVector []float64
+	embeddingStartedAt := time.Now()
 	if s.queryRewriter == nil {
-		vectors, err := s.rag.EmbedTexts(context.Background(), s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
+		embedCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		vectors, err := s.rag.EmbedTexts(embedCtx, s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
 		if err != nil || len(vectors) == 0 {
+			logRetrievalStageMetrics(req, query, "query_embedding", embeddingStartedAt, map[string]any{
+				"status": "error",
+				"error":  fmt.Sprint(err),
+			})
 			return nil, err
 		}
 		queryVector = vectors[0]
+		logRetrievalStageMetrics(req, query, "query_embedding", embeddingStartedAt, map[string]any{
+			"status":          "ok",
+			"vector_size":     len(queryVector),
+			"used_rewriter":   false,
+			"used_cache_only": false,
+		})
+	} else {
+		logRetrievalStageMetrics(req, query, "query_embedding", embeddingStartedAt, map[string]any{
+			"status":        "skipped",
+			"used_rewriter": true,
+		})
 	}
 
-	return s.retrieveRelevantChunks(req, queryVector)
+	chunks, err := s.retrieveRelevantChunks(req, queryVector)
+	logRetrievalStageMetrics(req, query, "evaluate_retrieve_total", startedAt, map[string]any{
+		"status":          retrievalStatus(err),
+		"selected_chunks": len(chunks),
+	})
+	return chunks, err
 }
 
 func (s *AppService) CurrentEmbeddingConfig() model.EmbeddingModelConfig {
@@ -1205,6 +1269,7 @@ func (s *AppService) upsertDocumentChunks(knowledgeBaseID string, chunks []Docum
 				"document_name":     chunk.DocumentName,
 				"chunk_id":          chunk.ID,
 				"chunk_index":       chunk.Index,
+				"chunk_kind":        chunk.Kind,
 				"text":              chunk.Text,
 			},
 		})
@@ -1229,13 +1294,16 @@ func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, que
 	}
 
 	query := latestUserMessage(req.Messages)
-	params := resolveRetrievalParams(req)
+	params := resolveRetrievalParamsWithConfig(req, s.serverConfig)
+	autoExpand := s.retrievalAutoExpandEnabled()
 	ctx := context.Background()
 
 	var queryEmbedding []float32
 	if s.semanticCache != nil {
 		if len(queryVector) == 0 {
-			vectors, err := s.rag.EmbedTexts(ctx, s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
+			embedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+			defer cancel()
+			vectors, err := s.rag.EmbedTexts(embedCtx, s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
 			if err != nil || len(vectors) == 0 {
 				return nil, err
 			}
@@ -1285,10 +1353,9 @@ func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, que
 			}
 		}
 
-		candidates = s.rerankCandidates(ctx, candidates, query)
-		selected := selectWithMMR(candidates, params.finalTopK, params.perDocumentLimit)
+		selected := s.applySelectionStrategy(req, query, ctx, candidates, params)
 
-		if strings.TrimSpace(req.DocumentID) == "" && isLowConfidenceSelection(query, selected) {
+		if autoExpand && strings.TrimSpace(req.DocumentID) == "" && isLowConfidenceSelection(query, selected) {
 			expandedCandidateTopK := params.candidateTopK * 2
 			expandedCandidates := make([]RetrievedChunk, 0)
 			seenChunkIDs = make(map[string]struct{})
@@ -1309,8 +1376,9 @@ func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, que
 				}
 			}
 			if len(expandedCandidates) > 0 {
-				expandedCandidates = s.rerankCandidates(ctx, expandedCandidates, query)
-				expandedSelected := selectWithMMR(expandedCandidates, params.finalTopK, params.perDocumentLimit+1)
+				expandedParams := params
+				expandedParams.perDocumentLimit++
+				expandedSelected := s.applySelectionStrategy(req, query, ctx, expandedCandidates, expandedParams)
 				if selectionQuality(expandedSelected) > selectionQuality(selected) {
 					selected = expandedSelected
 				}
@@ -1326,7 +1394,9 @@ func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, que
 
 	useHybrid := s.shouldUseHybridSearch(req)
 	if len(queryVector) == 0 {
-		vectors, err := s.rag.EmbedTexts(ctx, s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
+		embedCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		vectors, err := s.rag.EmbedTexts(embedCtx, s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
 		if err != nil || len(vectors) == 0 {
 			return nil, err
 		}
@@ -1340,15 +1410,22 @@ func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, que
 	if err != nil {
 		return nil, err
 	}
-	candidates = s.rerankCandidates(ctx, candidates, query)
-	selected := selectWithMMR(candidates, params.finalTopK, params.perDocumentLimit)
+	selected := s.applySelectionStrategy(req, query, ctx, candidates, params)
 
-	if strings.TrimSpace(req.DocumentID) == "" && isLowConfidenceSelection(query, selected) {
+	if autoExpand && strings.TrimSpace(req.DocumentID) == "" && isLowConfidenceSelection(query, selected) {
 		expandedCandidateTopK := params.candidateTopK * 2
-		expandedCandidates, err := s.collectCandidates(knowledgeBaseIDs, req, queryVector, expandedCandidateTopK, useHybrid, query)
+		expandUseHybrid := useHybrid || s.shouldUseHybridFallback(selected)
+		logRetrievalStageMetrics(req, query, "hybrid_fallback_decision", time.Now(), map[string]any{
+			"status":           "ok",
+			"base_search_mode": ternaryString(useHybrid, "hybrid", "dense"),
+			"fallback_enabled": expandUseHybrid,
+			"low_confidence":   true,
+		})
+		expandedCandidates, err := s.collectCandidates(knowledgeBaseIDs, req, queryVector, expandedCandidateTopK, expandUseHybrid, query)
 		if err == nil {
-			expandedCandidates = s.rerankCandidates(ctx, expandedCandidates, query)
-			expandedSelected := selectWithMMR(expandedCandidates, params.finalTopK, params.perDocumentLimit+1)
+			expandedParams := params
+			expandedParams.perDocumentLimit++
+			expandedSelected := s.applySelectionStrategy(req, query, ctx, expandedCandidates, expandedParams)
 			if selectionQuality(expandedSelected) > selectionQuality(selected) {
 				selected = expandedSelected
 			}
@@ -1522,25 +1599,99 @@ type retrievalParams struct {
 }
 
 func resolveRetrievalParams(req model.ChatCompletionRequest) retrievalParams {
+	return resolveRetrievalParamsWithConfig(req, model.ServerConfig{})
+}
+
+func resolveRetrievalParamsWithConfig(req model.ChatCompletionRequest, cfg model.ServerConfig) retrievalParams {
+	documentCandidateTopK := cfg.RetrievalCandidateTopKDocument
+	if documentCandidateTopK <= 0 {
+		documentCandidateTopK = ragSearchCandidateTopKDocument
+	}
+	documentFinalTopK := cfg.RetrievalTopKDocument
+	if documentFinalTopK <= 0 {
+		documentFinalTopK = ragSearchTopKDocument
+	}
+	knowledgeBaseCandidateTopK := cfg.RetrievalCandidateTopKAllDocs
+	if knowledgeBaseCandidateTopK <= 0 {
+		knowledgeBaseCandidateTopK = ragSearchCandidateTopKAllDocs
+	}
+	knowledgeBaseFinalTopK := cfg.RetrievalTopKKnowledgeBase
+	if knowledgeBaseFinalTopK <= 0 {
+		knowledgeBaseFinalTopK = ragSearchTopKKnowledgeBase
+	}
+	perDocumentLimit := cfg.RetrievalMaxChunksPerDocument
+	if perDocumentLimit <= 0 {
+		perDocumentLimit = ragMaxChunksPerDocument
+	}
+
 	if strings.TrimSpace(req.DocumentID) != "" {
 		return retrievalParams{
-			candidateTopK:    ragSearchCandidateTopKDocument,
-			finalTopK:        ragSearchTopKDocument,
-			perDocumentLimit: ragSearchTopKDocument,
+			candidateTopK:    documentCandidateTopK,
+			finalTopK:        documentFinalTopK,
+			perDocumentLimit: maxInt(perDocumentLimit, documentFinalTopK),
 		}
 	}
 
 	return retrievalParams{
-		candidateTopK:    ragSearchCandidateTopKAllDocs,
-		finalTopK:        ragSearchTopKKnowledgeBase,
-		perDocumentLimit: ragMaxChunksPerDocument,
+		candidateTopK:    knowledgeBaseCandidateTopK,
+		finalTopK:        knowledgeBaseFinalTopK,
+		perDocumentLimit: perDocumentLimit,
 	}
 }
 
+func (s *AppService) retrievalMaxContextChars() int {
+	if s == nil || s.serverConfig.RetrievalMaxContextChars <= 0 {
+		return 2400
+	}
+	return s.serverConfig.RetrievalMaxContextChars
+}
+
+func (s *AppService) retrievalAutoExpandEnabled() bool {
+	if s == nil {
+		return false
+	}
+	return s.serverConfig.RetrievalEnableAutoExpand
+}
+
+func trimRetrievedChunksToContextLimit(chunks []RetrievedChunk, maxChars int) []RetrievedChunk {
+	if len(chunks) == 0 || maxChars <= 0 {
+		return chunks
+	}
+
+	trimmed := make([]RetrievedChunk, 0, len(chunks))
+	total := 0
+	for _, chunk := range chunks {
+		text := strings.TrimSpace(chunk.Text)
+		if text == "" {
+			continue
+		}
+		remaining := maxChars - total
+		if remaining <= 0 {
+			break
+		}
+
+		next := chunk
+		if len(text) > remaining {
+			next.Text = text[:remaining]
+			trimmed = append(trimmed, next)
+			break
+		}
+
+		next.Text = text
+		trimmed = append(trimmed, next)
+		total += len(next.Text)
+	}
+
+	return trimmed
+}
+
 func (s *AppService) collectCandidates(knowledgeBaseIDs []string, req model.ChatCompletionRequest, queryVector []float64, candidateTopK int, useHybrid bool, query string) ([]RetrievedChunk, error) {
+	startedAt := time.Now()
 	results := make([]RetrievedChunk, 0)
 	seenChunkIDs := make(map[string]struct{})
+	preferStructuredSummary := shouldPreferStructuredSummary(query)
 	for _, knowledgeBaseID := range knowledgeBaseIDs {
+		kbStartedAt := time.Now()
 		filter := map[string]any{}
 		if strings.TrimSpace(req.DocumentID) != "" {
 			filter = map[string]any{
@@ -1557,17 +1708,32 @@ func (s *AppService) collectCandidates(knowledgeBaseIDs []string, req model.Chat
 			sparseVector := BuildSparseVector(query)
 			searchResults, err := s.rag.SearchHybrid(context.Background(), s.qdrant, knowledgeBaseID, queryVector, sparseVector, candidateTopK, filter)
 			if err != nil {
+				logRetrievalStageMetrics(req, query, "collect_candidates_kb", kbStartedAt, map[string]any{
+					"status":         "error",
+					"knowledge_base": knowledgeBaseID,
+					"search_mode":    "hybrid",
+					"candidate_topk": candidateTopK,
+					"error":          err.Error(),
+				})
 				return nil, fmt.Errorf("hybrid search qdrant collection %s: %w", knowledgeBaseID, err)
 			}
 			items = searchResults
 		} else {
 			searchResults, err := s.qdrant.Search(context.Background(), knowledgeBaseID, queryVector, candidateTopK, filter)
 			if err != nil {
+				logRetrievalStageMetrics(req, query, "collect_candidates_kb", kbStartedAt, map[string]any{
+					"status":         "error",
+					"knowledge_base": knowledgeBaseID,
+					"search_mode":    "dense",
+					"candidate_topk": candidateTopK,
+					"error":          err.Error(),
+				})
 				return nil, fmt.Errorf("search qdrant collection %s: %w", knowledgeBaseID, err)
 			}
 			items = searchResults
 		}
 
+		added := 0
 		for _, item := range items {
 			chunkID := payloadString(item.Payload, "chunk_id", item.ID)
 			if _, exists := seenChunkIDs[chunkID]; exists {
@@ -1586,12 +1752,65 @@ func (s *AppService) collectCandidates(knowledgeBaseIDs []string, req model.Chat
 					DocumentName:    payloadString(item.Payload, "document_name", "未知文档"),
 					Text:            text,
 					Index:           payloadInt(item.Payload, "chunk_index"),
+					Kind:            payloadString(item.Payload, "chunk_kind", "text"),
 				},
 				Score: item.Score,
 			})
+			added++
+		}
+		logRetrievalStageMetrics(req, query, "collect_candidates_kb", kbStartedAt, map[string]any{
+			"status":                    "ok",
+			"knowledge_base":            knowledgeBaseID,
+			"search_mode":               ternaryString(useHybrid, "hybrid", "dense"),
+			"candidate_topk":            candidateTopK,
+			"raw_hits":                  len(items),
+			"added_hits":                added,
+			"prefer_structured_summary": preferStructuredSummary,
+		})
+	}
+	if preferStructuredSummary {
+		results = prioritizeStructuredSummaryChunks(results)
+	}
+	logRetrievalStageMetrics(req, query, "collect_candidates_total", startedAt, map[string]any{
+		"status":                    "ok",
+		"knowledge_bases":           len(knowledgeBaseIDs),
+		"candidate_topk":            candidateTopK,
+		"unique_candidates":         len(results),
+		"search_mode":               ternaryString(useHybrid, "hybrid", "dense"),
+		"prefer_structured_summary": preferStructuredSummary,
+	})
+	return results, nil
+}
+
+func shouldPreferStructuredSummary(query string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(query))
+	if lowered == "" {
+		return false
+	}
+	keywords := []string{"多少", "比例", "分布", "统计", "为什么", "占比", "人数", "数量", "资质", "地域"}
+	for _, keyword := range keywords {
+		if strings.Contains(lowered, keyword) {
+			return true
 		}
 	}
-	return results, nil
+	return false
+}
+
+func prioritizeStructuredSummaryChunks(chunks []RetrievedChunk) []RetrievedChunk {
+	if len(chunks) <= 1 {
+		return chunks
+	}
+	prioritized := make([]RetrievedChunk, len(chunks))
+	copy(prioritized, chunks)
+	sort.SliceStable(prioritized, func(i, j int) bool {
+		leftSummary := prioritized[i].Kind == "structured_summary"
+		rightSummary := prioritized[j].Kind == "structured_summary"
+		if leftSummary != rightSummary {
+			return leftSummary
+		}
+		return false
+	})
+	return prioritized
 }
 
 func (s *AppService) rerankCandidates(ctx context.Context, candidates []RetrievedChunk, query string) []RetrievedChunk {
@@ -1635,6 +1854,55 @@ func (s *AppService) rerankCandidates(ctx context.Context, candidates []Retrieve
 		return ranked[i].Score > ranked[j].Score
 	})
 	return ranked
+}
+
+func (s *AppService) applySelectionStrategy(req model.ChatCompletionRequest, query string, ctx context.Context, candidates []RetrievedChunk, params retrievalParams) []RetrievedChunk {
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	inputCount := len(candidates)
+	selected := candidates
+	if s.shouldBypassRerank(candidates) {
+		logRetrievalStageMetrics(req, query, "rerank_candidates", time.Now(), map[string]any{
+			"status":       "skipped",
+			"reason":       "high_confidence_top_hit",
+			"input_count":  inputCount,
+			"output_count": inputCount,
+		})
+	} else {
+		rerankStartedAt := time.Now()
+		selected = s.rerankCandidates(ctx, candidates, query)
+		logRetrievalStageMetrics(req, query, "rerank_candidates", rerankStartedAt, map[string]any{
+			"status":       "ok",
+			"input_count":  inputCount,
+			"output_count": len(selected),
+		})
+	}
+
+	if s.shouldBypassMMR(selected, params) {
+		fastSelected := takeTopChunks(selected, params.finalTopK, params.perDocumentLimit)
+		logRetrievalStageMetrics(req, query, "select_with_mmr", time.Now(), map[string]any{
+			"status":             "skipped",
+			"reason":             "low_candidate_count_or_high_confidence",
+			"candidate_count":    len(selected),
+			"selected_count":     len(fastSelected),
+			"final_topk":         params.finalTopK,
+			"per_document_limit": params.perDocumentLimit,
+		})
+		return fastSelected
+	}
+
+	mmrStartedAt := time.Now()
+	mmrSelected := selectWithMMR(selected, params.finalTopK, params.perDocumentLimit)
+	logRetrievalStageMetrics(req, query, "select_with_mmr", mmrStartedAt, map[string]any{
+		"status":             "ok",
+		"candidate_count":    len(selected),
+		"selected_count":     len(mmrSelected),
+		"final_topk":         params.finalTopK,
+		"per_document_limit": params.perDocumentLimit,
+	})
+	return mmrSelected
 }
 
 func selectWithMMR(candidates []RetrievedChunk, finalTopK, perDocumentLimit int) []RetrievedChunk {
@@ -1778,6 +2046,52 @@ func isLowConfidenceSelection(query string, chunks []RetrievedChunk) bool {
 	return entityCoverage(query, chunks) < 0.2
 }
 
+func (s *AppService) shouldBypassRerank(candidates []RetrievedChunk) bool {
+	if len(candidates) == 0 {
+		return true
+	}
+	if len(candidates) == 1 {
+		return true
+	}
+	return candidates[0].Score >= 0.92 && scoreGap(candidates) >= 0.12
+}
+
+func (s *AppService) shouldBypassMMR(candidates []RetrievedChunk, params retrievalParams) bool {
+	if len(candidates) == 0 {
+		return true
+	}
+	if len(candidates) <= minInt(params.finalTopK, 3) {
+		return true
+	}
+	return candidates[0].Score >= 0.9 && scoreGap(candidates) >= 0.15
+}
+
+func takeTopChunks(candidates []RetrievedChunk, finalTopK, perDocumentLimit int) []RetrievedChunk {
+	if len(candidates) == 0 || finalTopK <= 0 {
+		return nil
+	}
+	selected := make([]RetrievedChunk, 0, minInt(finalTopK, len(candidates)))
+	docSelected := make(map[string]int)
+	for _, candidate := range candidates {
+		if perDocumentLimit > 0 && docSelected[candidate.DocumentID] >= perDocumentLimit {
+			continue
+		}
+		selected = append(selected, candidate)
+		docSelected[candidate.DocumentID]++
+		if len(selected) >= finalTopK {
+			break
+		}
+	}
+	return selected
+}
+
+func scoreGap(chunks []RetrievedChunk) float64 {
+	if len(chunks) < 2 {
+		return 1
+	}
+	return chunks[0].Score - chunks[1].Score
+}
+
 func entityCoverage(query string, chunks []RetrievedChunk) float64 {
 	entities := splitTerms(query)
 	if len(entities) == 0 {
@@ -1858,7 +2172,17 @@ func (s *AppService) shouldUseHybridSearch(req model.ChatCompletionRequest) bool
 	if s == nil {
 		return false
 	}
-	return s.serverConfig.EnableHybridSearch
+	return false
+}
+
+func (s *AppService) shouldUseHybridFallback(selected []RetrievedChunk) bool {
+	if s == nil {
+		return false
+	}
+	if !s.serverConfig.EnableHybridSearch {
+		return false
+	}
+	return len(selected) == 0 || selectionQuality(selected) < 0.55
 }
 
 func selectionQuality(chunks []RetrievedChunk) float64 {
@@ -1913,6 +2237,41 @@ func logRetrievalMetrics(req model.ChatCompletionRequest, query string, params r
 	)
 }
 
+func logRetrievalStageMetrics(req model.ChatCompletionRequest, query, stage string, startedAt time.Time, fields map[string]any) {
+	parts := []string{
+		fmt.Sprintf("stage=%s", stage),
+		fmt.Sprintf("query=%q", strings.TrimSpace(query)),
+		fmt.Sprintf("scope_kb=%q", strings.TrimSpace(req.KnowledgeBaseID)),
+		fmt.Sprintf("scope_doc=%q", strings.TrimSpace(req.DocumentID)),
+		fmt.Sprintf("elapsed_ms=%d", time.Since(startedAt).Milliseconds()),
+	}
+	if len(fields) > 0 {
+		keys := make([]string, 0, len(fields))
+		for key := range fields {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%v", key, fields[key]))
+		}
+	}
+	log.Printf("retrieval_stage %s", strings.Join(parts, " "))
+}
+
+func retrievalStatus(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "ok"
+}
+
+func ternaryString(condition bool, whenTrue, whenFalse string) string {
+	if condition {
+		return whenTrue
+	}
+	return whenFalse
+}
+
 func splitTerms(text string) []string {
 	fields := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !(unicode.IsLetter(r) || unicode.IsNumber(r))
@@ -1935,6 +2294,13 @@ func splitTerms(text string) []string {
 
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

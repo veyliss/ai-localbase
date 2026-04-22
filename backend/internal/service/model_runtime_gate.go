@@ -7,8 +7,10 @@ import (
 )
 
 const (
-	defaultModelRuntimeQueueSize      = 128
-	defaultModelRuntimeEnqueueTimeout = 5 * time.Second
+	defaultModelRuntimeQueueSize          = 128
+	defaultModelRuntimeEnqueueTimeout     = 5 * time.Second
+	defaultEmbeddingRuntimeQueueSize      = 256
+	defaultEmbeddingRuntimeEnqueueTimeout = 1500 * time.Millisecond
 )
 
 type modelRuntimePriority int
@@ -21,6 +23,7 @@ const (
 var errModelRuntimeBusy = errors.New("model runtime is busy, please retry later")
 
 var sharedModelRuntimeScheduler = newModelRuntimeScheduler(defaultModelRuntimeQueueSize, defaultModelRuntimeEnqueueTimeout)
+var sharedEmbeddingRuntimeScheduler = newModelRuntimeScheduler(defaultEmbeddingRuntimeQueueSize, defaultEmbeddingRuntimeEnqueueTimeout)
 
 type modelRuntimeJob struct {
 	ctx      context.Context

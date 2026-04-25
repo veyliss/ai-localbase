@@ -285,6 +285,11 @@ ai-localbase/
 - 安全策略：[`SECURITY.md`](SECURITY.md)
 - 更新记录：[`CHANGELOG.md`](CHANGELOG.md)
 
+## Community / 社区
+
+- Community: https://linux.do
+- Discord：https://discord.gg/YzFeYC66y5
+
 **如果这个项目对你有帮助，请给个 ⭐ Star。**
 
 ## Star History

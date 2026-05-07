@@ -26,11 +26,21 @@ type realEvalRuntime struct {
 
 func main() {
 	var (
-		dataset      = flag.String("dataset", "eval/data/ground_truth_v1.small.json", "评估数据集 JSON 文件路径")
-		outputDir    = flag.String("output", "eval/results", "报告输出目录")
-		hitThreshold = flag.Float64("hit-threshold", 0.5, "命中文本匹配阈值 (0-1)")
-		mockMode     = flag.Bool("mock", true, "使用 mock 检索和生成函数（用于 CI/测试）")
-		realLLM      = flag.Bool("real-llm", false, "真实模式下调用真实 LLM 生成答案")
+		dataset                        = flag.String("dataset", "eval/data/ground_truth_v1.small.json", "评估数据集 JSON 文件路径")
+		outputDir                      = flag.String("output", "eval/results", "报告输出目录")
+		hitThreshold                   = flag.Float64("hit-threshold", 0.5, "命中文本匹配阈值 (0-1)")
+		mockMode                       = flag.Bool("mock", true, "使用 mock 检索和生成函数（用于 CI/测试）")
+		realLLM                        = flag.Bool("real-llm", false, "真实模式下调用真实 LLM 生成答案")
+		runPrefix                      = flag.String("run-prefix", "", "报告运行前缀；默认 mock 为 eval，真实模式为 baseline")
+		runLabel                       = flag.String("run-label", "", "报告运行标签；会追加到报告文件名中")
+		evalKnowledgeBaseID            = flag.String("eval-kb-id", "", "真实模式下覆盖评估知识库 ID")
+		retrievalTopKDocument          = flag.Int("retrieval-topk-document", -1, "真实模式下覆盖文档范围 finalTopK")
+		retrievalCandidateTopKDocument = flag.Int("retrieval-candidate-topk-document", -1, "真实模式下覆盖文档范围 candidateTopK")
+		retrievalTopKKnowledgeBase     = flag.Int("retrieval-topk-kb", -1, "真实模式下覆盖知识库范围 finalTopK")
+		retrievalCandidateTopKAllDocs  = flag.Int("retrieval-candidate-topk-all-docs", -1, "真实模式下覆盖知识库范围 candidateTopK")
+		retrievalMaxChunksPerDocument  = flag.Int("retrieval-max-chunks-per-document", -1, "真实模式下覆盖每文档最大 chunk 数")
+		retrievalMaxContextChars       = flag.Int("retrieval-max-context-chars", -1, "真实模式下覆盖上下文最大字符数")
+		retrievalAutoExpand            = flag.String("retrieval-auto-expand", "", "真实模式下覆盖自动扩召回开关，可选 true/false")
 	)
 	flag.Parse()
 
@@ -46,9 +56,13 @@ func main() {
 	}
 	log.Printf("[eval] 已加载 %d 个用例", len(ds.Cases))
 
+	if err := os.MkdirAll(*outputDir, 0o755); err != nil {
+		log.Fatalf("[eval] 创建输出目录失败 (%s): %v", *outputDir, err)
+	}
+
 	var retrievalFn offline.RetrievalFunc
 	var generationFn offline.GenerationFunc
-	runIDPrefix := "eval"
+	defaultRunPrefix := "eval"
 
 	if *mockMode {
 		log.Println("[eval] 使用 mock 模式")
@@ -56,22 +70,36 @@ func main() {
 		generationFn = mockGeneration
 	} else {
 		log.Printf("[eval] 使用真实模式，real-llm=%v", *realLLM)
-		runtime, err := newRealEvalRuntime(context.Background(), ds, *realLLM)
+		overrides, err := buildEvalOverrides(evalOverridesInput{
+			knowledgeBaseID:                *evalKnowledgeBaseID,
+			retrievalTopKDocument:          *retrievalTopKDocument,
+			retrievalCandidateTopKDocument: *retrievalCandidateTopKDocument,
+			retrievalTopKKnowledgeBase:     *retrievalTopKKnowledgeBase,
+			retrievalCandidateTopKAllDocs:  *retrievalCandidateTopKAllDocs,
+			retrievalMaxChunksPerDocument:  *retrievalMaxChunksPerDocument,
+			retrievalMaxContextChars:       *retrievalMaxContextChars,
+			retrievalAutoExpand:            *retrievalAutoExpand,
+		})
+		if err != nil {
+			log.Fatalf("[eval] 解析评估参数覆盖失败: %v", err)
+		}
+		runtime, err := newRealEvalRuntime(context.Background(), ds, *realLLM, overrides)
 		if err != nil {
 			log.Fatalf("[eval] 初始化真实评估模式失败: %v", err)
 		}
-		log.Printf("[eval] 真实模式配置: evalKnowledgeBaseID=%q retrieval(topKDoc=%d candidateDoc=%d topKKB=%d candidateAll=%d perDocLimit=%d autoExpand=%v)",
+		log.Printf("[eval] 真实模式配置: evalKnowledgeBaseID=%q retrieval(topKDoc=%d candidateDoc=%d topKKB=%d candidateAll=%d perDocLimit=%d maxContextChars=%d autoExpand=%v)",
 			runtime.appService.ServerConfig().EvalKnowledgeBaseID,
 			runtime.appService.ServerConfig().RetrievalTopKDocument,
 			runtime.appService.ServerConfig().RetrievalCandidateTopKDocument,
 			runtime.appService.ServerConfig().RetrievalTopKKnowledgeBase,
 			runtime.appService.ServerConfig().RetrievalCandidateTopKAllDocs,
 			runtime.appService.ServerConfig().RetrievalMaxChunksPerDocument,
+			runtime.appService.ServerConfig().RetrievalMaxContextChars,
 			runtime.appService.ServerConfig().RetrievalEnableAutoExpand,
 		)
 		retrievalFn = runtime.retrieval
 		generationFn = runtime.generation
-		runIDPrefix = "baseline"
+		defaultRunPrefix = "baseline"
 	}
 
 	cfg := offline.EvaluatorConfig{
@@ -87,7 +115,7 @@ func main() {
 	}
 	log.Printf("[eval] 评估完成，共 %d 个用例", len(results))
 
-	runID := fmt.Sprintf("%s-%s", runIDPrefix, time.Now().Format("20060102-150405"))
+	runID := buildRunID(defaultRunPrefix, *runPrefix, *runLabel, time.Now())
 	rpt := report.BuildReport(runID, *dataset, results, ds)
 
 	jsonPath := filepath.Join(*outputDir, runID+".json")
@@ -110,8 +138,30 @@ func main() {
 	}
 }
 
-func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool) (*realEvalRuntime, error) {
-	serverConfig := config.LoadServerConfig()
+type evalOverridesInput struct {
+	knowledgeBaseID                string
+	retrievalTopKDocument          int
+	retrievalCandidateTopKDocument int
+	retrievalTopKKnowledgeBase     int
+	retrievalCandidateTopKAllDocs  int
+	retrievalMaxChunksPerDocument  int
+	retrievalMaxContextChars       int
+	retrievalAutoExpand            string
+}
+
+type evalOverrides struct {
+	knowledgeBaseID                string
+	retrievalTopKDocument          int
+	retrievalCandidateTopKDocument int
+	retrievalTopKKnowledgeBase     int
+	retrievalCandidateTopKAllDocs  int
+	retrievalMaxChunksPerDocument  int
+	retrievalMaxContextChars       int
+	retrievalAutoExpand            *bool
+}
+
+func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool, overrides evalOverrides) (*realEvalRuntime, error) {
+	serverConfig := applyEvalOverrides(config.LoadServerConfig(), overrides)
 	if err := os.MkdirAll(serverConfig.UploadDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建上传目录失败: %w", err)
 	}
@@ -155,6 +205,109 @@ func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool) 
 		casesByQuestion: casesByQuestion,
 		realLLM:         realLLM,
 	}, nil
+}
+
+func buildEvalOverrides(input evalOverridesInput) (evalOverrides, error) {
+	overrides := evalOverrides{
+		knowledgeBaseID:                strings.TrimSpace(input.knowledgeBaseID),
+		retrievalTopKDocument:          input.retrievalTopKDocument,
+		retrievalCandidateTopKDocument: input.retrievalCandidateTopKDocument,
+		retrievalTopKKnowledgeBase:     input.retrievalTopKKnowledgeBase,
+		retrievalCandidateTopKAllDocs:  input.retrievalCandidateTopKAllDocs,
+		retrievalMaxChunksPerDocument:  input.retrievalMaxChunksPerDocument,
+		retrievalMaxContextChars:       input.retrievalMaxContextChars,
+	}
+
+	if strings.TrimSpace(input.retrievalAutoExpand) == "" {
+		return overrides, nil
+	}
+
+	parsed, err := parseOptionalBool(input.retrievalAutoExpand)
+	if err != nil {
+		return evalOverrides{}, err
+	}
+	overrides.retrievalAutoExpand = &parsed
+	return overrides, nil
+}
+
+func applyEvalOverrides(serverConfig model.ServerConfig, overrides evalOverrides) model.ServerConfig {
+	if overrides.knowledgeBaseID != "" {
+		serverConfig.EvalKnowledgeBaseID = overrides.knowledgeBaseID
+	}
+	if overrides.retrievalTopKDocument > 0 {
+		serverConfig.RetrievalTopKDocument = overrides.retrievalTopKDocument
+	}
+	if overrides.retrievalCandidateTopKDocument > 0 {
+		serverConfig.RetrievalCandidateTopKDocument = overrides.retrievalCandidateTopKDocument
+	}
+	if overrides.retrievalTopKKnowledgeBase > 0 {
+		serverConfig.RetrievalTopKKnowledgeBase = overrides.retrievalTopKKnowledgeBase
+	}
+	if overrides.retrievalCandidateTopKAllDocs > 0 {
+		serverConfig.RetrievalCandidateTopKAllDocs = overrides.retrievalCandidateTopKAllDocs
+	}
+	if overrides.retrievalMaxChunksPerDocument > 0 {
+		serverConfig.RetrievalMaxChunksPerDocument = overrides.retrievalMaxChunksPerDocument
+	}
+	if overrides.retrievalMaxContextChars > 0 {
+		serverConfig.RetrievalMaxContextChars = overrides.retrievalMaxContextChars
+	}
+	if overrides.retrievalAutoExpand != nil {
+		serverConfig.RetrievalEnableAutoExpand = *overrides.retrievalAutoExpand
+	}
+	return serverConfig
+}
+
+func buildRunID(defaultPrefix, customPrefix, label string, now time.Time) string {
+	prefix := sanitizeRunIDPart(customPrefix)
+	if prefix == "" {
+		prefix = sanitizeRunIDPart(defaultPrefix)
+	}
+	if prefix == "" {
+		prefix = "eval"
+	}
+
+	parts := []string{prefix, now.Format("20060102-150405")}
+	if sanitizedLabel := sanitizeRunIDPart(label); sanitizedLabel != "" {
+		parts = append(parts, sanitizedLabel)
+	}
+	return strings.Join(parts, "_")
+}
+
+func sanitizeRunIDPart(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	lastWasSeparator := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastWasSeparator = false
+		case r == '-', r == '_', r == '.', r == ' ', r == '/':
+			if builder.Len() == 0 || lastWasSeparator {
+				continue
+			}
+			builder.WriteRune('-')
+			lastWasSeparator = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func parseOptionalBool(value string) (bool, error) {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	switch normalized {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean value %q, expected true/false", value)
+	}
 }
 
 func (r *realEvalRuntime) retrieval(ctx context.Context, question string) ([]offline.RetrievedChunkInfo, time.Duration, error) {

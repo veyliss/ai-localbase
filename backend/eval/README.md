@@ -104,21 +104,85 @@ go run ./eval/cmd/ \
   -mock=true
 ```
 
+### 运行评估（真实模式）
+
+```bash
+cd backend
+go run ./eval/cmd/ \
+  -dataset eval/data/ground_truth_v1.small.json \
+  -output eval/results \
+  -mock=false \
+  -run-prefix baseline \
+  -run-label phase1-baseline
+```
+
+如需直接覆盖评估时使用的检索参数，可追加：
+
+```bash
+cd backend
+go run ./eval/cmd/ \
+  -dataset eval/data/ground_truth_v1.small.json \
+  -output eval/results \
+  -mock=false \
+  -eval-kb-id kb-1 \
+  -retrieval-topk-document 6 \
+  -retrieval-candidate-topk-document 12 \
+  -retrieval-topk-kb 10 \
+  -retrieval-candidate-topk-all-docs 32 \
+  -retrieval-max-chunks-per-document 2 \
+  -retrieval-max-context-chars 2400 \
+  -retrieval-auto-expand false \
+  -run-prefix baseline \
+  -run-label dense-only
+```
+
 ### 参数说明
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `-dataset` | `eval/data/ground_truth_v1.small.json` | 数据集文件路径 |
-| `-output` | `eval/results` | 报告输出目录 |
+| `-output` | `eval/results` | 报告输出目录；不存在时自动创建 |
 | `-hit-threshold` | `0.5` | 文本命中匹配阈值 |
 | `-mock` | `true` | 是否使用 mock 检索/生成函数 |
+| `-real-llm` | `false` | 真实模式下是否调用真实 LLM 生成答案 |
+| `-run-prefix` | mock 为 `eval`，真实模式为 `baseline` | 报告文件名前缀 |
+| `-run-label` | 空 | 报告标签，会追加到文件名末尾 |
+| `-eval-kb-id` | 空 | 真实模式下覆盖评估知识库 ID |
+| `-retrieval-topk-document` | `-1` | 覆盖文档范围 finalTopK；`-1` 表示沿用环境变量或默认配置 |
+| `-retrieval-candidate-topk-document` | `-1` | 覆盖文档范围 candidateTopK |
+| `-retrieval-topk-kb` | `-1` | 覆盖知识库范围 finalTopK |
+| `-retrieval-candidate-topk-all-docs` | `-1` | 覆盖知识库范围 candidateTopK |
+| `-retrieval-max-chunks-per-document` | `-1` | 覆盖每文档最大 chunk 数 |
+| `-retrieval-max-context-chars` | `-1` | 覆盖上下文最大字符数 |
+| `-retrieval-auto-expand` | 空 | 覆盖自动扩召回开关，支持 `true/false` |
 
 ### 输出文件
 
 运行后在 `eval/results/` 目录生成：
 
-- `eval-<timestamp>.json` — 完整 JSON 报告
-- `eval-<timestamp>.md` — Markdown 摘要报告
+- mock 模式默认：`eval_<timestamp>.json` / `eval_<timestamp>.md`
+- 真实模式默认：`baseline_<timestamp>.json` / `baseline_<timestamp>.md`
+- 若传入 `-run-label phase1-baseline`，文件名示例：`baseline_<timestamp>_phase1-baseline.json`
+
+### 阶段 1 推荐执行流程
+
+1. 先使用 [`backend/eval/cmd/reindex_kb/main.go`](backend/eval/cmd/reindex_kb/main.go) 为目标知识库重建索引。
+2. 使用真实模式跑一份 baseline 报告，并固定 `-run-prefix` 与 `-run-label`。
+3. 调整环境变量或命令行覆盖参数后，再跑一份对比报告。
+4. 将生成的 `.json` 与 `.md` 报告归档到 `eval/results/`。
+
+### 检索参数配置入口
+
+评估真实模式默认复用 [`backend/internal/config/config.go`](backend/internal/config/config.go:11) 中的服务配置，当前可通过环境变量调整：
+
+- `RETRIEVAL_TOPK_DOCUMENT`
+- `RETRIEVAL_CANDIDATE_TOPK_DOCUMENT`
+- `RETRIEVAL_TOPK_KNOWLEDGE_BASE`
+- `RETRIEVAL_CANDIDATE_TOPK_ALL_DOCS`
+- `RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT`
+- `RETRIEVAL_MAX_CONTEXT_CHARS`
+- `RETRIEVAL_ENABLE_AUTO_EXPAND`
+- `EVAL_KNOWLEDGE_BASE_ID`
 
 ---
 
@@ -131,7 +195,7 @@ type RetrievalFunc func(ctx context.Context, question string) (chunks []Retrieve
 type GenerationFunc func(ctx context.Context, question string, chunks []RetrievedChunkInfo) (answer string, latency time.Duration, err error)
 ```
 
-在 `eval_main.go` 中将 `mockRetrieval`/`mockGeneration` 替换为实际调用 `AppService.retrieveRelevantChunks` 和 RAG 生成的包装函数即可。
+当前 [`backend/eval/cmd/eval_main.go`](backend/eval/cmd/eval_main.go:27) 已可直接切换 mock/真实模式，并支持在评估运行时覆盖知识库与检索参数配置，无需手改源码。
 
 ---
 

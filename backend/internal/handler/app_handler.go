@@ -259,6 +259,29 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	if content, sources, ok, err := h.appService.TryBuildStructuredDataAnswer(req); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	} else if ok {
+		metadata := localResponseMetadata("structured-data-query")
+		metadata["sources"] = sources
+		metadata["knowledgeBaseId"] = req.KnowledgeBaseID
+		metadata["documentId"] = req.DocumentID
+		response := buildLocalChatResponse(req, content, metadata)
+		if _, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
+			ID:              req.ConversationID,
+			Title:           "",
+			KnowledgeBaseID: req.KnowledgeBaseID,
+			DocumentID:      req.DocumentID,
+			Messages:        buildStoredConversationMessages(req.Messages, content, metadata),
+		}); saveErr != nil {
+			writeError(c, http.StatusInternalServerError, saveErr.Error())
+			return
+		}
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
 	preparedReq, sources, err := h.prepareChatRequest(c.Request.Context(), req)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
@@ -305,6 +328,39 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 
 	if content, ok := buildIdentityAnswer(req); ok {
 		metadata := localResponseMetadata("identity-template")
+		if _, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
+			ID:              req.ConversationID,
+			Title:           "",
+			KnowledgeBaseID: req.KnowledgeBaseID,
+			DocumentID:      req.DocumentID,
+			Messages:        buildStoredConversationMessages(req.Messages, content, metadata),
+		}); saveErr != nil {
+			writeError(c, http.StatusInternalServerError, saveErr.Error())
+			return
+		}
+
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Connection", "keep-alive")
+		c.Writer.Header().Set("X-Accel-Buffering", "no")
+		c.Status(http.StatusOK)
+		c.SSEvent("meta", metadata)
+		c.SSEvent("chunk", gin.H{"content": content})
+		c.SSEvent("done", gin.H{"content": content, "metadata": metadata})
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+
+	if content, sources, ok, err := h.appService.TryBuildStructuredDataAnswer(req); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	} else if ok {
+		metadata := localResponseMetadata("structured-data-query")
+		metadata["sources"] = sources
+		metadata["knowledgeBaseId"] = req.KnowledgeBaseID
+		metadata["documentId"] = req.DocumentID
 		if _, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
 			ID:              req.ConversationID,
 			Title:           "",

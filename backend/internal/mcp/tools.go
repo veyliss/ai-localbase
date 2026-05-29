@@ -3,9 +3,11 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"ai-localbase/internal/model"
@@ -20,6 +22,8 @@ type AppServiceReader interface {
 	ListConversations() ([]model.ConversationListItem, error)
 	GetConversation(id string) (*model.Conversation, error)
 	BuildRetrievalContext(req model.ChatCompletionRequest) (string, []map[string]string, error)
+	TryBuildStructuredDataAnswer(req model.ChatCompletionRequest) (string, []map[string]string, bool, error)
+	GenerateEvalDataset(req model.GenerateEvalDatasetRequest) (model.GenerateEvalDatasetResponse, error)
 	CreateKnowledgeBase(req model.KnowledgeBaseInput) (model.KnowledgeBase, error)
 	DeleteKnowledgeBase(id string) (int, error)
 	DeleteDocument(knowledgeBaseID, documentID string) (model.Document, error)
@@ -173,6 +177,116 @@ func NewReadOnlyTools(appService AppServiceReader) []ToolDefinition {
 					text = "未检索到相关内容。"
 				}
 				return NewTextResult(text, map[string]any{"sources": sources, "knowledgeBaseId": knowledgeBaseID, "query": query}), nil
+			},
+		},
+		{
+			Name:        "search_document",
+			Description: "按单个文档执行检索并返回命中文本与来源。参数 documentId 与 query 为必填。",
+			InputSchema: requiredStringPropertiesSchema(map[string]string{
+				"documentId": "文档 ID",
+				"query":      "检索问题",
+			}),
+			ReadOnly:        true,
+			PermissionLevel: ToolPermissionReadOnly,
+			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+				_ = ctx
+				documentID, err := requiredStringArg(args, "documentId")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				query, err := requiredStringArg(args, "query")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				contextText, sources, err := appService.BuildRetrievalContext(model.ChatCompletionRequest{
+					DocumentID: documentID,
+					Messages: []model.ChatMessage{{
+						Role:    "user",
+						Content: query,
+					}},
+					Embedding: embeddingModelConfigFromAppConfig(appService.GetConfig()),
+				})
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				text := strings.TrimSpace(contextText)
+				if text == "" {
+					text = "未检索到相关内容。"
+				}
+				return NewTextResult(text, map[string]any{"sources": sources, "documentId": documentID, "query": query}), nil
+			},
+		},
+		{
+			Name:        "query_structured_data",
+			Description: "对 CSV / XLSX 结构化文档执行确定性查询，可用于预览、筛选、最大/最小值、平均值和分布统计。参数 query 必填，documentId 或 knowledgeBaseId 至少提供一个。",
+			InputSchema: objectSchema(
+				map[string]any{
+					"query":           map[string]any{"type": "string", "description": "结构化数据问题，例如：展示数据表格、筛选城市是上海的数据、薪资最高的是谁、按城市统计分布"},
+					"documentId":      map[string]any{"type": "string", "description": "文档 ID，推荐提供以避免多表歧义"},
+					"knowledgeBaseId": map[string]any{"type": "string", "description": "知识库 ID；当知识库只有一个结构化文档时可使用"},
+				},
+				[]string{"query"},
+			),
+			ReadOnly:        true,
+			PermissionLevel: ToolPermissionReadOnly,
+			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+				_ = ctx
+				query, err := requiredStringArg(args, "query")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				documentID := optionalStringArg(args, "documentId")
+				knowledgeBaseID := optionalStringArg(args, "knowledgeBaseId")
+				if documentID == "" && knowledgeBaseID == "" {
+					return ToolCallResult{}, fmt.Errorf("documentId or knowledgeBaseId is required")
+				}
+				content, sources, ok, err := appService.TryBuildStructuredDataAnswer(model.ChatCompletionRequest{
+					KnowledgeBaseID: knowledgeBaseID,
+					DocumentID:      documentID,
+					Messages: []model.ChatMessage{{
+						Role:    "user",
+						Content: query,
+					}},
+				})
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				if !ok {
+					return NewTextResult(
+						"未能执行结构化数据查询。请确认目标文档是 CSV / XLSX，且问题属于预览、筛选、统计、最大/最小值或平均值类型。",
+						map[string]any{"documentId": documentID, "knowledgeBaseId": knowledgeBaseID, "query": query, "matched": false},
+					), nil
+				}
+				return NewTextResult(content, map[string]any{"sources": sources, "documentId": documentID, "knowledgeBaseId": knowledgeBaseID, "query": query, "matched": true}), nil
+			},
+		},
+		{
+			Name:        "generate_eval_dataset",
+			Description: "从知识库或指定文档生成 RAG 评估数据集。参数 knowledgeBaseId、documentId 可选，maxPerDocument 可选。",
+			InputSchema: objectSchema(
+				map[string]any{
+					"knowledgeBaseId": map[string]any{"type": "string", "description": "知识库 ID，可选"},
+					"documentId":      map[string]any{"type": "string", "description": "文档 ID，可选"},
+					"maxPerDocument":  map[string]any{"type": "integer", "description": "每个文档最多生成多少条，默认 5，最大 20"},
+				},
+				[]string{},
+			),
+			ReadOnly:        true,
+			PermissionLevel: ToolPermissionReadOnly,
+			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+				_ = ctx
+				response, err := appService.GenerateEvalDataset(model.GenerateEvalDatasetRequest{
+					KnowledgeBaseID: optionalStringArg(args, "knowledgeBaseId"),
+					DocumentID:      optionalStringArg(args, "documentId"),
+					MaxPerDocument:  optionalIntArg(args, "maxPerDocument"),
+				})
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				return NewTextResult(
+					fmt.Sprintf("已生成 %d 条评估样本，覆盖 %d 个文档。", response.Count, response.DocumentCount),
+					map[string]any{"dataset": response},
+				), nil
 			},
 		},
 		{
@@ -636,6 +750,31 @@ func optionalStringArg(args map[string]any, key string) string {
 	}
 	value, _ := args[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func optionalIntArg(args map[string]any, key string) int {
+	if args == nil {
+		return 0
+	}
+	switch value := args[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err == nil {
+			return int(parsed)
+		}
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func requiredStringArg(args map[string]any, key string) (string, error) {

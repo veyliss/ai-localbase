@@ -173,6 +173,15 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 	if !containsString(toolNames, "register_staged_upload") {
 		t.Fatalf("expected register_staged_upload in tools list, got %v", toolNames)
 	}
+	if !containsString(toolNames, "search_document") {
+		t.Fatalf("expected search_document in tools list, got %v", toolNames)
+	}
+	if !containsString(toolNames, "query_structured_data") {
+		t.Fatalf("expected query_structured_data in tools list, got %v", toolNames)
+	}
+	if !containsString(toolNames, "generate_eval_dataset") {
+		t.Fatalf("expected generate_eval_dataset in tools list, got %v", toolNames)
+	}
 
 	callResp := performRequestWithHeaders(
 		t,
@@ -283,6 +292,131 @@ func TestMCPUploadTextDocument(t *testing.T) {
 	decodeJSONResponse(t, resp.Body.Bytes(), &rpcResp)
 	if rpcResp.Result.Data.Uploaded.Name != "sample-intro.txt" {
 		t.Fatalf("expected uploaded text document, got %+v", rpcResp.Result.Data.Uploaded)
+	}
+}
+
+func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
+	engine, _, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
+	if configResp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
+	}
+	var cfg model.AppConfig
+	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
+
+	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	if kbListResp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
+	}
+	var kbList struct {
+		Items []model.KnowledgeBase `json:"items"`
+	}
+	decodeJSONResponse(t, kbListResp.Body.Bytes(), &kbList)
+	if len(kbList.Items) == 0 {
+		t.Fatal("expected default knowledge base")
+	}
+	knowledgeBaseID := kbList.Items[0].ID
+
+	uploadResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      21,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "upload_text_document",
+				"arguments": map[string]any{
+					"knowledgeBaseId": knowledgeBaseID,
+					"fileName":        "mcp-users.csv",
+					"content":         "姓名,城市,薪资\n张三,上海,24000\n李四,北京,18000\n王五,上海,7000\n",
+				},
+			},
+		})),
+		"application/json",
+		headers,
+	)
+	if uploadResp.Code != http.StatusOK {
+		t.Fatalf("expected upload status 200, got %d, body=%s", uploadResp.Code, uploadResp.Body.String())
+	}
+	var uploadRPC struct {
+		Result struct {
+			Data struct {
+				Uploaded model.Document `json:"uploaded"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	decodeJSONResponse(t, uploadResp.Body.Bytes(), &uploadRPC)
+	documentID := uploadRPC.Result.Data.Uploaded.ID
+	if documentID == "" {
+		t.Fatalf("expected uploaded document id, got %+v", uploadRPC.Result.Data.Uploaded)
+	}
+
+	queryResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      22,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "query_structured_data",
+				"arguments": map[string]any{
+					"documentId": documentID,
+					"query":      "筛选城市是上海的数据",
+				},
+			},
+		})),
+		"application/json",
+		headers,
+	)
+	if queryResp.Code != http.StatusOK {
+		t.Fatalf("expected query status 200, got %d, body=%s", queryResp.Code, queryResp.Body.String())
+	}
+	if !strings.Contains(queryResp.Body.String(), "|张三|上海|24000|") || !strings.Contains(queryResp.Body.String(), "|王五|上海|7000|") {
+		t.Fatalf("expected structured rows in MCP result, got %s", queryResp.Body.String())
+	}
+
+	evalResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      23,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "generate_eval_dataset",
+				"arguments": map[string]any{
+					"documentId":     documentID,
+					"maxPerDocument": 2,
+				},
+			},
+		})),
+		"application/json",
+		headers,
+	)
+	if evalResp.Code != http.StatusOK {
+		t.Fatalf("expected eval status 200, got %d, body=%s", evalResp.Code, evalResp.Body.String())
+	}
+	var evalRPC struct {
+		Result struct {
+			Data struct {
+				Dataset model.GenerateEvalDatasetResponse `json:"dataset"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	decodeJSONResponse(t, evalResp.Body.Bytes(), &evalRPC)
+	if evalRPC.Result.Data.Dataset.Count == 0 {
+		t.Fatalf("expected generated eval cases, got %+v", evalRPC.Result.Data.Dataset)
 	}
 }
 

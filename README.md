@@ -200,6 +200,7 @@ docker compose -f docker-compose.app.yml up --build
 
 当前支持：
 
+- MCP Server 版本：**0.2.0**
 - HTTP 形式 MCP 入口
 - 工具列表发现能力
 - 只读 / 写入 / 危险工具权限分级
@@ -207,6 +208,7 @@ docker compose -f docker-compose.app.yml up --build
 - 限流、超时与审计日志
 - 危险工具二次确认机制
 - 复用现有知识库、会话、配置与检索服务
+- 文档详情、检索调试、结构化查询、评估集生成和重建索引工具
 
 默认入口：
 

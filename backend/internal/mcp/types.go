@@ -5,6 +5,8 @@ import "context"
 const (
 	jsonRPCVersion  = "2.0"
 	protocolVersion = "2024-11-05"
+	serverName      = "ai-localbase-mcp"
+	serverVersion   = "0.2.0"
 )
 
 type JSONRPCRequest struct {

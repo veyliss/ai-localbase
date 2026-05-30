@@ -18,9 +18,12 @@ type AppServiceReader interface {
 	GetConfig() model.AppConfig
 	ListKnowledgeBases() []model.KnowledgeBase
 	GetKnowledgeBaseDocuments(id string) ([]model.Document, error)
+	GetDocumentDetail(knowledgeBaseID, documentID string) (model.DocumentDetailResponse, error)
+	ReindexDocument(knowledgeBaseID, documentID string) (model.Document, error)
 	ListConversations() ([]model.ConversationListItem, error)
 	GetConversation(id string) (*model.Conversation, error)
 	BuildRetrievalContext(req model.ChatCompletionRequest) (string, []map[string]string, error)
+	DebugRetrieve(req model.RetrievalDebugRequest) (model.RetrievalDebugResponse, error)
 	TryBuildStructuredDataAnswer(req model.ChatCompletionRequest) (string, []map[string]string, bool, error)
 	GenerateEvalDataset(req model.GenerateEvalDatasetRequest) (model.GenerateEvalDatasetResponse, error)
 	CreateKnowledgeBase(req model.KnowledgeBaseInput) (model.KnowledgeBase, error)
@@ -100,6 +103,39 @@ func NewReadOnlyTools(appService AppServiceReader) []ToolDefinition {
 					})
 				}
 				return NewTextResult(fmt.Sprintf("知识库 %s 下共有 %d 份文档。", knowledgeBaseID, len(items)), map[string]any{"items": items}), nil
+			},
+		},
+		{
+			Name:        "get_document_detail",
+			Description: "返回指定文档的索引诊断、摘要、原文预览和 chunk 预览。参数 knowledgeBaseId、documentId 为必填。",
+			InputSchema: requiredStringPropertiesSchema(map[string]string{
+				"knowledgeBaseId": "知识库 ID",
+				"documentId":      "文档 ID",
+			}),
+			ReadOnly:        true,
+			PermissionLevel: ToolPermissionReadOnly,
+			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+				_ = ctx
+				knowledgeBaseID, err := requiredStringArg(args, "knowledgeBaseId")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				documentID, err := requiredStringArg(args, "documentId")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				detail, err := appService.GetDocumentDetail(knowledgeBaseID, documentID)
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				return NewTextResult(
+					fmt.Sprintf("文档《%s》共有 %d 个 chunk，结构化行 chunk %d 个。",
+						detail.Document.Name,
+						detail.Diagnostics.ChunkCount,
+						detail.Diagnostics.StructuredRowCount,
+					),
+					map[string]any{"detail": detail},
+				), nil
 			},
 		},
 		{
@@ -258,6 +294,50 @@ func NewReadOnlyTools(appService AppServiceReader) []ToolDefinition {
 			},
 		},
 		{
+			Name:        "debug_retrieval",
+			Description: "执行检索调试，返回命中 chunk、分数、低置信标记、结构化确定性补全状态和评测候选。参数 query 必填，knowledgeBaseId 或 documentId 至少提供一个。",
+			InputSchema: objectSchema(
+				map[string]any{
+					"query":           map[string]any{"type": "string", "description": "检索调试问题"},
+					"knowledgeBaseId": map[string]any{"type": "string", "description": "知识库 ID，可选"},
+					"documentId":      map[string]any{"type": "string", "description": "文档 ID，可选"},
+					"topK":            map[string]any{"type": "integer", "description": "最多返回多少个命中 chunk，默认使用服务端默认值"},
+				},
+				[]string{"query"},
+			),
+			ReadOnly:        true,
+			PermissionLevel: ToolPermissionReadOnly,
+			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+				_ = ctx
+				query, err := requiredStringArg(args, "query")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				knowledgeBaseID := optionalStringArg(args, "knowledgeBaseId")
+				documentID := optionalStringArg(args, "documentId")
+				if knowledgeBaseID == "" && documentID == "" {
+					return ToolCallResult{}, fmt.Errorf("knowledgeBaseId or documentId is required")
+				}
+				response, err := appService.DebugRetrieve(model.RetrievalDebugRequest{
+					Query:           query,
+					KnowledgeBaseID: knowledgeBaseID,
+					DocumentID:      documentID,
+					TopK:            optionalIntArg(args, "topK"),
+				})
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				summary := fmt.Sprintf("检索调试完成：命中 %d 个 chunk，耗时 %d ms。", response.Count, response.ElapsedMs)
+				if response.DeterministicUsed {
+					summary += " 已使用结构化确定性补全。"
+				}
+				if response.LowConfidence {
+					summary += " 当前结果低置信，可沉淀为评测样本。"
+				}
+				return NewTextResult(summary, map[string]any{"debug": response}), nil
+			},
+		},
+		{
 			Name:        "generate_eval_dataset",
 			Description: "从知识库或指定文档生成 RAG 评估数据集。参数 knowledgeBaseId、documentId 可选，maxPerDocument 可选。",
 			InputSchema: objectSchema(
@@ -372,6 +452,35 @@ func NewReadOnlyTools(appService AppServiceReader) []ToolDefinition {
 				return NewTextResult(
 					fmt.Sprintf("文档《%s》已删除。", removedDocument.Name),
 					map[string]any{"document": removedDocument},
+				), nil
+			},
+		},
+		{
+			Name:        "reindex_document",
+			Description: "重建指定文档索引。参数 knowledgeBaseId 与 documentId 为必填。该操作会重新解析文件、重建 chunk 并刷新向量索引。",
+			InputSchema: requiredStringPropertiesSchema(map[string]string{
+				"knowledgeBaseId": "知识库 ID",
+				"documentId":      "文档 ID",
+			}),
+			ReadOnly:        false,
+			PermissionLevel: ToolPermissionWrite,
+			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+				_ = ctx
+				knowledgeBaseID, err := requiredStringArg(args, "knowledgeBaseId")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				documentID, err := requiredStringArg(args, "documentId")
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				document, err := appService.ReindexDocument(knowledgeBaseID, documentID)
+				if err != nil {
+					return ToolCallResult{}, err
+				}
+				return NewTextResult(
+					fmt.Sprintf("文档《%s》已完成重建索引，当前状态为 %s。", document.Name, document.Status),
+					map[string]any{"document": document, "knowledgeBaseId": knowledgeBaseID},
 				), nil
 			},
 		},

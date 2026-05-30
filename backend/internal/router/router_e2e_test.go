@@ -130,6 +130,35 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 
 	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
 
+	infoResp := performRequestWithHeaders(t, engine, http.MethodGet, "/mcp", nil, "", headers)
+	if infoResp.Code != http.StatusOK {
+		t.Fatalf("expected info status 200, got %d, body=%s", infoResp.Code, infoResp.Body.String())
+	}
+	if !strings.Contains(infoResp.Body.String(), `"version":"0.2.0"`) {
+		t.Fatalf("expected mcp version in info response, got %s", infoResp.Body.String())
+	}
+
+	initResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      100,
+			"method":  "initialize",
+			"params":  map[string]any{},
+		})),
+		"application/json",
+		headers,
+	)
+	if initResp.Code != http.StatusOK {
+		t.Fatalf("expected initialize status 200, got %d, body=%s", initResp.Code, initResp.Body.String())
+	}
+	if !strings.Contains(initResp.Body.String(), `"version":"0.2.0"`) {
+		t.Fatalf("expected mcp version in initialize response, got %s", initResp.Body.String())
+	}
+
 	listResp := performRequestWithHeaders(t, engine, http.MethodGet, "/mcp/tools", nil, "", headers)
 	if listResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", listResp.Code, listResp.Body.String())
@@ -175,6 +204,15 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 	}
 	if !containsString(toolNames, "search_document") {
 		t.Fatalf("expected search_document in tools list, got %v", toolNames)
+	}
+	if !containsString(toolNames, "get_document_detail") {
+		t.Fatalf("expected get_document_detail in tools list, got %v", toolNames)
+	}
+	if !containsString(toolNames, "debug_retrieval") {
+		t.Fatalf("expected debug_retrieval in tools list, got %v", toolNames)
+	}
+	if !containsString(toolNames, "reindex_document") {
+		t.Fatalf("expected reindex_document in tools list, got %v", toolNames)
 	}
 	if !containsString(toolNames, "query_structured_data") {
 		t.Fatalf("expected query_structured_data in tools list, got %v", toolNames)
@@ -382,6 +420,88 @@ func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
 	}
 	if !strings.Contains(queryResp.Body.String(), "|张三|上海|24000|") || !strings.Contains(queryResp.Body.String(), "|王五|上海|7000|") {
 		t.Fatalf("expected structured rows in MCP result, got %s", queryResp.Body.String())
+	}
+
+	detailResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      24,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "get_document_detail",
+				"arguments": map[string]any{
+					"knowledgeBaseId": knowledgeBaseID,
+					"documentId":      documentID,
+				},
+			},
+		})),
+		"application/json",
+		headers,
+	)
+	if detailResp.Code != http.StatusOK {
+		t.Fatalf("expected detail status 200, got %d, body=%s", detailResp.Code, detailResp.Body.String())
+	}
+	if !strings.Contains(detailResp.Body.String(), `"diagnostics"`) || !strings.Contains(detailResp.Body.String(), `"chunks"`) {
+		t.Fatalf("expected document detail diagnostics and chunks, got %s", detailResp.Body.String())
+	}
+
+	debugResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      25,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "debug_retrieval",
+				"arguments": map[string]any{
+					"documentId": documentID,
+					"query":      "薪资最高是谁",
+					"topK":       5,
+				},
+			},
+		})),
+		"application/json",
+		headers,
+	)
+	if debugResp.Code != http.StatusOK {
+		t.Fatalf("expected debug status 200, got %d, body=%s", debugResp.Code, debugResp.Body.String())
+	}
+	if !strings.Contains(debugResp.Body.String(), `"deterministicUsed":true`) || !strings.Contains(debugResp.Body.String(), `"structuredIntent":"max"`) {
+		t.Fatalf("expected retrieval debug deterministic metadata, got %s", debugResp.Body.String())
+	}
+
+	reindexResp := performRequestWithHeaders(
+		t,
+		engine,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      26,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "reindex_document",
+				"arguments": map[string]any{
+					"knowledgeBaseId": knowledgeBaseID,
+					"documentId":      documentID,
+				},
+			},
+		})),
+		"application/json",
+		headers,
+	)
+	if reindexResp.Code != http.StatusOK {
+		t.Fatalf("expected reindex status 200, got %d, body=%s", reindexResp.Code, reindexResp.Body.String())
+	}
+	if !strings.Contains(reindexResp.Body.String(), `"status":"indexed"`) {
+		t.Fatalf("expected reindexed document status, got %s", reindexResp.Body.String())
 	}
 
 	evalResp := performRequestWithHeaders(

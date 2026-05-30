@@ -6,6 +6,7 @@
 
 当前能力包括：
 
+- MCP Server 版本：**0.2.0**
 - 提供 HTTP 形式的 MCP 入口
 - 提供工具列表发现能力
 - 提供只读 / 写入 / 危险工具调用能力
@@ -80,7 +81,7 @@ MCP_REQUESTS_PER_MINUTE=120
 
 ## 当前内置工具
 
-当前共提供 **13 个 MCP 工具**，分为 **6 个只读工具**、**4 个写工具**、**3 个危险工具**。
+当前共提供 **20 个 MCP 工具**，分为 **11 个只读工具**、**6 个写工具**、**3 个危险工具**。
 
 ### 权限级别说明
 
@@ -95,13 +96,20 @@ MCP_REQUESTS_PER_MINUTE=120
 | `get_config_summary` | `read-only` | 获取当前 Chat / Embedding 配置摘要 |
 | `list_knowledge_bases` | `read-only` | 列出全部知识库及统计信息 |
 | `list_documents` | `read-only` | 按知识库列出文档 |
+| `get_document_detail` | `read-only` | 获取文档详情、索引诊断和 chunk 预览 |
 | `list_conversations` | `read-only` | 列出全部会话 |
 | `get_conversation` | `read-only` | 获取单个会话详情 |
 | `search_knowledge_base` | `read-only` | 按知识库执行检索 |
+| `search_document` | `read-only` | 按单个文档执行检索 |
+| `query_structured_data` | `read-only` | 对 CSV / XLSX 执行确定性结构化查询 |
+| `debug_retrieval` | `read-only` | 调试检索命中、低置信和确定性补全 |
+| `generate_eval_dataset` | `read-only` | 生成 RAG 评估数据集 |
 | `create_knowledge_base` | `write` | 创建知识库 |
 | `save_conversation` | `write` | 保存完整会话 |
 | `upload_text_document` | `write` | 上传纯文本文档 |
 | `upload_document` | `write` | 上传 Base64 编码的真实文件 |
+| `register_staged_upload` | `write` | 注册 HTTP 暂存上传文件 |
+| `reindex_document` | `write` | 重建文档索引 |
 | `delete_knowledge_base` | `danger` | 删除知识库 |
 | `delete_document` | `danger` | 删除文档 |
 | `delete_conversation` | `danger` | 删除会话 |
@@ -152,6 +160,23 @@ MCP_REQUESTS_PER_MINUTE=120
 - `status`
 - `contentPreview`
 
+#### `get_document_detail`
+
+权限级别：`read-only`
+
+输入参数：
+
+- `knowledgeBaseId`（必填）
+- `documentId`（必填）
+
+返回内容：
+
+- 文档基础信息
+- 原文预览
+- 摘要预览
+- chunk 预览
+- 索引诊断信息，包括 chunk 数、向量数、摘要 chunk 数、结构化行 chunk 数和 Qdrant 状态
+
 #### `list_conversations`
 
 权限级别：`read-only`
@@ -191,6 +216,87 @@ MCP_REQUESTS_PER_MINUTE=120
 - 检索命中的上下文文本
 - `sources` 来源列表
 - 请求使用的知识库 ID 与查询词
+
+#### `search_document`
+
+权限级别：`read-only`
+
+输入参数：
+
+- `documentId`（必填）
+- `query`（必填）
+
+返回内容：
+
+- 单文档范围内检索命中的上下文文本
+- `sources` 来源列表
+- 请求使用的文档 ID 与查询词
+
+#### `query_structured_data`
+
+权限级别：`read-only`
+
+输入参数：
+
+- `query`（必填）
+- `documentId`（选填）
+- `knowledgeBaseId`（选填）
+
+说明：
+
+- `documentId` 或 `knowledgeBaseId` 至少提供一个
+- 支持 CSV / XLSX 表格的预览、筛选、计数、最大值、最小值、平均值和分布统计
+- 当前结构化查询会直接读取原始表格行，适合“薪资最高是谁”“平均年龄是多少”这类确定性问题
+
+返回内容：
+
+- Markdown 格式的结构化查询结果
+- `sources` 来源列表
+- `matched` 是否成功匹配结构化查询计划
+
+#### `debug_retrieval`
+
+权限级别：`read-only`
+
+输入参数：
+
+- `query`（必填）
+- `knowledgeBaseId`（选填）
+- `documentId`（选填）
+- `topK`（选填）
+
+说明：
+
+- `knowledgeBaseId` 或 `documentId` 至少提供一个
+- 用于调试真实检索命中、chunk 分数、结构化确定性补全和低置信状态
+- 当结果低置信时，会返回可人工复核的评测候选 `evalCandidate`
+
+返回内容：
+
+- 命中 chunk 列表
+- 检索耗时
+- `lowConfidence`
+- `deterministicUsed`
+- `structuredIntent`
+- `targetField`
+- `contextPreview`
+- `evalCandidate`
+
+#### `generate_eval_dataset`
+
+权限级别：`read-only`
+
+输入参数：
+
+- `knowledgeBaseId`（选填）
+- `documentId`（选填）
+- `maxPerDocument`（选填，默认 `5`，最大 `20`）
+
+返回内容：
+
+- 评估数据集
+- 覆盖文档数量
+- 生成样本数量
 
 ### 写工具
 
@@ -301,6 +407,27 @@ MCP_REQUESTS_PER_MINUTE=120
 - 已注册并完成索引的文档对象
 - 知识库 ID
 - 对应的 `uploadId`
+
+#### `reindex_document`
+
+权限级别：`write`
+
+输入参数：
+
+- `knowledgeBaseId`（必填）
+- `documentId`（必填）
+
+说明：
+
+- 重新解析原始文件
+- 重建文档 chunk
+- 刷新向量索引
+- 适合模型配置、向量维度、混合检索或结构化解析逻辑变更后使用
+
+返回内容：
+
+- 重建后的文档对象
+- 知识库 ID
 
 ### 危险工具
 

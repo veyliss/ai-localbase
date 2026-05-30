@@ -66,7 +66,8 @@ func (s *Server) handleInfo(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"name":            "ai-localbase-mcp",
+		"name":            serverName,
+		"version":         serverVersion,
 		"protocolVersion": protocolVersion,
 		"jsonrpc":         jsonRPCVersion,
 		"capabilities":    gin.H{"tools": gin.H{"listChanged": false}},
@@ -120,8 +121,8 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 			Result: map[string]any{
 				"protocolVersion": protocolVersion,
 				"serverInfo": map[string]any{
-					"name":    "ai-localbase-mcp",
-					"version": "0.1.0",
+					"name":    serverName,
+					"version": serverVersion,
 				},
 				"capabilities": map[string]any{
 					"tools": map[string]any{

@@ -15,21 +15,33 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build release notes from annotated tag
+        run: |
+          git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)' > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "## ${GITHUB_REF_NAME}" > RELEASE_NOTES.md
+          fi
+          cat >> RELEASE_NOTES.md <<'EOF'
+
+          ## Docker Images
+
+          - Backend: `ghcr.io/veyliss/ai-localbase-backend:${{ github.ref_name }}`
+          - Frontend: `ghcr.io/veyliss/ai-localbase-frontend:${{ github.ref_name }}`
+
+          ## Quick Start
+
+          ```bash
+          docker compose -f docker-compose.prod.yml up -d
+          ```
+
+          更多部署说明见 [`DOCKER_DEPLOY.md`](./DOCKER_DEPLOY.md)。
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          body: |
-            ## Docker Images
-
-            - Backend: `ghcr.io/veyliss/ai-localbase-backend:${{ github.ref_name }}`
-            - Frontend: `ghcr.io/veyliss/ai-localbase-frontend:${{ github.ref_name }}`
-
-            ## Quick Start
-
-            ```bash
-            docker compose -f docker-compose.prod.yml up -d
-            ```
-
-            更多部署说明见 [`DOCKER_DEPLOY.md`](./DOCKER_DEPLOY.md)。
+          body_path: RELEASE_NOTES.md

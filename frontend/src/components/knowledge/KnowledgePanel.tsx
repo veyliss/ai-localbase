@@ -8,6 +8,8 @@ import type {
   GenerateEvalDatasetResponse,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
+  UpdateEvalDatasetItemResponse,
+  DeleteEvalDatasetItemResponse,
 } from '../../services/api'
 import CreateKnowledgeBaseDialog from './CreateKnowledgeBaseDialog'
 import DirectoryUploadTaskPanel from './DirectoryUploadTaskPanel'
@@ -41,6 +43,15 @@ interface KnowledgePanelProps {
     documentId: string | null,
     item: EvalGroundTruthCase,
   ) => Promise<EvalDatasetSummary>
+  onUpdateEvalDatasetItem: (
+    datasetId: string,
+    itemId: string,
+    item: EvalGroundTruthCase,
+  ) => Promise<UpdateEvalDatasetItemResponse>
+  onDeleteEvalDatasetItem: (
+    datasetId: string,
+    itemId: string,
+  ) => Promise<DeleteEvalDatasetItemResponse>
   directoryUploadTask: DirectoryUploadTask
   onCancelDirectoryUpload: () => void
   onContinueDirectoryUpload: () => void
@@ -75,6 +86,8 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   onFetchEvalDataset,
   onDeleteEvalDataset,
   onAddEvalDatasetCandidate,
+  onUpdateEvalDatasetItem,
+  onDeleteEvalDatasetItem,
   directoryUploadTask,
   onCancelDirectoryUpload,
   onContinueDirectoryUpload,
@@ -273,6 +286,41 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
       window.alert(`删除评估集失败：${message}`)
     } finally {
       setDeletingEvalDatasetId(null)
+    }
+  }
+
+  const handleUpdateEvalDatasetItem = async (
+    datasetId: string,
+    itemId: string,
+    item: EvalGroundTruthCase,
+  ) => {
+    const response = await onUpdateEvalDatasetItem(datasetId, itemId, item)
+    setEvalDataset((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        count: response.dataset.count,
+        items: prev.items.map((existing) => existing.id === itemId ? response.item : existing),
+      }
+    })
+    if (activeKnowledgeBaseId) {
+      void loadEvalDatasets(activeKnowledgeBaseId)
+    }
+    return response.item
+  }
+
+  const handleDeleteEvalDatasetItem = async (datasetId: string, itemId: string) => {
+    const response = await onDeleteEvalDatasetItem(datasetId, itemId)
+    setEvalDataset((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        count: response.dataset.count,
+        items: prev.items.filter((item) => item.id !== itemId),
+      }
+    })
+    if (activeKnowledgeBaseId) {
+      void loadEvalDatasets(activeKnowledgeBaseId)
     }
   }
 
@@ -627,6 +675,8 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
           dataset={evalDataset}
           scopeName={evalDatasetScopeName}
           onClose={() => setEvalDataset(null)}
+          onUpdateItem={handleUpdateEvalDatasetItem}
+          onDeleteItem={handleDeleteEvalDatasetItem}
         />
       )}
     </>

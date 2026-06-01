@@ -300,3 +300,86 @@ func TestAddEvalDatasetCandidateCreatesReviewDataset(t *testing.T) {
 		t.Fatalf("expected persisted review status, got %#v", loaded.EvalDatasets[response.Dataset.ID].Items[0])
 	}
 }
+
+func TestUpdateAndDeleteEvalDatasetItem(t *testing.T) {
+	tempDir := t.TempDir()
+	store := NewAppStateStore(filepath.Join(tempDir, "state.json"))
+	service := &AppService{
+		state: &model.AppState{
+			Config: model.AppConfig{},
+			KnowledgeBases: map[string]model.KnowledgeBase{
+				"kb-1": {
+					ID:        "kb-1",
+					Name:      "教师信息",
+					CreatedAt: "2026-03-12T00:00:00Z",
+				},
+			},
+			EvalDatasets: map[string]model.EvalDataset{
+				"eval-1": {
+					ID:              "eval-1",
+					Name:            "待审核评估样本 - 教师信息",
+					Kind:            evalDatasetKindReview,
+					KnowledgeBaseID: "kb-1",
+					Count:           1,
+					DocumentCount:   1,
+					CreatedAt:       "2026-03-12T00:00:00Z",
+					Items: []model.EvalGroundTruthCase{{
+						ID:             "case-1",
+						Question:       "谁的薪资最高？",
+						Answer:         "候选答案",
+						AnswerSnippets: []string{"候选片段"},
+						SourceDocuments: []model.EvalSourceDocument{{
+							KnowledgeBaseID: "kb-1",
+							DocumentID:      "doc-1",
+							ChunkID:         "chunk-1",
+						}},
+						AnswerType:   "retrieval-debug-candidate",
+						Difficulty:   "hard",
+						ReviewStatus: evalReviewStatusPending,
+						Disabled:     true,
+					}},
+				},
+			},
+		},
+		store: store,
+		rag:   NewRagService(),
+	}
+
+	updateResp, err := service.UpdateEvalDatasetItem("eval-1", "case-1", model.UpdateEvalDatasetItemRequest{
+		Item: model.EvalGroundTruthCase{
+			ID:             "ignored-id",
+			Question:       "谁的薪资最高？",
+			Answer:         "张三的薪资最高。",
+			AnswerSnippets: []string{"张三,24000"},
+			AnswerType:     "numeric",
+			Difficulty:     "medium",
+			ReviewStatus:   evalReviewStatusApproved,
+			Disabled:       false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("update eval dataset item: %v", err)
+	}
+	if updateResp.Item.ID != "case-1" || updateResp.Item.ReviewStatus != evalReviewStatusApproved || updateResp.Item.Disabled {
+		t.Fatalf("unexpected updated item: %#v", updateResp.Item)
+	}
+	if len(updateResp.Item.SourceDocuments) != 1 {
+		t.Fatalf("expected source documents preserved, got %#v", updateResp.Item.SourceDocuments)
+	}
+
+	deleteResp, err := service.DeleteEvalDatasetItem("eval-1", "case-1")
+	if err != nil {
+		t.Fatalf("delete eval dataset item: %v", err)
+	}
+	if deleteResp.Dataset.Count != 0 {
+		t.Fatalf("expected empty dataset after delete, got %#v", deleteResp.Dataset)
+	}
+
+	dataset, err := service.GetEvalDataset("eval-1")
+	if err != nil {
+		t.Fatalf("get eval dataset: %v", err)
+	}
+	if dataset.Count != 0 || len(dataset.Items) != 0 {
+		t.Fatalf("expected deleted item, got %#v", dataset)
+	}
+}

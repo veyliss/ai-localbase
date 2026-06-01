@@ -250,6 +250,16 @@ export interface AddEvalDatasetCandidateResponse {
   created: boolean
 }
 
+export interface UpdateEvalDatasetItemResponse {
+  dataset: EvalDatasetSummary
+  item: EvalGroundTruthCase
+}
+
+export interface DeleteEvalDatasetItemResponse {
+  dataset: EvalDatasetSummary
+  deleted: string
+}
+
 export const normalizeDocument = (document: BackendDocumentItem): DocumentItem => ({
   id: document.id,
   name: document.name,
@@ -495,6 +505,27 @@ export const addEvalDatasetCandidate = async (
   requestJson<AddEvalDatasetCandidateResponse>(
     '/api/eval/datasets/review-candidates',
     jsonRequest({ knowledgeBaseId, documentId: documentId ?? '', item }, { method: 'POST' }),
+  )
+)
+
+export const updateEvalDatasetItem = async (
+  datasetId: string,
+  itemId: string,
+  item: EvalGroundTruthCase,
+): Promise<UpdateEvalDatasetItemResponse> => (
+  requestJson<UpdateEvalDatasetItemResponse>(
+    `/api/eval/datasets/${datasetId}/items/${encodeURIComponent(itemId)}`,
+    jsonRequest({ item }, { method: 'PUT' }),
+  )
+)
+
+export const deleteEvalDatasetItem = async (
+  datasetId: string,
+  itemId: string,
+): Promise<DeleteEvalDatasetItemResponse> => (
+  requestJson<DeleteEvalDatasetItemResponse>(
+    `/api/eval/datasets/${datasetId}/items/${encodeURIComponent(itemId)}`,
+    { method: 'DELETE' },
   )
 )
 

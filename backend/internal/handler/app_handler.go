@@ -231,6 +231,32 @@ func (h *AppHandler) AddEvalDatasetCandidate(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func (h *AppHandler) UpdateEvalDatasetItem(c *gin.Context) {
+	var req model.UpdateEvalDatasetItemRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid eval dataset item payload")
+		return
+	}
+
+	response, err := h.appService.UpdateEvalDatasetItem(c.Param("datasetId"), c.Param("itemId"), req)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *AppHandler) DeleteEvalDatasetItem(c *gin.Context) {
+	response, err := h.appService.DeleteEvalDatasetItem(c.Param("datasetId"), c.Param("itemId"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *AppHandler) DeleteEvalDataset(c *gin.Context) {
 	if err := h.appService.DeleteEvalDataset(c.Param("datasetId")); err != nil {
 		writeError(c, http.StatusNotFound, err.Error())

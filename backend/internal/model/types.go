@@ -376,6 +376,20 @@ type AddEvalDatasetCandidateResponse struct {
 	Created bool                `json:"created"`
 }
 
+type UpdateEvalDatasetItemRequest struct {
+	Item EvalGroundTruthCase `json:"item"`
+}
+
+type UpdateEvalDatasetItemResponse struct {
+	Dataset EvalDatasetSummary  `json:"dataset"`
+	Item    EvalGroundTruthCase `json:"item"`
+}
+
+type DeleteEvalDatasetItemResponse struct {
+	Dataset EvalDatasetSummary `json:"dataset"`
+	Deleted string             `json:"deleted"`
+}
+
 type RetrievalDebugRequest struct {
 	Query           string `json:"query"`
 	KnowledgeBaseID string `json:"knowledgeBaseId"`

@@ -155,12 +155,16 @@ func (s *AppService) AddEvalDatasetCandidate(req model.AddEvalDatasetCandidateRe
 		return model.AddEvalDatasetCandidateResponse{}, fmt.Errorf("app service is nil")
 	}
 
-	item := normalizeEvalCandidateItem(req.Item)
-	if item.Question == "" {
-		return model.AddEvalDatasetCandidateResponse{}, fmt.Errorf("eval candidate question is required")
-	}
-	if item.Answer == "" && len(item.AnswerSnippets) == 0 {
-		return model.AddEvalDatasetCandidateResponse{}, fmt.Errorf("eval candidate answer or snippets are required")
+	item, err := normalizeEvalDatasetItemForSave(req.Item, normalizeEvalDatasetItemOptions{
+		DefaultAnswerType:   "retrieval-debug-candidate",
+		DefaultDifficulty:   "hard",
+		DefaultReviewStatus: evalReviewStatusPending,
+		ForceDisabled:       true,
+		DefaultNotes:        "pending review from retrieval debug",
+		RequireReviewNote:   true,
+	})
+	if err != nil {
+		return model.AddEvalDatasetCandidateResponse{}, err
 	}
 
 	knowledgeBaseID, documentID, documentCount, datasetName, err := s.resolveEvalCandidateScope(req, item)
@@ -240,6 +244,131 @@ func (s *AppService) AddEvalDatasetCandidate(req model.AddEvalDatasetCandidateRe
 		Dataset: evalDatasetSummary(dataset),
 		Item:    item,
 		Created: createdDataset || !replaced,
+	}, nil
+}
+
+func (s *AppService) UpdateEvalDatasetItem(datasetID, itemID string, req model.UpdateEvalDatasetItemRequest) (model.UpdateEvalDatasetItemResponse, error) {
+	if s == nil || s.state == nil {
+		return model.UpdateEvalDatasetItemResponse{}, fmt.Errorf("app service is nil")
+	}
+	datasetID = strings.TrimSpace(datasetID)
+	itemID = strings.TrimSpace(itemID)
+	if datasetID == "" || itemID == "" {
+		return model.UpdateEvalDatasetItemResponse{}, fmt.Errorf("eval dataset id and item id are required")
+	}
+
+	item, err := normalizeEvalDatasetItemForSave(req.Item, normalizeEvalDatasetItemOptions{
+		DefaultAnswerType:   "extractive",
+		DefaultDifficulty:   "medium",
+		DefaultReviewStatus: evalReviewStatusApproved,
+	})
+	if err != nil {
+		return model.UpdateEvalDatasetItemResponse{}, err
+	}
+	item.ID = itemID
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	var previousDataset model.EvalDataset
+	var updatedDataset model.EvalDataset
+	found := false
+	s.state.Mu.Lock()
+	if s.state.EvalDatasets == nil {
+		s.state.EvalDatasets = map[string]model.EvalDataset{}
+	}
+	dataset, ok := s.state.EvalDatasets[datasetID]
+	if !ok {
+		s.state.Mu.Unlock()
+		return model.UpdateEvalDatasetItemResponse{}, fmt.Errorf("eval dataset not found")
+	}
+	previousDataset = dataset
+	previousDataset.Items = cloneEvalGroundTruthCases(dataset.Items)
+	for index, existing := range dataset.Items {
+		if existing.ID == itemID {
+			if len(item.SourceDocuments) == 0 {
+				item.SourceDocuments = append([]model.EvalSourceDocument(nil), existing.SourceDocuments...)
+			}
+			dataset.Items[index] = item
+			found = true
+			break
+		}
+	}
+	if !found {
+		s.state.Mu.Unlock()
+		return model.UpdateEvalDatasetItemResponse{}, fmt.Errorf("eval dataset item not found")
+	}
+	dataset.Count = len(dataset.Items)
+	dataset.UpdatedAt = now
+	s.state.EvalDatasets[datasetID] = dataset
+	updatedDataset = dataset
+	s.state.Mu.Unlock()
+
+	if err := s.saveState(); err != nil {
+		s.state.Mu.Lock()
+		s.state.EvalDatasets[datasetID] = previousDataset
+		s.state.Mu.Unlock()
+		return model.UpdateEvalDatasetItemResponse{}, err
+	}
+
+	return model.UpdateEvalDatasetItemResponse{
+		Dataset: evalDatasetSummary(updatedDataset),
+		Item:    item,
+	}, nil
+}
+
+func (s *AppService) DeleteEvalDatasetItem(datasetID, itemID string) (model.DeleteEvalDatasetItemResponse, error) {
+	if s == nil || s.state == nil {
+		return model.DeleteEvalDatasetItemResponse{}, fmt.Errorf("app service is nil")
+	}
+	datasetID = strings.TrimSpace(datasetID)
+	itemID = strings.TrimSpace(itemID)
+	if datasetID == "" || itemID == "" {
+		return model.DeleteEvalDatasetItemResponse{}, fmt.Errorf("eval dataset id and item id are required")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	var previousDataset model.EvalDataset
+	var updatedDataset model.EvalDataset
+	s.state.Mu.Lock()
+	if s.state.EvalDatasets == nil {
+		s.state.EvalDatasets = map[string]model.EvalDataset{}
+	}
+	dataset, ok := s.state.EvalDatasets[datasetID]
+	if !ok {
+		s.state.Mu.Unlock()
+		return model.DeleteEvalDatasetItemResponse{}, fmt.Errorf("eval dataset not found")
+	}
+	previousDataset = dataset
+	previousDataset.Items = cloneEvalGroundTruthCases(dataset.Items)
+	nextItems := make([]model.EvalGroundTruthCase, 0, len(dataset.Items))
+	found := false
+	for _, item := range dataset.Items {
+		if item.ID == itemID {
+			found = true
+			continue
+		}
+		nextItems = append(nextItems, item)
+	}
+	if !found {
+		s.state.Mu.Unlock()
+		return model.DeleteEvalDatasetItemResponse{}, fmt.Errorf("eval dataset item not found")
+	}
+	dataset.Items = nextItems
+	dataset.Count = len(nextItems)
+	dataset.UpdatedAt = now
+	s.state.EvalDatasets[datasetID] = dataset
+	updatedDataset = dataset
+	s.state.Mu.Unlock()
+
+	if err := s.saveState(); err != nil {
+		s.state.Mu.Lock()
+		s.state.EvalDatasets[datasetID] = previousDataset
+		s.state.Mu.Unlock()
+		return model.DeleteEvalDatasetItemResponse{}, err
+	}
+
+	return model.DeleteEvalDatasetItemResponse{
+		Dataset: evalDatasetSummary(updatedDataset),
+		Deleted: itemID,
 	}, nil
 }
 
@@ -435,22 +564,48 @@ func (s *AppService) resolveEvalCandidateScope(req model.AddEvalDatasetCandidate
 	return knowledgeBaseID, documentID, documentCount, datasetName, nil
 }
 
-func normalizeEvalCandidateItem(item model.EvalGroundTruthCase) model.EvalGroundTruthCase {
+type normalizeEvalDatasetItemOptions struct {
+	DefaultAnswerType   string
+	DefaultDifficulty   string
+	DefaultReviewStatus string
+	ForceDisabled       bool
+	DefaultNotes        string
+	RequireReviewNote   bool
+}
+
+func normalizeEvalDatasetItemForSave(item model.EvalGroundTruthCase, opts normalizeEvalDatasetItemOptions) (model.EvalGroundTruthCase, error) {
 	item.ID = strings.TrimSpace(item.ID)
 	item.Question = strings.TrimSpace(item.Question)
 	item.Answer = strings.TrimSpace(item.Answer)
+	if item.Question == "" {
+		return model.EvalGroundTruthCase{}, fmt.Errorf("eval dataset item question is required")
+	}
+
 	item.AnswerType = strings.TrimSpace(item.AnswerType)
 	if item.AnswerType == "" {
-		item.AnswerType = "retrieval-debug-candidate"
+		item.AnswerType = strings.TrimSpace(opts.DefaultAnswerType)
 	}
 	item.Difficulty = strings.TrimSpace(item.Difficulty)
 	if item.Difficulty == "" {
-		item.Difficulty = "hard"
+		item.Difficulty = strings.TrimSpace(opts.DefaultDifficulty)
 	}
-	item.ReviewStatus = evalReviewStatusPending
-	item.Disabled = true
+	if item.AnswerType == "" {
+		item.AnswerType = "extractive"
+	}
+	if item.Difficulty == "" {
+		item.Difficulty = "medium"
+	}
+
+	item.ReviewStatus = normalizeEvalReviewStatus(item.ReviewStatus, opts.DefaultReviewStatus)
+	if opts.ForceDisabled {
+		item.Disabled = true
+	}
 
 	item.AnswerSnippets = normalizeEvalSnippets(item.AnswerSnippets, 220)
+	if item.Answer == "" && len(item.AnswerSnippets) == 0 {
+		return model.EvalGroundTruthCase{}, fmt.Errorf("eval dataset item answer or snippets are required")
+	}
+
 	sources := make([]model.EvalSourceDocument, 0, len(item.SourceDocuments))
 	seenSources := map[string]struct{}{}
 	for _, source := range item.SourceDocuments {
@@ -471,11 +626,26 @@ func normalizeEvalCandidateItem(item model.EvalGroundTruthCase) model.EvalGround
 
 	item.Notes = strings.TrimSpace(item.Notes)
 	if item.Notes == "" {
-		item.Notes = "pending review from retrieval debug"
-	} else if !strings.Contains(strings.ToLower(item.Notes), "review") {
+		item.Notes = strings.TrimSpace(opts.DefaultNotes)
+	} else if opts.RequireReviewNote && !strings.Contains(strings.ToLower(item.Notes), "review") {
 		item.Notes += "; pending review"
 	}
-	return item
+	return item, nil
+}
+
+func normalizeEvalReviewStatus(status, fallback string) string {
+	status = strings.TrimSpace(status)
+	switch status {
+	case evalReviewStatusPending, evalReviewStatusApproved:
+		return status
+	}
+	fallback = strings.TrimSpace(fallback)
+	switch fallback {
+	case evalReviewStatusPending, evalReviewStatusApproved:
+		return fallback
+	default:
+		return evalReviewStatusApproved
+	}
 }
 
 func normalizeEvalSnippets(snippets []string, maxRunes int) []string {

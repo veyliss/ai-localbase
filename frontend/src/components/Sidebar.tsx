@@ -17,6 +17,8 @@ import type {
   GenerateEvalDatasetResponse,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
+  UpdateEvalDatasetItemResponse,
+  DeleteEvalDatasetItemResponse,
 } from '../services/api'
 import KnowledgePanel from './knowledge/KnowledgePanel'
 import SettingsPanel from './settings/SettingsPanel'
@@ -42,6 +44,15 @@ interface SidebarProps {
     documentId: string | null,
     item: EvalGroundTruthCase,
   ) => Promise<EvalDatasetSummary>
+  onUpdateEvalDatasetItem: (
+    datasetId: string,
+    itemId: string,
+    item: EvalGroundTruthCase,
+  ) => Promise<UpdateEvalDatasetItemResponse>
+  onDeleteEvalDatasetItem: (
+    datasetId: string,
+    itemId: string,
+  ) => Promise<DeleteEvalDatasetItemResponse>
   directoryUploadTask: DirectoryUploadTask
   onCancelDirectoryUpload: () => void
   onContinueDirectoryUpload: () => void
@@ -104,6 +115,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onFetchEvalDataset,
   onDeleteEvalDataset,
   onAddEvalDatasetCandidate,
+  onUpdateEvalDatasetItem,
+  onDeleteEvalDatasetItem,
   directoryUploadTask,
   onCancelDirectoryUpload,
   onContinueDirectoryUpload,
@@ -367,6 +380,8 @@ const Sidebar: React.FC<SidebarProps> = ({
         onFetchEvalDataset={onFetchEvalDataset}
         onDeleteEvalDataset={onDeleteEvalDataset}
         onAddEvalDatasetCandidate={onAddEvalDatasetCandidate}
+        onUpdateEvalDatasetItem={onUpdateEvalDatasetItem}
+        onDeleteEvalDatasetItem={onDeleteEvalDatasetItem}
         directoryUploadTask={directoryUploadTask}
         onCancelDirectoryUpload={onCancelDirectoryUpload}
         onContinueDirectoryUpload={onContinueDirectoryUpload}

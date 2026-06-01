@@ -154,6 +154,30 @@ curl -X POST http://localhost:8080/api/eval/datasets/review-candidates \
   }'
 ```
 
+待审核样本可以继续通过样本级 API 维护：
+
+```bash
+# 编辑样本、审核状态和启用状态
+curl -X PUT http://localhost:8080/api/eval/datasets/eval-xxx/items/case-xxx \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "item":{
+      "id":"case-xxx",
+      "question":"修订后的问题",
+      "answer":"修订后的答案",
+      "answer_snippets":["修订后的证据片段"],
+      "source_documents":[{"knowledge_base_id":"kb-xxx","document_id":"doc-xxx","chunk_id":"chunk-xxx"}],
+      "answer_type":"extractive",
+      "difficulty":"medium",
+      "review_status":"approved",
+      "disabled":false
+    }
+  }'
+
+# 删除单条样本
+curl -X DELETE http://localhost:8080/api/eval/datasets/eval-xxx/items/case-xxx
+```
+
 ### 运行评估（真实模式）
 
 ```bash

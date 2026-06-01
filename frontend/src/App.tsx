@@ -9,6 +9,7 @@ import {
   debugKnowledgeBaseRetrieval,
   deleteConversation,
   deleteEvalDataset,
+  deleteEvalDatasetItem,
   deleteKnowledgeBase,
   deleteKnowledgeBaseDocument,
   extractErrorMessage,
@@ -24,6 +25,7 @@ import {
   resetMcpToken,
   saveConversation,
   updateAppConfig,
+  updateEvalDatasetItem,
   uploadKnowledgeBaseFile,
 } from './services/api'
 import type {
@@ -34,6 +36,8 @@ import type {
   GenerateEvalDatasetResponse,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
+  UpdateEvalDatasetItemResponse,
+  DeleteEvalDatasetItemResponse,
 } from './services/api'
 
 export interface ChatMessageMetadata {
@@ -798,6 +802,33 @@ function App() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : '加入待审核评估集失败，请稍后重试。'
+      throw new Error(message)
+    }
+  }
+
+  const handleUpdateEvalDatasetItem = async (
+    datasetId: string,
+    itemId: string,
+    item: EvalGroundTruthCase,
+  ): Promise<UpdateEvalDatasetItemResponse> => {
+    try {
+      return await updateEvalDatasetItem(datasetId, itemId, item)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '更新评估样本失败，请稍后重试。'
+      throw new Error(message)
+    }
+  }
+
+  const handleDeleteEvalDatasetItem = async (
+    datasetId: string,
+    itemId: string,
+  ): Promise<DeleteEvalDatasetItemResponse> => {
+    try {
+      return await deleteEvalDatasetItem(datasetId, itemId)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '删除评估样本失败，请稍后重试。'
       throw new Error(message)
     }
   }
@@ -1598,6 +1629,8 @@ function App() {
         onFetchEvalDataset={handleFetchEvalDataset}
         onDeleteEvalDataset={handleDeleteEvalDataset}
         onAddEvalDatasetCandidate={handleAddEvalDatasetCandidate}
+        onUpdateEvalDatasetItem={handleUpdateEvalDatasetItem}
+        onDeleteEvalDatasetItem={handleDeleteEvalDatasetItem}
         directoryUploadTask={directoryUploadTask}
         onCancelDirectoryUpload={handleCancelDirectoryUpload}
         onContinueDirectoryUpload={handleContinueDirectoryUpload}

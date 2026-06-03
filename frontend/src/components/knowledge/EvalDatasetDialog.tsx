@@ -202,6 +202,10 @@ const formatLatencyGrowth = (value: number) => {
 
 const evalCaseRankLabel = (hit: boolean, rank: number) => (hit && rank > 0 ? `命中 #${rank}` : '未命中')
 
+const evalCaseConfidenceSummary = (item: RunEvalDatasetResponse['cases'][number]) => (
+  item.confidence?.reasons?.[0] || item.confidence?.summary || ''
+)
+
 const evalStrategyRunOptions = (
   searchMode: RetrievalSearchMode,
   rerankStrategy: RetrievalRerankStrategy,
@@ -803,6 +807,9 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
                     {item.matchedBy && <span>{item.matchedBy}</span>}
                     <strong>{item.question}</strong>
                     <p>{item.error || item.expectedAnswer}</p>
+                    {item.lowConfidence && evalCaseConfidenceSummary(item) && (
+                      <p>低置信原因：{evalCaseConfidenceSummary(item)}</p>
+                    )}
                   </div>
                   {item.retrieved[0] && (
                     <div className="kb-eval-run-evidence">

@@ -184,6 +184,16 @@ export interface RetrievalDebugTraceStep {
   outputCount?: number
 }
 
+export interface RetrievalDebugConfidence {
+  status: string
+  summary: string
+  reasons?: string[]
+  suggestions?: string[]
+  topScore: number
+  averageScore: number
+  evidenceCoverage: number
+}
+
 export interface EvalGroundTruthCase {
   id: string
   question: string
@@ -214,6 +224,7 @@ export interface RetrievalDebugResponse {
   elapsedMs: number
   count: number
   lowConfidence: boolean
+  confidence: RetrievalDebugConfidence
   contextPreview: string
   sources: Array<Record<string, string>>
   evalCandidate?: EvalGroundTruthCase
@@ -309,6 +320,7 @@ export interface EvalRunCaseResult {
   matchedBy?: string
   elapsedMs: number
   lowConfidence: boolean
+  confidence?: RetrievalDebugConfidence
   error?: string
   retrieved: RetrievalDebugChunk[]
 }

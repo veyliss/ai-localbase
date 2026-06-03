@@ -149,6 +149,52 @@ func TestNormalizeRetrievalConfigIncludesRerankAndRewrite(t *testing.T) {
 	}
 }
 
+func TestBuildRetrievalDebugConfidence(t *testing.T) {
+	t.Run("empty result is low confidence", func(t *testing.T) {
+		confidence := buildRetrievalDebugConfidence("张三的薪资是多少", nil, false)
+		if confidence.Status != "low" {
+			t.Fatalf("expected low confidence, got %s", confidence.Status)
+		}
+		if len(confidence.Reasons) == 0 || len(confidence.Suggestions) == 0 {
+			t.Fatal("expected reasons and suggestions for empty result")
+		}
+	})
+
+	t.Run("low score result explains score issue", func(t *testing.T) {
+		confidence := buildRetrievalDebugConfidence("张三的薪资是多少", []RetrievedChunk{
+			{
+				DocumentChunk: DocumentChunk{Text: "张三 薪资 24000"},
+				Score:         0.05,
+			},
+		}, false)
+		if confidence.Status != "low" {
+			t.Fatalf("expected low confidence, got %s", confidence.Status)
+		}
+		if !strings.Contains(strings.Join(confidence.Reasons, " "), "最高命中分") {
+			t.Fatalf("expected top score reason, got %v", confidence.Reasons)
+		}
+	})
+
+	t.Run("strong result is normal confidence", func(t *testing.T) {
+		confidence := buildRetrievalDebugConfidence("张三", []RetrievedChunk{
+			{
+				DocumentChunk: DocumentChunk{Text: "张三 的 薪资 是 24000 元"},
+				Score:         0.92,
+			},
+			{
+				DocumentChunk: DocumentChunk{Text: "张三 教师编号 111222333111"},
+				Score:         0.86,
+			},
+		}, false)
+		if confidence.Status != "normal" {
+			t.Fatalf("expected normal confidence, got %s with reasons %v", confidence.Status, confidence.Reasons)
+		}
+		if confidence.EvidenceCoverage <= 0 {
+			t.Fatalf("expected evidence coverage, got %.4f", confidence.EvidenceCoverage)
+		}
+	})
+}
+
 func TestSelectWithMMRRespectsPerDocumentLimit(t *testing.T) {
 	candidates := []RetrievedChunk{
 		{DocumentChunk: DocumentChunk{DocumentID: "doc-a", Text: "示例机构 团队 规模", Index: 0}, Score: 0.98},

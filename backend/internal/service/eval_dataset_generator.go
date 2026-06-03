@@ -525,6 +525,7 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 			HitRank:        -1,
 			ElapsedMs:      response.ElapsedMs,
 			LowConfidence:  response.LowConfidence,
+			Confidence:     response.Confidence,
 			Retrieved:      response.Items,
 		}
 		if err != nil {

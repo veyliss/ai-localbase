@@ -1381,7 +1381,6 @@ func (s *AppService) DebugRetrieve(req model.RetrievalDebugRequest) (model.Retri
 			Reason: "未启用查询改写",
 		})
 	}
-	retrievalLowConfidence := isLowConfidenceSelection(query, chunks)
 	deterministicChunks, deterministicResult, deterministicUsed, err := s.buildStructuredDeterministicChunks(chatReq, query)
 	if err != nil {
 		return model.RetrievalDebugResponse{}, err
@@ -1435,6 +1434,8 @@ func (s *AppService) DebugRetrieve(req model.RetrievalDebugRequest) (model.Retri
 		})
 		chunks = chunks[:req.TopK]
 	}
+	confidence := buildRetrievalDebugConfidence(query, chunks, deterministicUsed)
+	retrievalLowConfidence := confidence.Status == "low"
 
 	contextText, sources := s.rag.BuildContext(chunks)
 	contextText = truncateRunes(strings.TrimSpace(contextText), retrievalDebugContextLimit)
@@ -1471,6 +1472,7 @@ func (s *AppService) DebugRetrieve(req model.RetrievalDebugRequest) (model.Retri
 		ElapsedMs:         time.Since(startedAt).Milliseconds(),
 		Count:             len(items),
 		LowConfidence:     retrievalLowConfidence,
+		Confidence:        confidence,
 		ContextPreview:    contextText,
 		Sources:           sources,
 		EvalCandidate:     evalCandidate,
@@ -3264,6 +3266,95 @@ func isLowConfidenceSelection(query string, chunks []RetrievedChunk) bool {
 		return true
 	}
 	return queryEvidenceCoverage(query, chunks) < 0.2
+}
+
+func buildRetrievalDebugConfidence(query string, chunks []RetrievedChunk, deterministicUsed bool) model.RetrievalDebugConfidence {
+	topScore := 0.0
+	if len(chunks) > 0 {
+		topScore = chunks[0].Score
+	}
+	avgScore := averageScore(chunks)
+	evidenceCoverage := queryEvidenceCoverage(query, chunks)
+	reasons := make([]string, 0, 4)
+	suggestions := make([]string, 0, 4)
+
+	if len(chunks) == 0 {
+		reasons = append(reasons, "没有命中任何候选 chunk")
+		suggestions = append(suggestions,
+			"检查当前知识库或文档范围是否过窄",
+			"确认文档已完成索引并且原文内容可用",
+			"换用更具体的问题后重新检索",
+		)
+		return model.RetrievalDebugConfidence{
+			Status:           "low",
+			Summary:          "低置信：没有可用于回答的证据片段。",
+			Reasons:          reasons,
+			Suggestions:      suggestions,
+			TopScore:         topScore,
+			AverageScore:     avgScore,
+			EvidenceCoverage: evidenceCoverage,
+		}
+	}
+
+	if topScore < lowConfidenceTopScoreThreshold {
+		reasons = append(reasons, fmt.Sprintf("最高命中分 %.4f 低于阈值 %.2f", topScore, lowConfidenceTopScoreThreshold))
+		suggestions = append(suggestions, "尝试切换混合检索，补充关键词召回信号")
+	}
+	if avgScore < lowConfidenceAvgScoreThreshold {
+		reasons = append(reasons, fmt.Sprintf("平均命中分 %.4f 低于阈值 %.2f", avgScore, lowConfidenceAvgScoreThreshold))
+		suggestions = append(suggestions, "扩大候选 TopK 或检查文档切分是否过碎")
+	}
+	if evidenceCoverage < 0.2 {
+		reasons = append(reasons, fmt.Sprintf("问题实体覆盖率 %.1f%% 低于 20%%", evidenceCoverage*100))
+		suggestions = append(suggestions, "启用 Query Rewrite 或改用更贴近文档原文的问法")
+	}
+	if len(reasons) == 0 {
+		summary := "置信正常：命中分数和问题实体覆盖率都处于可接受范围。"
+		if deterministicUsed {
+			summary = "置信正常：已命中结构化确定性路径，并补充了可核对的结构化结果。"
+		}
+		return model.RetrievalDebugConfidence{
+			Status:           "normal",
+			Summary:          summary,
+			TopScore:         topScore,
+			AverageScore:     avgScore,
+			EvidenceCoverage: evidenceCoverage,
+		}
+	}
+	if deterministicUsed {
+		reasons = append(reasons, "已命中结构化确定性路径，但仍存在其他低置信信号")
+		suggestions = append(suggestions, "优先核对确定性结果是否覆盖目标字段")
+	}
+
+	return model.RetrievalDebugConfidence{
+		Status:           "low",
+		Summary:          "低置信：当前证据不足以稳定支撑回答，建议复核后再作为依据。",
+		Reasons:          deduplicateStrings(reasons),
+		Suggestions:      deduplicateStrings(suggestions),
+		TopScore:         topScore,
+		AverageScore:     avgScore,
+		EvidenceCoverage: evidenceCoverage,
+	}
+}
+
+func deduplicateStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
+	}
+	return result
 }
 
 func filterRelevantChunks(query string, chunks []RetrievedChunk) []RetrievedChunk {

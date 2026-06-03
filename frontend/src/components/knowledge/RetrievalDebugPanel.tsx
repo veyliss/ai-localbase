@@ -78,6 +78,14 @@ const retrievalChannelRankLabel = (item: RetrievalDebugResponse['items'][number]
   return parts.join(' · ')
 }
 
+const formatDiagnosticScore = (value?: number) => (
+  typeof value === 'number' && Number.isFinite(value) ? value.toFixed(4) : '-'
+)
+
+const formatDiagnosticPercent = (value?: number) => (
+  typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-'
+)
+
 const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
   scopeLabel,
   query,
@@ -151,6 +159,34 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
             </span>
           )}
         </div>
+
+        {result.confidence && (
+          <div className={`kb-retrieval-confidence kb-retrieval-confidence--${result.confidence.status === 'low' ? 'low' : 'normal'}`}>
+            <div>
+              <strong>置信诊断</strong>
+              <p>{result.confidence.summary}</p>
+            </div>
+            <div className="kb-retrieval-confidence-metrics">
+              <span>最高分 {formatDiagnosticScore(result.confidence.topScore)}</span>
+              <span>平均分 {formatDiagnosticScore(result.confidence.averageScore)}</span>
+              <span>证据覆盖 {formatDiagnosticPercent(result.confidence.evidenceCoverage)}</span>
+            </div>
+            {result.confidence.reasons && result.confidence.reasons.length > 0 && (
+              <ul>
+                {result.confidence.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            )}
+            {result.confidence.suggestions && result.confidence.suggestions.length > 0 && (
+              <div className="kb-retrieval-confidence-actions">
+                {result.confidence.suggestions.map((suggestion) => (
+                  <span key={suggestion}>{suggestion}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="kb-retrieval-contribution">
           <strong>召回贡献</strong>

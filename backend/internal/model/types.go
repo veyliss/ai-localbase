@@ -435,17 +435,18 @@ type EvalRunMetrics struct {
 }
 
 type EvalRunCaseResult struct {
-	CaseID         string                `json:"caseId"`
-	Question       string                `json:"question"`
-	ExpectedAnswer string                `json:"expectedAnswer"`
-	Hit            bool                  `json:"hit"`
-	HitRank        int                   `json:"hitRank"`
-	ReciprocalRank float64               `json:"reciprocalRank"`
-	MatchedBy      string                `json:"matchedBy,omitempty"`
-	ElapsedMs      int64                 `json:"elapsedMs"`
-	LowConfidence  bool                  `json:"lowConfidence"`
-	Error          string                `json:"error,omitempty"`
-	Retrieved      []RetrievalDebugChunk `json:"retrieved"`
+	CaseID         string                   `json:"caseId"`
+	Question       string                   `json:"question"`
+	ExpectedAnswer string                   `json:"expectedAnswer"`
+	Hit            bool                     `json:"hit"`
+	HitRank        int                      `json:"hitRank"`
+	ReciprocalRank float64                  `json:"reciprocalRank"`
+	MatchedBy      string                   `json:"matchedBy,omitempty"`
+	ElapsedMs      int64                    `json:"elapsedMs"`
+	LowConfidence  bool                     `json:"lowConfidence"`
+	Confidence     RetrievalDebugConfidence `json:"confidence,omitempty"`
+	Error          string                   `json:"error,omitempty"`
+	Retrieved      []RetrievalDebugChunk    `json:"retrieved"`
 }
 
 type RunEvalDatasetResponse struct {
@@ -515,6 +516,16 @@ type RetrievalDebugTraceStep struct {
 	OutputCount int    `json:"outputCount,omitempty"`
 }
 
+type RetrievalDebugConfidence struct {
+	Status           string   `json:"status"`
+	Summary          string   `json:"summary"`
+	Reasons          []string `json:"reasons,omitempty"`
+	Suggestions      []string `json:"suggestions,omitempty"`
+	TopScore         float64  `json:"topScore"`
+	AverageScore     float64  `json:"averageScore"`
+	EvidenceCoverage float64  `json:"evidenceCoverage"`
+}
+
 type RetrievalDebugResponse struct {
 	Query             string                    `json:"query"`
 	KnowledgeBaseID   string                    `json:"knowledgeBaseId,omitempty"`
@@ -528,6 +539,7 @@ type RetrievalDebugResponse struct {
 	ElapsedMs         int64                     `json:"elapsedMs"`
 	Count             int                       `json:"count"`
 	LowConfidence     bool                      `json:"lowConfidence"`
+	Confidence        RetrievalDebugConfidence  `json:"confidence"`
 	ContextPreview    string                    `json:"contextPreview"`
 	Sources           []map[string]string       `json:"sources"`
 	EvalCandidate     *EvalGroundTruthCase      `json:"evalCandidate,omitempty"`

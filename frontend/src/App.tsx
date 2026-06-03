@@ -49,6 +49,20 @@ export interface ChatMessageMetadata {
   degraded?: boolean
   fallbackStrategy?: string
   upstreamError?: string
+  sources?: ChatSourceMetadata[]
+}
+
+export interface ChatSourceMetadata {
+  knowledgeBaseId?: string
+  documentId?: string
+  documentName?: string
+  chunkId?: string
+  chunkIndex?: string
+  chunkKind?: string
+  score?: string
+  snippet?: string
+  sourceType?: string
+  toolName?: string
 }
 
 export interface ChatMessage {
@@ -144,11 +158,7 @@ interface ChatCompletionResponse {
     degraded?: boolean
     fallbackStrategy?: string
     upstreamError?: string
-    sources?: Array<{
-      knowledgeBaseId: string
-      documentId: string
-      documentName: string
-    }>
+    sources?: ChatSourceMetadata[]
   }
 }
 
@@ -249,6 +259,18 @@ const createId = () => {
 
 const isDegradedFallbackContent = (content: string) =>
   /降级|fallback|无法完成流式|已切换|上游错误|模型服务暂不可用/.test(content)
+
+const normalizeChatMetadata = (metadata?: ChatCompletionResponse['metadata'] | ChatMessageMetadata) => {
+  if (!metadata) return undefined
+  const normalized: ChatMessageMetadata = {}
+  if (metadata.degraded !== undefined) normalized.degraded = metadata.degraded
+  if (metadata.fallbackStrategy) normalized.fallbackStrategy = metadata.fallbackStrategy
+  if (metadata.upstreamError) normalized.upstreamError = metadata.upstreamError
+  if (metadata.sources && metadata.sources.length > 0) {
+    normalized.sources = metadata.sources
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
 
 const createWelcomeConversation = (): Conversation => {
   const now = new Date().toISOString()
@@ -1370,13 +1392,7 @@ function App() {
       const data = (await fallbackResponse.json()) as ChatCompletionResponse
       finalizeAssistantMessage(
         data.choices[0]?.message?.content || '后端未返回有效回答。',
-        data.metadata
-          ? {
-              degraded: data.metadata.degraded,
-              fallbackStrategy: data.metadata.fallbackStrategy,
-              upstreamError: data.metadata.upstreamError,
-            }
-          : undefined,
+        normalizeChatMetadata(data.metadata),
       )
     }
 
@@ -1473,7 +1489,7 @@ function App() {
         if (eventName === 'done') {
           markChunkReceived()
           const degradedMetadata =
-            payload.metadata ??
+            normalizeChatMetadata(payload.metadata) ??
             (payload.content && isDegradedFallbackContent(payload.content)
               ? {
                   degraded: true,

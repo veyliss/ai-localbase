@@ -3747,6 +3747,109 @@
   word-break: break-word;
 }
 
+.message-citations {
+  width: min(100%, 760px);
+  margin-top: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.message-citations summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  cursor: pointer;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  list-style: none;
+}
+
+.message-citations summary::-webkit-details-marker {
+  display: none;
+}
+
+.message-citations summary::after {
+  content: '展开';
+  margin-left: auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.message-citations[open] summary::after {
+  content: '收起';
+}
+
+.message-citations summary strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+}
+
+.message-citation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.message-citation {
+  padding: 9px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.message-citation-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.message-citation-head strong {
+  min-width: 150px;
+  flex: 1;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-citation-head span {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.message-citation p {
+  display: -webkit-box;
+  margin: 7px 0 0;
+  overflow: hidden;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .message-content-thinking {
   min-width: 60px;
   min-height: 44px;
@@ -4800,6 +4903,14 @@
   .md-advice-grid {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .message-citations {
+    width: 100%;
+  }
+
+  .message-citation-head strong {
+    min-width: 100%;
   }
 }
 

@@ -375,7 +375,10 @@ func (s *RagService) BuildContext(chunks []RetrievedChunk) (string, []map[string
 			"documentId":      chunk.DocumentID,
 			"documentName":    chunk.DocumentName,
 			"chunkId":         chunk.ID,
+			"chunkIndex":      fmt.Sprintf("%d", chunk.Index+1),
+			"chunkKind":       chunk.Kind,
 			"score":           fmt.Sprintf("%.4f", chunk.Score),
+			"snippet":         truncateRunes(strings.TrimSpace(chunk.Text), 220),
 		})
 	}
 

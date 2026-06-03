@@ -571,6 +571,12 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 
 	fullAssistantContent := assistantContent.String()
 	responseMetadata := streamResponseMetadata(fullAssistantContent)
+	responseMetadata = mergeChatResponseMetadata(responseMetadata, map[string]any{
+		"sources":         sources,
+		"knowledgeBaseId": req.KnowledgeBaseID,
+		"documentId":      req.DocumentID,
+		"toolUse":         buildToolUseMetadata(sources),
+	})
 	_, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
 		ID:              req.ConversationID,
 		Title:           "",
@@ -1072,4 +1078,18 @@ func streamResponseMetadata(content string) map[string]any {
 		"degraded":         true,
 		"fallbackStrategy": "stream-fallback-message",
 	}
+}
+
+func mergeChatResponseMetadata(base map[string]any, next map[string]any) map[string]any {
+	if len(base) == 0 && len(next) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(base)+len(next))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range next {
+		merged[key] = value
+	}
+	return merged
 }

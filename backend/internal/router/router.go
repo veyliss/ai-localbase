@@ -37,6 +37,7 @@ func NewRouter(appHandler *handler.AppHandler, serverConfig model.ServerConfig, 
 		api.GET("/knowledge-bases/:id/health", appHandler.GetKnowledgeBaseHealth)
 		api.POST("/knowledge-bases/:id/retrieval/debug", appHandler.DebugRetrieve)
 		api.GET("/eval/datasets", appHandler.ListEvalDatasets)
+		api.GET("/eval/runs", appHandler.ListEvalRuns)
 		api.POST("/eval/datasets/generate", appHandler.GenerateEvalDataset)
 		api.POST("/eval/datasets/review-candidates", appHandler.AddEvalDatasetCandidate)
 		api.GET("/eval/datasets/:datasetId", appHandler.GetEvalDataset)

@@ -14,6 +14,7 @@ import type {
   EvalDatasetDetail,
   EvalGroundTruthCase,
   EvalDatasetSummary,
+  EvalRunSummary,
   GenerateEvalDatasetResponse,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
@@ -38,6 +39,7 @@ interface SidebarProps {
   onUploadDirectory: (knowledgeBaseId: string, files: FileList | null) => void
   onGenerateEvalDataset: (knowledgeBaseId: string) => Promise<GenerateEvalDatasetResponse>
   onListEvalDatasets: (knowledgeBaseId: string) => Promise<EvalDatasetSummary[]>
+  onListEvalRuns: (knowledgeBaseId: string) => Promise<EvalRunSummary[]>
   onFetchEvalDataset: (datasetId: string) => Promise<EvalDatasetDetail>
   onDeleteEvalDataset: (datasetId: string) => Promise<void>
   onAddEvalDatasetCandidate: (
@@ -114,6 +116,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onUploadDirectory,
   onGenerateEvalDataset,
   onListEvalDatasets,
+  onListEvalRuns,
   onFetchEvalDataset,
   onDeleteEvalDataset,
   onAddEvalDatasetCandidate,
@@ -380,6 +383,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         onUploadDirectory={onUploadDirectory}
         onGenerateEvalDataset={onGenerateEvalDataset}
         onListEvalDatasets={onListEvalDatasets}
+        onListEvalRuns={onListEvalRuns}
         onFetchEvalDataset={onFetchEvalDataset}
         onDeleteEvalDataset={onDeleteEvalDataset}
         onAddEvalDatasetCandidate={onAddEvalDatasetCandidate}

@@ -21,6 +21,7 @@ import {
   generateEvalDataset,
   getEvalDataset,
   listEvalDatasets,
+  listEvalRuns,
   reindexKnowledgeBaseDocument,
   resetMcpToken,
   runEvalDataset,
@@ -34,6 +35,7 @@ import type {
   EvalDatasetDetail,
   EvalGroundTruthCase,
   EvalDatasetSummary,
+  EvalRunSummary,
   GenerateEvalDatasetResponse,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
@@ -767,6 +769,19 @@ function App() {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : '加载评估集历史失败，请稍后重试。'
+      throw new Error(message)
+    }
+  }
+
+  const handleListEvalRuns = async (
+    knowledgeBaseId: string,
+  ): Promise<EvalRunSummary[]> => {
+    try {
+      const response = await listEvalRuns(knowledgeBaseId)
+      return response.items
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '加载评估趋势失败，请稍后重试。'
       throw new Error(message)
     }
   }
@@ -1640,6 +1655,7 @@ function App() {
         onUploadDirectory={handleUploadDirectory}
         onGenerateEvalDataset={handleGenerateEvalDataset}
         onListEvalDatasets={handleListEvalDatasets}
+        onListEvalRuns={handleListEvalRuns}
         onFetchEvalDataset={handleFetchEvalDataset}
         onDeleteEvalDataset={handleDeleteEvalDataset}
         onAddEvalDatasetCandidate={handleAddEvalDatasetCandidate}

@@ -309,6 +309,12 @@ export interface RunEvalDatasetResponse {
   cases: EvalRunCaseResult[]
 }
 
+export type EvalRunSummary = Omit<RunEvalDatasetResponse, 'cases'>
+
+export interface EvalRunListResponse {
+  items: EvalRunSummary[]
+}
+
 export const normalizeDocument = (document: BackendDocumentItem): DocumentItem => ({
   id: document.id,
   name: document.name,
@@ -586,6 +592,17 @@ export const runEvalDataset = async (
     jsonRequest({ includeDisabled: false, topK: 12 }, { method: 'POST' }),
   )
 )
+
+export const listEvalRuns = async (
+  knowledgeBaseId?: string,
+  datasetId?: string,
+): Promise<EvalRunListResponse> => {
+  const params = new URLSearchParams()
+  if (knowledgeBaseId) params.set('knowledgeBaseId', knowledgeBaseId)
+  if (datasetId) params.set('datasetId', datasetId)
+  const query = params.toString()
+  return requestJson<EvalRunListResponse>(`/api/eval/runs${query ? `?${query}` : ''}`)
+}
 
 export const debugKnowledgeBaseRetrieval = async (
   knowledgeBaseId: string,

@@ -38,6 +38,7 @@ type AppState struct {
 	Config         AppConfig
 	KnowledgeBases map[string]KnowledgeBase
 	EvalDatasets   map[string]EvalDataset
+	EvalRuns       map[string]RunEvalDatasetResponse
 }
 
 type HealthResponse struct {
@@ -432,6 +433,21 @@ type RunEvalDatasetResponse struct {
 	ElapsedMs       int64               `json:"elapsedMs"`
 	Metrics         EvalRunMetrics      `json:"metrics"`
 	Cases           []EvalRunCaseResult `json:"cases"`
+}
+
+type EvalRunSummary struct {
+	RunID           string         `json:"runId"`
+	DatasetID       string         `json:"datasetId"`
+	DatasetName     string         `json:"datasetName"`
+	KnowledgeBaseID string         `json:"knowledgeBaseId,omitempty"`
+	DocumentID      string         `json:"documentId,omitempty"`
+	StartedAt       string         `json:"startedAt"`
+	ElapsedMs       int64          `json:"elapsedMs"`
+	Metrics         EvalRunMetrics `json:"metrics"`
+}
+
+type EvalRunListResponse struct {
+	Items []EvalRunSummary `json:"items"`
 }
 
 type RetrievalDebugRequest struct {

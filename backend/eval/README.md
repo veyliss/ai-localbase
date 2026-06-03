@@ -186,6 +186,16 @@ curl -X POST http://localhost:8080/api/eval/datasets/eval-xxx/runs \
   -d '{"includeDisabled":false,"topK":12}'
 ```
 
+运行结果会保存为质量趋势历史，可按知识库或评估集查询：
+
+```bash
+# 查看某个知识库的评估运行历史
+curl "http://localhost:8080/api/eval/runs?knowledgeBaseId=kb-xxx"
+
+# 查看某个评估集的运行历史
+curl "http://localhost:8080/api/eval/runs?datasetId=eval-xxx"
+```
+
 ### 运行评估（真实模式）
 
 ```bash

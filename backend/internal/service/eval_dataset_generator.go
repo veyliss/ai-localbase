@@ -15,6 +15,7 @@ import (
 const (
 	defaultEvalCasesPerDocument = 5
 	maxEvalCasesPerDocument     = 20
+	maxEvalRunHistoryPerKB      = 50
 	evalDatasetKindGenerated    = "generated"
 	evalDatasetKindReview       = "review"
 	evalReviewStatusPending     = "pending"
@@ -391,15 +392,54 @@ func (s *AppService) DeleteEvalDataset(id string) error {
 		return fmt.Errorf("eval dataset not found")
 	}
 	delete(s.state.EvalDatasets, id)
+	if s.state.EvalRuns == nil {
+		s.state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
+	}
+	removedRuns := make(map[string]model.RunEvalDatasetResponse)
+	for runID, run := range s.state.EvalRuns {
+		if run.DatasetID == id {
+			removedRuns[runID] = run
+			delete(s.state.EvalRuns, runID)
+		}
+	}
 	s.state.Mu.Unlock()
 
 	if err := s.saveState(); err != nil {
 		s.state.Mu.Lock()
 		s.state.EvalDatasets[id] = removed
+		for runID, run := range removedRuns {
+			s.state.EvalRuns[runID] = run
+		}
 		s.state.Mu.Unlock()
 		return err
 	}
 	return nil
+}
+
+func (s *AppService) ListEvalRuns(knowledgeBaseID, datasetID string) []model.EvalRunSummary {
+	if s == nil || s.state == nil {
+		return nil
+	}
+
+	knowledgeBaseID = strings.TrimSpace(knowledgeBaseID)
+	datasetID = strings.TrimSpace(datasetID)
+	s.state.Mu.RLock()
+	items := make([]model.EvalRunSummary, 0, len(s.state.EvalRuns))
+	for _, run := range s.state.EvalRuns {
+		if knowledgeBaseID != "" && run.KnowledgeBaseID != knowledgeBaseID {
+			continue
+		}
+		if datasetID != "" && run.DatasetID != datasetID {
+			continue
+		}
+		items = append(items, evalRunSummary(run))
+	}
+	s.state.Mu.RUnlock()
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].StartedAt > items[j].StartedAt
+	})
+	return items
 }
 
 func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRequest) (model.RunEvalDatasetResponse, error) {
@@ -482,7 +522,7 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 		return model.RunEvalDatasetResponse{}, fmt.Errorf("no enabled eval cases to run")
 	}
 
-	return model.RunEvalDatasetResponse{
+	response := model.RunEvalDatasetResponse{
 		RunID:           util.NextID("eval-run"),
 		DatasetID:       dataset.ID,
 		DatasetName:     dataset.Name,
@@ -492,7 +532,11 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 		ElapsedMs:       time.Since(startedAt).Milliseconds(),
 		Metrics:         buildEvalRunMetrics(results, skippedDisabled),
 		Cases:           results,
-	}, nil
+	}
+	if err := s.saveEvalRun(response); err != nil {
+		return model.RunEvalDatasetResponse{}, fmt.Errorf("save eval run: %w", err)
+	}
+	return response, nil
 }
 
 func evalDatasetSummary(dataset model.EvalDataset) model.EvalDatasetSummary {
@@ -514,6 +558,63 @@ func evalDatasetSortTime(dataset model.EvalDatasetSummary) string {
 		return dataset.UpdatedAt
 	}
 	return dataset.CreatedAt
+}
+
+func evalRunSummary(run model.RunEvalDatasetResponse) model.EvalRunSummary {
+	return model.EvalRunSummary{
+		RunID:           run.RunID,
+		DatasetID:       run.DatasetID,
+		DatasetName:     run.DatasetName,
+		KnowledgeBaseID: run.KnowledgeBaseID,
+		DocumentID:      run.DocumentID,
+		StartedAt:       run.StartedAt,
+		ElapsedMs:       run.ElapsedMs,
+		Metrics:         run.Metrics,
+	}
+}
+
+func (s *AppService) saveEvalRun(run model.RunEvalDatasetResponse) error {
+	if s == nil || s.state == nil {
+		return fmt.Errorf("app service is nil")
+	}
+	if strings.TrimSpace(run.RunID) == "" {
+		run.RunID = util.NextID("eval-run")
+	}
+	if strings.TrimSpace(run.StartedAt) == "" {
+		run.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	run.Cases = cloneEvalRunCaseResults(run.Cases)
+
+	s.state.Mu.Lock()
+	if s.state.EvalRuns == nil {
+		s.state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
+	}
+	s.state.EvalRuns[run.RunID] = run
+	pruneEvalRunHistoryLocked(s.state.EvalRuns, run.KnowledgeBaseID, maxEvalRunHistoryPerKB)
+	s.state.Mu.Unlock()
+
+	return s.saveState()
+}
+
+func pruneEvalRunHistoryLocked(runs map[string]model.RunEvalDatasetResponse, knowledgeBaseID string, limit int) {
+	if limit <= 0 || knowledgeBaseID == "" {
+		return
+	}
+	items := make([]model.RunEvalDatasetResponse, 0, len(runs))
+	for _, run := range runs {
+		if run.KnowledgeBaseID == knowledgeBaseID {
+			items = append(items, run)
+		}
+	}
+	if len(items) <= limit {
+		return
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].StartedAt > items[j].StartedAt
+	})
+	for _, run := range items[limit:] {
+		delete(runs, run.RunID)
+	}
 }
 
 func firstEvalSourceKnowledgeBaseID(item model.EvalGroundTruthCase) string {

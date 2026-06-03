@@ -356,12 +356,16 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 				Config:         loadedState.Config,
 				KnowledgeBases: loadedState.KnowledgeBases,
 				EvalDatasets:   loadedState.EvalDatasets,
+				EvalRuns:       loadedState.EvalRuns,
 			}
 			if service.state.KnowledgeBases == nil {
 				service.state.KnowledgeBases = map[string]model.KnowledgeBase{}
 			}
 			if service.state.EvalDatasets == nil {
 				service.state.EvalDatasets = map[string]model.EvalDataset{}
+			}
+			if service.state.EvalRuns == nil {
+				service.state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
 			}
 		}
 	}
@@ -397,6 +401,7 @@ func (s *AppService) saveState() error {
 		Config:         s.state.Config,
 		KnowledgeBases: cloneKnowledgeBases(s.state.KnowledgeBases),
 		EvalDatasets:   cloneEvalDatasets(s.state.EvalDatasets),
+		EvalRuns:       cloneEvalRuns(s.state.EvalRuns),
 	}
 	s.state.Mu.RUnlock()
 
@@ -428,6 +433,31 @@ func cloneEvalDatasets(source map[string]model.EvalDataset) map[string]model.Eva
 	for id, dataset := range source {
 		dataset.Items = cloneEvalGroundTruthCases(dataset.Items)
 		cloned[id] = dataset
+	}
+	return cloned
+}
+
+func cloneEvalRuns(source map[string]model.RunEvalDatasetResponse) map[string]model.RunEvalDatasetResponse {
+	if source == nil {
+		return map[string]model.RunEvalDatasetResponse{}
+	}
+
+	cloned := make(map[string]model.RunEvalDatasetResponse, len(source))
+	for id, run := range source {
+		run.Cases = cloneEvalRunCaseResults(run.Cases)
+		cloned[id] = run
+	}
+	return cloned
+}
+
+func cloneEvalRunCaseResults(source []model.EvalRunCaseResult) []model.EvalRunCaseResult {
+	if source == nil {
+		return nil
+	}
+	cloned := make([]model.EvalRunCaseResult, len(source))
+	for index, item := range source {
+		item.Retrieved = append([]model.RetrievalDebugChunk(nil), item.Retrieved...)
+		cloned[index] = item
 	}
 	return cloned
 }
@@ -471,6 +501,7 @@ func defaultAppState(serverConfig model.ServerConfig) *model.AppState {
 			},
 		},
 		EvalDatasets: map[string]model.EvalDataset{},
+		EvalRuns:     map[string]model.RunEvalDatasetResponse{},
 	}
 }
 
@@ -782,11 +813,21 @@ func (s *AppService) DeleteKnowledgeBase(id string) (int, error) {
 	if s.state.EvalDatasets == nil {
 		s.state.EvalDatasets = map[string]model.EvalDataset{}
 	}
+	if s.state.EvalRuns == nil {
+		s.state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
+	}
 	removedEvalDatasets := make(map[string]model.EvalDataset)
 	for datasetID, dataset := range s.state.EvalDatasets {
 		if dataset.KnowledgeBaseID == id {
 			removedEvalDatasets[datasetID] = dataset
 			delete(s.state.EvalDatasets, datasetID)
+		}
+	}
+	removedEvalRuns := make(map[string]model.RunEvalDatasetResponse)
+	for runID, run := range s.state.EvalRuns {
+		if run.KnowledgeBaseID == id {
+			removedEvalRuns[runID] = run
+			delete(s.state.EvalRuns, runID)
 		}
 	}
 	remaining := len(s.state.KnowledgeBases)
@@ -797,6 +838,9 @@ func (s *AppService) DeleteKnowledgeBase(id string) (int, error) {
 		s.state.KnowledgeBases[id] = removedKnowledgeBase
 		for datasetID, dataset := range removedEvalDatasets {
 			s.state.EvalDatasets[datasetID] = dataset
+		}
+		for runID, run := range removedEvalRuns {
+			s.state.EvalRuns[runID] = run
 		}
 		s.state.Mu.Unlock()
 		return remaining, err

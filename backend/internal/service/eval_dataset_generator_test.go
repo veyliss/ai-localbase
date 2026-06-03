@@ -442,3 +442,57 @@ func TestBuildEvalRunMetrics(t *testing.T) {
 		t.Fatalf("unexpected latency percentiles: %#v", metrics)
 	}
 }
+
+func TestListEvalRunsAndDeleteDatasetCleanup(t *testing.T) {
+	tempDir := t.TempDir()
+	store := NewAppStateStore(filepath.Join(tempDir, "state.json"))
+	service := &AppService{
+		state: &model.AppState{
+			Config:         model.AppConfig{},
+			KnowledgeBases: map[string]model.KnowledgeBase{},
+			EvalDatasets: map[string]model.EvalDataset{
+				"eval-1": {
+					ID:              "eval-1",
+					Name:            "评估集 - 教师信息",
+					KnowledgeBaseID: "kb-1",
+					Count:           1,
+					CreatedAt:       "2026-03-12T00:00:00Z",
+				},
+			},
+			EvalRuns: map[string]model.RunEvalDatasetResponse{
+				"run-1": {
+					RunID:           "run-1",
+					DatasetID:       "eval-1",
+					DatasetName:     "评估集 - 教师信息",
+					KnowledgeBaseID: "kb-1",
+					StartedAt:       "2026-03-12T00:00:01Z",
+					Metrics:         model.EvalRunMetrics{TotalCases: 1, HitRate: 1, MRR: 1},
+				},
+				"run-2": {
+					RunID:           "run-2",
+					DatasetID:       "eval-other",
+					DatasetName:     "其他评估集",
+					KnowledgeBaseID: "kb-2",
+					StartedAt:       "2026-03-12T00:00:02Z",
+					Metrics:         model.EvalRunMetrics{TotalCases: 1},
+				},
+			},
+		},
+		store: store,
+		rag:   NewRagService(),
+	}
+
+	runs := service.ListEvalRuns("kb-1", "")
+	if len(runs) != 1 || runs[0].RunID != "run-1" {
+		t.Fatalf("expected kb-1 run, got %#v", runs)
+	}
+	if err := service.DeleteEvalDataset("eval-1"); err != nil {
+		t.Fatalf("delete eval dataset: %v", err)
+	}
+	if len(service.ListEvalRuns("kb-1", "")) != 0 {
+		t.Fatalf("expected eval-1 runs removed")
+	}
+	if len(service.ListEvalRuns("kb-2", "")) != 1 {
+		t.Fatalf("expected unrelated runs preserved")
+	}
+}

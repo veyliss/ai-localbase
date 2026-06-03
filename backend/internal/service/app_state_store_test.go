@@ -122,6 +122,16 @@ func TestNewAppServiceLoadsPersistedState(t *testing.T) {
 				CreatedAt:       "2026-03-12T00:00:01Z",
 			},
 		},
+		EvalRuns: map[string]model.RunEvalDatasetResponse{
+			"eval-run-persisted": {
+				RunID:           "eval-run-persisted",
+				DatasetID:       "eval-persisted",
+				DatasetName:     "示例持久化评估集",
+				KnowledgeBaseID: "kb-persisted",
+				StartedAt:       "2026-03-12T00:00:02Z",
+				Metrics:         model.EvalRunMetrics{TotalCases: 1, HitCount: 1, HitRate: 1, MRR: 1},
+			},
+		},
 	}
 	if err := store.Save(persisted); err != nil {
 		t.Fatalf("save persisted state: %v", err)
@@ -140,6 +150,10 @@ func TestNewAppServiceLoadsPersistedState(t *testing.T) {
 	evalDatasets := service.ListEvalDatasets("kb-persisted")
 	if len(evalDatasets) != 1 || evalDatasets[0].ID != "eval-persisted" {
 		t.Fatalf("expected persisted eval dataset, got %#v", evalDatasets)
+	}
+	evalRuns := service.ListEvalRuns("kb-persisted", "")
+	if len(evalRuns) != 1 || evalRuns[0].RunID != "eval-run-persisted" {
+		t.Fatalf("expected persisted eval run, got %#v", evalRuns)
 	}
 }
 

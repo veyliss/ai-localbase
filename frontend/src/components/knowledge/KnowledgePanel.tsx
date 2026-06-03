@@ -5,6 +5,7 @@ import type {
   EvalDatasetDetail,
   EvalGroundTruthCase,
   EvalDatasetSummary,
+  EvalRunSummary,
   GenerateEvalDatasetResponse,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
@@ -16,6 +17,7 @@ import CreateKnowledgeBaseDialog from './CreateKnowledgeBaseDialog'
 import DirectoryUploadTaskPanel from './DirectoryUploadTaskPanel'
 import DocumentDetailDialog from './DocumentDetailDialog'
 import EvalDatasetHistoryPanel from './EvalDatasetHistoryPanel'
+import EvalRunTrendPanel from './EvalRunTrendPanel'
 import DocumentList from './DocumentList'
 import EvalDatasetDialog from './EvalDatasetDialog'
 import KnowledgeBaseRail from './KnowledgeBaseRail'
@@ -37,6 +39,7 @@ interface KnowledgePanelProps {
   onUploadDirectory: (knowledgeBaseId: string, files: FileList | null) => void
   onGenerateEvalDataset: (knowledgeBaseId: string) => Promise<GenerateEvalDatasetResponse>
   onListEvalDatasets: (knowledgeBaseId: string) => Promise<EvalDatasetSummary[]>
+  onListEvalRuns: (knowledgeBaseId: string) => Promise<EvalRunSummary[]>
   onFetchEvalDataset: (datasetId: string) => Promise<EvalDatasetDetail>
   onDeleteEvalDataset: (datasetId: string) => Promise<void>
   onAddEvalDatasetCandidate: (
@@ -85,6 +88,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   onUploadDirectory,
   onGenerateEvalDataset,
   onListEvalDatasets,
+  onListEvalRuns,
   onFetchEvalDataset,
   onDeleteEvalDataset,
   onAddEvalDatasetCandidate,
@@ -115,6 +119,9 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   const [evalDatasetSummaries, setEvalDatasetSummaries] = useState<EvalDatasetSummary[]>([])
   const [evalDatasetHistoryLoading, setEvalDatasetHistoryLoading] = useState(false)
   const [evalDatasetHistoryError, setEvalDatasetHistoryError] = useState('')
+  const [evalRunSummaries, setEvalRunSummaries] = useState<EvalRunSummary[]>([])
+  const [evalRunHistoryLoading, setEvalRunHistoryLoading] = useState(false)
+  const [evalRunHistoryError, setEvalRunHistoryError] = useState('')
   const [openingEvalDatasetId, setOpeningEvalDatasetId] = useState<string | null>(null)
   const [deletingEvalDatasetId, setDeletingEvalDatasetId] = useState<string | null>(null)
   const [documentDetailLoadingId, setDocumentDetailLoadingId] = useState<string | null>(null)
@@ -131,6 +138,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   const [evalCandidateSaveMessage, setEvalCandidateSaveMessage] = useState('')
   const directoryInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const evalDatasetLoadSeq = useRef(0)
+  const evalRunLoadSeq = useRef(0)
 
   const selectedKnowledgeBase = useMemo(
     () => knowledgeBases.find((item) => item.id === selectedKnowledgeBaseId) ?? knowledgeBases[0] ?? null,
@@ -169,17 +177,41 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     }
   }, [onListEvalDatasets])
 
+  const loadEvalRuns = useCallback(async (knowledgeBaseId: string) => {
+    const requestSeq = evalRunLoadSeq.current + 1
+    evalRunLoadSeq.current = requestSeq
+    setEvalRunHistoryLoading(true)
+    setEvalRunHistoryError('')
+    try {
+      const items = await onListEvalRuns(knowledgeBaseId)
+      if (evalRunLoadSeq.current !== requestSeq) return
+      setEvalRunSummaries(items)
+    } catch (error) {
+      if (evalRunLoadSeq.current !== requestSeq) return
+      setEvalRunHistoryError(error instanceof Error ? error.message : '加载评估趋势失败')
+    } finally {
+      if (evalRunLoadSeq.current === requestSeq) {
+        setEvalRunHistoryLoading(false)
+      }
+    }
+  }, [onListEvalRuns])
+
   useEffect(() => {
     if (!open || !activeKnowledgeBaseId) {
       evalDatasetLoadSeq.current += 1
+      evalRunLoadSeq.current += 1
       setEvalDatasetSummaries([])
       setEvalDatasetHistoryError('')
       setEvalDatasetHistoryLoading(false)
+      setEvalRunSummaries([])
+      setEvalRunHistoryError('')
+      setEvalRunHistoryLoading(false)
       return
     }
 
     void loadEvalDatasets(activeKnowledgeBaseId)
-  }, [open, activeKnowledgeBaseId, loadEvalDatasets])
+    void loadEvalRuns(activeKnowledgeBaseId)
+  }, [open, activeKnowledgeBaseId, loadEvalDatasets, loadEvalRuns])
 
   const selectedKnowledgeBaseHealthKey = useMemo(() => {
     if (!activeKnowledgeBaseId || !selectedKnowledgeBase) return ''
@@ -325,6 +357,14 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     if (activeKnowledgeBaseId) {
       void loadEvalDatasets(activeKnowledgeBaseId)
     }
+  }
+
+  const handleRunEvalDataset = async (datasetId: string) => {
+    const report = await onRunEvalDataset(datasetId)
+    if (activeKnowledgeBaseId) {
+      void loadEvalRuns(activeKnowledgeBaseId)
+    }
+    return report
   }
 
   const handleOpenDocumentDetail = async (knowledgeBaseId: string, documentId: string) => {
@@ -627,6 +667,13 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       onDelete={(datasetId) => void handleDeleteSavedEvalDataset(datasetId)}
                     />
 
+                    <EvalRunTrendPanel
+                      runs={evalRunSummaries}
+                      loading={evalRunHistoryLoading}
+                      error={evalRunHistoryError}
+                      onRefresh={() => void loadEvalRuns(activeKnowledgeBaseId)}
+                    />
+
                     <DocumentList
                       documents={selectedKnowledgeBase.documents}
                       selectedDocumentId={selectedDocumentId}
@@ -680,7 +727,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
           onClose={() => setEvalDataset(null)}
           onUpdateItem={handleUpdateEvalDatasetItem}
           onDeleteItem={handleDeleteEvalDatasetItem}
-          onRun={onRunEvalDataset}
+          onRun={handleRunEvalDataset}
         />
       )}
     </>

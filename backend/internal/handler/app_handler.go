@@ -189,6 +189,12 @@ func (h *AppHandler) ListEvalDatasets(c *gin.Context) {
 	})
 }
 
+func (h *AppHandler) ListEvalRuns(c *gin.Context) {
+	c.JSON(http.StatusOK, model.EvalRunListResponse{
+		Items: h.appService.ListEvalRuns(c.Query("knowledgeBaseId"), c.Query("datasetId")),
+	})
+}
+
 func (h *AppHandler) GenerateEvalDataset(c *gin.Context) {
 	var req model.GenerateEvalDatasetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

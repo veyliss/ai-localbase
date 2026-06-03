@@ -38,6 +38,7 @@ const rerankStrategyLabel = (strategy?: string) => {
 const retrievalChannelLabel = (channel: string) => {
   if (channel === 'dense') return '向量'
   if (channel === 'sparse') return '关键词'
+  if (channel === 'lexical') return '词法'
   return channel
 }
 
@@ -47,26 +48,30 @@ const retrievalContributionSummary = (result: RetrievalDebugResponse) => {
       const channels = item.retrievalChannels ?? []
       const hasDense = channels.includes('dense')
       const hasSparse = channels.includes('sparse')
+      const hasLexical = channels.includes('lexical')
       if (hasDense && hasSparse) acc.both += 1
       else if (hasSparse) acc.sparseOnly += 1
       else if (hasDense) acc.denseOnly += 1
+      else if (hasLexical) acc.lexicalOnly += 1
       else acc.unknown += 1
       return acc
     },
-    { both: 0, denseOnly: 0, sparseOnly: 0, unknown: 0 },
+    { both: 0, denseOnly: 0, sparseOnly: 0, lexicalOnly: 0, unknown: 0 },
   )
 
   if (result.searchMode !== 'hybrid') {
     return [
       `向量召回 ${counts.denseOnly + counts.both + counts.unknown}`,
+      counts.lexicalOnly > 0 ? `词法兜底 ${counts.lexicalOnly}` : '',
       '当前模式未启用关键词召回融合',
-    ]
+    ].filter(Boolean)
   }
 
   return [
     `双路共同命中 ${counts.both}`,
     `向量独有 ${counts.denseOnly}`,
     `关键词独有 ${counts.sparseOnly}`,
+    counts.lexicalOnly > 0 ? `词法兜底 ${counts.lexicalOnly}` : '',
     counts.unknown > 0 ? `未标记 ${counts.unknown}` : '',
   ].filter(Boolean)
 }

@@ -336,6 +336,157 @@ func TestFilterRelevantChunksRemovesUnrelatedHits(t *testing.T) {
 	}
 }
 
+func TestRuleBasedRetrievalQueriesForFoundingTimeQuestion(t *testing.T) {
+	queries := buildRuleBasedRetrievalQueries("请问青山实验学校的建校时间是什么？")
+	joined := strings.Join(queries, "\n")
+	for _, expected := range []string{
+		"青山实验学校 建校时间",
+		"青山实验学校 成立时间",
+		"青山实验学校 创办时间",
+		"青山实验学校 始建于",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("expected query variant %q in %#v", expected, queries)
+		}
+	}
+}
+
+func TestRuleBasedRetrievalQueriesForGenericFactQuestions(t *testing.T) {
+	phoneQueries := strings.Join(buildRuleBasedRetrievalQueries("张三的手机号是多少？"), "\n")
+	for _, expected := range []string{
+		"张三 手机号",
+		"张三 联系电话",
+		"张三 联系方式",
+	} {
+		if !strings.Contains(phoneQueries, expected) {
+			t.Fatalf("expected phone query variant %q in %s", expected, phoneQueries)
+		}
+	}
+
+	addressQueries := strings.Join(buildRuleBasedRetrievalQueries("星河科技公司的注册地址是什么？"), "\n")
+	for _, expected := range []string{
+		"星河科技公司 注册地址",
+		"星河科技公司 办公地址",
+		"星河科技公司 联系地址",
+	} {
+		if !strings.Contains(addressQueries, expected) {
+			t.Fatalf("expected address query variant %q in %s", expected, addressQueries)
+		}
+	}
+}
+
+func TestFactQuestionKeepsFoundingTimeEvidence(t *testing.T) {
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID:   "doc-unrelated",
+				DocumentName: "notice.txt",
+				Text:         "青山实验学校近期发布了校园活动安排和后勤服务说明。",
+			},
+			Score:    0.93,
+			RawScore: 0.66,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID:   "doc-school",
+				DocumentName: "school-profile.txt",
+				Text:         "青山实验学校创办于1998年，是一所九年一贯制学校。",
+			},
+			Score:    0.82,
+			RawScore: 0.58,
+		},
+	}
+
+	filtered := filterRelevantChunks("青山实验学校的建校时间是什么", chunks)
+	if len(filtered) == 0 {
+		t.Fatal("expected founding time evidence to remain")
+	}
+	if filtered[0].DocumentID != "doc-school" {
+		t.Fatalf("expected founding time document first, got %s", filtered[0].DocumentID)
+	}
+	if isLowConfidenceSelection("青山实验学校的建校时间是什么", filtered) {
+		t.Fatal("expected founding time evidence to avoid low confidence")
+	}
+}
+
+func TestFactQuestionDropsUnrelatedHighScoreWhenDirectEvidenceExists(t *testing.T) {
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID:   "doc-high-score",
+				DocumentName: "campus-news.txt",
+				Text:         "青山实验学校近期发布了校园活动安排、社团报名和后勤服务说明。",
+			},
+			Score:    0.96,
+			RawScore: 0.96,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID:   "doc-evidence",
+				DocumentName: "school-profile.txt",
+				Text:         "学校概况：青山实验学校始建于1998年，现有小学部和初中部。",
+			},
+			Score:    0.73,
+			RawScore: 0.73,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID:   "doc-other",
+				DocumentName: "other-school.txt",
+				Text:         "蓝海中学的建校时间为2005年。",
+			},
+			Score:    0.88,
+			RawScore: 0.88,
+		},
+	}
+
+	filtered := filterRelevantChunks("青山实验学校的建校时间是什么", chunks)
+	if len(filtered) != 1 {
+		t.Fatalf("expected only direct fact evidence, got %d chunks: %#v", len(filtered), filtered)
+	}
+	if filtered[0].DocumentID != "doc-evidence" {
+		t.Fatalf("expected direct evidence document, got %s", filtered[0].DocumentID)
+	}
+}
+
+func TestLexicalFactCandidatesFindExactEvidence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "people.txt")
+	if err := os.WriteFile(path, []byte("人员档案\n张三的联系电话为 13800001111，办公地址为上海。"), 0o644); err != nil {
+		t.Fatalf("write document: %v", err)
+	}
+	document := model.Document{
+		ID:              "doc-people",
+		KnowledgeBaseID: "kb-people",
+		Name:            "people.txt",
+		Path:            path,
+	}
+	service := &AppService{
+		rag: NewRagService(),
+		state: &model.AppState{
+			KnowledgeBases: map[string]model.KnowledgeBase{
+				"kb-people": {
+					ID:        "kb-people",
+					Documents: []model.Document{document},
+				},
+			},
+		},
+	}
+
+	candidates := service.collectLexicalFactCandidates(
+		model.ChatCompletionRequest{KnowledgeBaseID: "kb-people"},
+		[]string{"kb-people"},
+		"张三的手机号是多少？",
+		5,
+	)
+	if len(candidates) == 0 {
+		t.Fatal("expected lexical fact fallback candidate")
+	}
+	if !strings.Contains(candidates[0].Text, "13800001111") {
+		t.Fatalf("expected phone evidence, got %q", candidates[0].Text)
+	}
+}
+
 func TestFilterRelevantChunksReturnsEmptyWhenNoEvidence(t *testing.T) {
 	chunks := []RetrievedChunk{
 		{

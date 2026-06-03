@@ -79,6 +79,19 @@ const scoreLabel = (score?: string) => {
   return `分数 ${value.toFixed(4)}`
 }
 
+const citationConfidenceLabel = (value?: string) => {
+  switch (value) {
+    case 'high':
+      return '强证据'
+    case 'medium':
+      return '中证据'
+    case 'low':
+      return '弱证据'
+    default:
+      return ''
+  }
+}
+
 const MessageCitations: React.FC<{
   sources: ChatSourceMetadata[]
   onOpenCitationSource?: (source: ChatSourceMetadata) => void
@@ -99,6 +112,9 @@ const MessageCitations: React.FC<{
               <strong>{source.documentName || source.toolName || '未知来源'}</strong>
               <span>{sourceTypeLabel(source)}</span>
               <span>{sourceRankLabel(source, index)}</span>
+              {citationConfidenceLabel(source.citationConfidence) && (
+                <span>{citationConfidenceLabel(source.citationConfidence)}</span>
+              )}
               {scoreLabel(source.score) && <span>{scoreLabel(source.score)}</span>}
               {source.documentId && (
                 <button

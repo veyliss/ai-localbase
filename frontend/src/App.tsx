@@ -63,6 +63,7 @@ export interface ChatSourceMetadata {
   snippet?: string
   sourceType?: string
   toolName?: string
+  citationConfidence?: string
 }
 
 export interface CitationNavigationTarget {

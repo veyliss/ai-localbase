@@ -1561,6 +1561,38 @@
   line-height: 1.5;
 }
 
+.kb-retrieval-trace .kb-retrieval-gate-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 12px 12px;
+  border-top: 0;
+  background: #f8fafc;
+}
+
+.kb-retrieval-gate-columns > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.kb-retrieval-gate-columns strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.kb-retrieval-gate-columns p {
+  margin: 0 0 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .kb-retrieval-context pre,
 .kb-retrieval-hit pre {
   margin: 0;

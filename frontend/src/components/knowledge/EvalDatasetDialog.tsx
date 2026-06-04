@@ -526,6 +526,20 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
         tone: compareTone(hybrid.metrics.lowConfidence - dense.metrics.lowConfidence, false),
       },
       {
+        label: '证据支撑',
+        dense: formatPercent(dense.metrics.evidenceSupportRate ?? 0),
+        hybrid: formatPercent(hybrid.metrics.evidenceSupportRate ?? 0),
+        delta: formatSignedPercent((hybrid.metrics.evidenceSupportRate ?? 0) - (dense.metrics.evidenceSupportRate ?? 0)),
+        tone: compareTone((hybrid.metrics.evidenceSupportRate ?? 0) - (dense.metrics.evidenceSupportRate ?? 0)),
+      },
+      {
+        label: '引用不准',
+        dense: String(dense.metrics.citationMismatchCount ?? 0),
+        hybrid: String(hybrid.metrics.citationMismatchCount ?? 0),
+        delta: formatSignedInteger((hybrid.metrics.citationMismatchCount ?? 0) - (dense.metrics.citationMismatchCount ?? 0)),
+        tone: compareTone((hybrid.metrics.citationMismatchCount ?? 0) - (dense.metrics.citationMismatchCount ?? 0), false),
+      },
+      {
         label: '检索 P95',
         dense: `${dense.metrics.latencyP95Ms}ms`,
         hybrid: `${hybrid.metrics.latencyP95Ms}ms`,
@@ -578,6 +592,14 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
       {
         label: '低置信',
         values: reports.map((report) => String(report.metrics.lowConfidence)),
+      },
+      {
+        label: '证据支撑',
+        values: reports.map((report) => formatPercent(report.metrics.evidenceSupportRate ?? 0)),
+      },
+      {
+        label: '引用不准',
+        values: reports.map((report) => String(report.metrics.citationMismatchCount ?? 0)),
       },
       {
         label: '检索 P95',
@@ -724,7 +746,9 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
   }
 
   const reportCases = evalRun?.cases ?? []
-  const issueCases = reportCases.filter((item) => !item.hit || item.lowConfidence || item.error)
+  const issueCases = reportCases.filter((item) => (
+    !item.hit || item.lowConfidence || item.error || item.evidenceIssue
+  ))
   const actionBusy = running || comparing || strategyComparing
 
   return (
@@ -792,6 +816,14 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
                 <span>低置信</span>
               </div>
               <div>
+                <strong>{formatPercent(evalRun.metrics.evidenceSupportRate ?? 0)}</strong>
+                <span>证据支撑</span>
+              </div>
+              <div>
+                <strong>{evalRun.metrics.citationMismatchCount ?? 0}</strong>
+                <span>引用不准</span>
+              </div>
+              <div>
                 <strong>{evalRun.metrics.skippedDisabled}</strong>
                 <span>跳过禁用</span>
               </div>
@@ -804,9 +836,14 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
                       {item.hit ? `命中 #${item.hitRank}` : '未命中'}
                     </span>
                     {item.lowConfidence && <span>低置信</span>}
+                    {item.directEvidence && <span>直接证据</span>}
+                    {item.evidenceIssue && <span>证据待核</span>}
                     {item.matchedBy && <span>{item.matchedBy}</span>}
                     <strong>{item.question}</strong>
                     <p>{item.error || item.expectedAnswer}</p>
+                    {item.evidenceIssue && (
+                      <p>证据问题：{item.evidenceIssue}</p>
+                    )}
                     {item.lowConfidence && evalCaseConfidenceSummary(item) && (
                       <p>低置信原因：{evalCaseConfidenceSummary(item)}</p>
                     )}

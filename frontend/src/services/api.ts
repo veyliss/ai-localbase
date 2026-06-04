@@ -194,6 +194,18 @@ export interface RetrievalDebugConfidence {
   evidenceCoverage: number
 }
 
+export interface RetrievalEvidenceGateDiagnostic {
+  enabled: boolean
+  reason?: string
+  candidateCount: number
+  selectedCount: number
+  directEvidenceCount: number
+  weakEvidenceCount: number
+  removedCount: number
+  topBefore?: RetrievalDebugChunk[]
+  topAfter?: RetrievalDebugChunk[]
+}
+
 export interface EvalGroundTruthCase {
   id: string
   question: string
@@ -225,6 +237,7 @@ export interface RetrievalDebugResponse {
   count: number
   lowConfidence: boolean
   confidence: RetrievalDebugConfidence
+  evidenceGate?: RetrievalEvidenceGateDiagnostic
   contextPreview: string
   sources: Array<Record<string, string>>
   evalCandidate?: EvalGroundTruthCase
@@ -308,6 +321,11 @@ export interface EvalRunMetrics {
   lowConfidence: number
   errorCount: number
   skippedDisabled: number
+  evidenceSupportedCount: number
+  evidenceSupportRate: number
+  citationMismatchCount: number
+  directEvidenceHitCount: number
+  directEvidenceHitRate: number
 }
 
 export interface EvalRunCaseResult {
@@ -321,6 +339,9 @@ export interface EvalRunCaseResult {
   elapsedMs: number
   lowConfidence: boolean
   confidence?: RetrievalDebugConfidence
+  evidenceSupport: boolean
+  evidenceIssue?: string
+  directEvidence: boolean
   error?: string
   retrieved: RetrievalDebugChunk[]
 }

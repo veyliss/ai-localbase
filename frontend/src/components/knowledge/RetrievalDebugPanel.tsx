@@ -202,6 +202,44 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
           </div>
         </div>
 
+        {result.evidenceGate && (
+          <details className="kb-retrieval-trace" open={result.evidenceGate.enabled}>
+            <summary>证据门控诊断</summary>
+            <div>
+              <span>{result.evidenceGate.reason || (result.evidenceGate.enabled ? '已启用' : '未启用')}</span>
+              {result.evidenceGate.enabled && (
+                <>
+                  <span>候选 {result.evidenceGate.candidateCount}</span>
+                  <span>保留 {result.evidenceGate.selectedCount}</span>
+                  <span>直接证据 {result.evidenceGate.directEvidenceCount}</span>
+                  <span>弱证据 {result.evidenceGate.weakEvidenceCount}</span>
+                  <span>过滤 {result.evidenceGate.removedCount}</span>
+                </>
+              )}
+            </div>
+            {result.evidenceGate.enabled && (
+              <div className="kb-retrieval-gate-columns">
+                <div>
+                  <strong>门控前 Top 候选</strong>
+                  {(result.evidenceGate.topBefore ?? []).map((item) => (
+                    <p key={`before-${item.id || `${item.documentId}-${item.index}`}`}>
+                      {item.documentName} #{item.index + 1} · {item.score.toFixed(4)}
+                    </p>
+                  ))}
+                </div>
+                <div>
+                  <strong>门控后 Top 候选</strong>
+                  {(result.evidenceGate.topAfter ?? []).map((item) => (
+                    <p key={`after-${item.id || `${item.documentId}-${item.index}`}`}>
+                      {item.documentName} #{item.index + 1} · {item.score.toFixed(4)}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </details>
+        )}
+
         {result.evalCandidate && (
           <div className="kb-retrieval-eval">
             <div>

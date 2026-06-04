@@ -110,11 +110,47 @@ func TestBuildStructuredRowEvalCasesAnswerExactField(t *testing.T) {
 			t.Fatalf("expected grounded row eval case, got %#v", item)
 		}
 	}
-	if cases[0].Question != "《工作簿1.csv》第2行的“姓名”是什么？" {
-		t.Fatalf("unexpected first row question: %q", cases[0].Question)
+	foundRowQuestion := false
+	for _, item := range cases {
+		if item.Question == "《工作簿1.csv》第2行的“姓名”是什么？" && item.Answer == "张三" {
+			foundRowQuestion = true
+			break
+		}
 	}
-	if cases[0].Answer != "张三" {
-		t.Fatalf("expected exact field answer, got %q", cases[0].Answer)
+	if !foundRowQuestion {
+		t.Fatalf("expected exact row field case, got %#v", cases)
+	}
+}
+
+func TestBuildStructuredRowEvalCasesIncludeFactQueries(t *testing.T) {
+	document := model.Document{
+		ID:              "doc-1",
+		KnowledgeBaseID: "kb-1",
+		Name:            "教师信息.csv",
+	}
+	chunk := DocumentChunk{
+		ID:              "doc-1-chunk-0",
+		KnowledgeBaseID: "kb-1",
+		DocumentID:      "doc-1",
+		DocumentName:    "教师信息.csv",
+		Text:            "第2行：姓名：张三。性别：男。职称：高级职称。教师编号：111222333111。年龄：45。手机号：15911110011。薪资：24000。教龄：20。",
+		Index:           0,
+		Kind:            "structured_row",
+	}
+
+	cases := buildEvalCasesFromChunk(document, chunk, 6)
+	joinedQuestions := make([]string, 0, len(cases))
+	for _, item := range cases {
+		joinedQuestions = append(joinedQuestions, item.Question)
+	}
+	joined := strings.Join(joinedQuestions, "\n")
+	for _, expected := range []string{
+		"张三的手机号是什么？",
+		"张三的薪资是多少？",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("expected fact query %q in generated cases: %#v", expected, cases)
+		}
 	}
 }
 
@@ -549,9 +585,9 @@ func TestEvalCaseHitRequiresAllCrossDocumentSources(t *testing.T) {
 
 func TestBuildEvalRunMetrics(t *testing.T) {
 	metrics := buildEvalRunMetrics([]model.EvalRunCaseResult{
-		{Hit: true, HitRank: 1, ReciprocalRank: 1, ElapsedMs: 10},
-		{Hit: true, HitRank: 2, ReciprocalRank: 0.5, ElapsedMs: 20, LowConfidence: true},
-		{Hit: false, HitRank: -1, ElapsedMs: 30, Error: "未命中"},
+		{Hit: true, HitRank: 1, ReciprocalRank: 1, ElapsedMs: 10, EvidenceSupport: true, DirectEvidence: true},
+		{Hit: true, HitRank: 2, ReciprocalRank: 0.5, ElapsedMs: 20, LowConfidence: true, EvidenceSupport: false, EvidenceIssue: "命中来源但未覆盖答案证据片段"},
+		{Hit: false, HitRank: -1, ElapsedMs: 30, Error: "未命中", EvidenceSupport: false},
 	}, 2)
 
 	if metrics.TotalCases != 3 || metrics.HitCount != 2 || metrics.MissCount != 1 {
@@ -566,8 +602,43 @@ func TestBuildEvalRunMetrics(t *testing.T) {
 	if metrics.LowConfidence != 1 || metrics.ErrorCount != 1 || metrics.SkippedDisabled != 2 {
 		t.Fatalf("unexpected diagnostic counts: %#v", metrics)
 	}
+	if metrics.EvidenceSupportedCount != 1 || metrics.CitationMismatchCount != 1 || metrics.DirectEvidenceHitCount != 1 {
+		t.Fatalf("unexpected evidence counts: %#v", metrics)
+	}
+	if metrics.EvidenceSupportRate < 0.33 || metrics.EvidenceSupportRate > 0.34 {
+		t.Fatalf("unexpected evidence support rate: %#v", metrics)
+	}
 	if metrics.LatencyP50Ms != 20 || metrics.LatencyP95Ms != 20 {
 		t.Fatalf("unexpected latency percentiles: %#v", metrics)
+	}
+}
+
+func TestEvalCaseEvidenceSupportDetectsCitationMismatch(t *testing.T) {
+	item := model.EvalGroundTruthCase{
+		Question:       "张三的手机号是多少？",
+		Answer:         "15911110011",
+		AnswerSnippets: []string{"15911110011"},
+		SourceDocuments: []model.EvalSourceDocument{{
+			DocumentID: "doc-1",
+			ChunkID:    "chunk-1",
+		}},
+	}
+	chunks := []model.RetrievalDebugChunk{
+		{ID: "chunk-1", DocumentID: "doc-1", Text: "张三的地址是上海。"},
+	}
+
+	supported, issue := evalCaseEvidenceSupport(item, chunks, true)
+	if supported || !strings.Contains(issue, "未覆盖答案证据片段") {
+		t.Fatalf("expected citation mismatch, got supported=%v issue=%q", supported, issue)
+	}
+
+	chunks[0].Text = "张三的手机号是15911110011。"
+	supported, issue = evalCaseEvidenceSupport(item, chunks, true)
+	if !supported || issue != "" {
+		t.Fatalf("expected supported evidence, got supported=%v issue=%q", supported, issue)
+	}
+	if !evalCaseDirectEvidence(item, chunks) {
+		t.Fatal("expected direct fact evidence")
 	}
 }
 

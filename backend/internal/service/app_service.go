@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -1436,6 +1437,7 @@ func (s *AppService) DebugRetrieve(req model.RetrievalDebugRequest) (model.Retri
 	}
 	confidence := buildRetrievalDebugConfidence(query, chunks, deterministicUsed)
 	retrievalLowConfidence := confidence.Status == "low"
+	evidenceGate := s.buildRetrievalEvidenceGateDiagnostic(chatReq, query, chunks)
 
 	contextText, sources := s.rag.BuildContext(chunks)
 	contextText = truncateRunes(strings.TrimSpace(contextText), retrievalDebugContextLimit)
@@ -1443,20 +1445,7 @@ func (s *AppService) DebugRetrieve(req model.RetrievalDebugRequest) (model.Retri
 
 	items := make([]model.RetrievalDebugChunk, 0, len(chunks))
 	for _, chunk := range chunks {
-		items = append(items, model.RetrievalDebugChunk{
-			ID:                chunk.ID,
-			KnowledgeBaseID:   chunk.KnowledgeBaseID,
-			DocumentID:        chunk.DocumentID,
-			DocumentName:      chunk.DocumentName,
-			Index:             chunk.Index,
-			Kind:              chunk.Kind,
-			Score:             chunk.Score,
-			Text:              truncateRunes(strings.TrimSpace(chunk.Text), retrievalDebugChunkTextLimit),
-			MatchReasons:      buildRetrievalDebugMatchReasons(query, chunk, deterministicUsed),
-			RetrievalChannels: chunk.RetrievalChannels,
-			DenseRank:         chunk.DenseRank,
-			SparseRank:        chunk.SparseRank,
-		})
+		items = append(items, buildRetrievalDebugChunk(query, chunk, deterministicUsed))
 	}
 
 	return model.RetrievalDebugResponse{
@@ -1473,12 +1462,120 @@ func (s *AppService) DebugRetrieve(req model.RetrievalDebugRequest) (model.Retri
 		Count:             len(items),
 		LowConfidence:     retrievalLowConfidence,
 		Confidence:        confidence,
+		EvidenceGate:      evidenceGate,
 		ContextPreview:    contextText,
 		Sources:           sources,
 		EvalCandidate:     evalCandidate,
 		Trace:             trace,
 		Items:             items,
 	}, nil
+}
+
+func buildRetrievalDebugChunk(query string, chunk RetrievedChunk, deterministicUsed bool) model.RetrievalDebugChunk {
+	return model.RetrievalDebugChunk{
+		ID:                chunk.ID,
+		KnowledgeBaseID:   chunk.KnowledgeBaseID,
+		DocumentID:        chunk.DocumentID,
+		DocumentName:      chunk.DocumentName,
+		Index:             chunk.Index,
+		Kind:              chunk.Kind,
+		Score:             chunk.Score,
+		Text:              truncateRunes(strings.TrimSpace(chunk.Text), retrievalDebugChunkTextLimit),
+		MatchReasons:      buildRetrievalDebugMatchReasons(query, chunk, deterministicUsed),
+		RetrievalChannels: chunk.RetrievalChannels,
+		DenseRank:         chunk.DenseRank,
+		SparseRank:        chunk.SparseRank,
+	}
+}
+
+func (s *AppService) buildRetrievalEvidenceGateDiagnostic(req model.ChatCompletionRequest, query string, selected []RetrievedChunk) model.RetrievalEvidenceGateDiagnostic {
+	if len(parseFactQuerySpecs(query)) == 0 {
+		return model.RetrievalEvidenceGateDiagnostic{
+			Enabled: false,
+			Reason:  "当前问题未识别为主体 / 属性事实型问法",
+		}
+	}
+	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() || s.rag == nil {
+		return model.RetrievalEvidenceGateDiagnostic{
+			Enabled: false,
+			Reason:  "检索服务未启用，无法生成门控诊断",
+		}
+	}
+
+	knowledgeBaseIDs, err := s.resolveRetrievalKnowledgeBaseIDs(req)
+	if err != nil {
+		return model.RetrievalEvidenceGateDiagnostic{
+			Enabled: false,
+			Reason:  err.Error(),
+		}
+	}
+
+	params := s.resolveRetrievalParams(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	vectors, err := s.rag.EmbedTexts(ctx, s.resolveEmbeddingConfig(req), []string{query}, s.qdrantVectorSize())
+	if err != nil || len(vectors) == 0 {
+		return model.RetrievalEvidenceGateDiagnostic{
+			Enabled: false,
+			Reason:  fmt.Sprintf("查询向量生成失败：%v", err),
+		}
+	}
+
+	candidates, err := s.collectCandidatesForQueries(ctx, knowledgeBaseIDs, req, vectors[0], buildRuleBasedRetrievalQueries(query), params.candidateTopK, s.shouldUseHybridSearch(req), query)
+	if err != nil {
+		return model.RetrievalEvidenceGateDiagnostic{
+			Enabled: false,
+			Reason:  err.Error(),
+		}
+	}
+
+	directEvidenceCount := 0
+	weakEvidenceCount := 0
+	for _, candidate := range candidates {
+		switch score := factEvidenceScore(query, candidate); {
+		case score >= 5:
+			directEvidenceCount++
+		case score > 0:
+			weakEvidenceCount++
+		}
+	}
+
+	selectedKeys := make(map[string]struct{}, len(selected))
+	for _, item := range selected {
+		selectedKeys[retrievedChunkKey(item)] = struct{}{}
+	}
+	removedCount := 0
+	for _, candidate := range candidates {
+		if _, ok := selectedKeys[retrievedChunkKey(candidate)]; !ok {
+			removedCount++
+		}
+	}
+
+	return model.RetrievalEvidenceGateDiagnostic{
+		Enabled:             true,
+		Reason:              "主体 / 属性事实型问法已启用证据优先门控",
+		CandidateCount:      len(candidates),
+		SelectedCount:       len(selected),
+		DirectEvidenceCount: directEvidenceCount,
+		WeakEvidenceCount:   weakEvidenceCount,
+		RemovedCount:        removedCount,
+		TopBefore:           debugChunksFromRetrieved(query, candidates, 5, false),
+		TopAfter:            debugChunksFromRetrieved(query, selected, 5, false),
+	}
+}
+
+func debugChunksFromRetrieved(query string, chunks []RetrievedChunk, limit int, deterministicUsed bool) []model.RetrievalDebugChunk {
+	if len(chunks) == 0 || limit <= 0 {
+		return nil
+	}
+	if len(chunks) > limit {
+		chunks = chunks[:limit]
+	}
+	items := make([]model.RetrievalDebugChunk, 0, len(chunks))
+	for _, chunk := range chunks {
+		items = append(items, buildRetrievalDebugChunk(query, chunk, deterministicUsed))
+	}
+	return items
 }
 
 func (s *AppService) CurrentEmbeddingConfig() model.EmbeddingModelConfig {
@@ -3070,7 +3167,7 @@ func (s *AppService) collectCandidatesForQueries(ctx context.Context, knowledgeB
 			continue
 		}
 		for _, item := range candidates {
-			key := item.DocumentID + "#" + item.ID
+			key := retrievedChunkKey(item)
 			existing, ok := merged[key]
 			if !ok || item.Score > existing.Score {
 				merged[key] = item
@@ -3164,7 +3261,7 @@ func mergeRetrievedChunks(groups ...[]RetrievedChunk) []RetrievedChunk {
 	merged := make(map[string]RetrievedChunk)
 	for _, group := range groups {
 		for _, item := range group {
-			key := item.DocumentID + "#" + item.ID
+			key := retrievedChunkKey(item)
 			existing, ok := merged[key]
 			if !ok || item.Score > existing.Score {
 				merged[key] = item
@@ -3177,6 +3274,13 @@ func mergeRetrievedChunks(groups ...[]RetrievedChunk) []RetrievedChunk {
 	}
 	sortRetrievedChunks(results)
 	return results
+}
+
+func retrievedChunkKey(item RetrievedChunk) string {
+	if strings.TrimSpace(item.ID) != "" {
+		return item.DocumentID + "#" + item.ID
+	}
+	return item.DocumentID + "#" + strconv.Itoa(item.Index) + "#" + strings.TrimSpace(item.Text)
 }
 
 func shouldPreferStructuredSummary(query string) bool {

@@ -535,9 +535,14 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 		}
 
 		hit, rank, matchedBy := evalCaseHit(item, response.Items)
+		evidenceSupported, evidenceIssue := evalCaseEvidenceSupport(item, response.Items, hit)
+		directEvidence := evalCaseDirectEvidence(item, response.Items)
 		caseResult.Hit = hit
 		caseResult.HitRank = rank
 		caseResult.MatchedBy = matchedBy
+		caseResult.EvidenceSupport = evidenceSupported
+		caseResult.EvidenceIssue = evidenceIssue
+		caseResult.DirectEvidence = directEvidence
 		if hit && rank > 0 {
 			caseResult.ReciprocalRank = 1 / float64(rank)
 		} else {
@@ -772,6 +777,15 @@ func buildEvalRunMetrics(results []model.EvalRunCaseResult, skippedDisabled int)
 		} else {
 			metrics.MissCount++
 		}
+		if result.EvidenceSupport {
+			metrics.EvidenceSupportedCount++
+		}
+		if result.Hit && !result.EvidenceSupport {
+			metrics.CitationMismatchCount++
+		}
+		if result.DirectEvidence {
+			metrics.DirectEvidenceHitCount++
+		}
 		if result.LowConfidence {
 			metrics.LowConfidence++
 		}
@@ -782,9 +796,60 @@ func buildEvalRunMetrics(results []model.EvalRunCaseResult, skippedDisabled int)
 	}
 	metrics.HitRate = float64(metrics.HitCount) / float64(len(results))
 	metrics.MRR = reciprocalSum / float64(len(results))
+	metrics.EvidenceSupportRate = float64(metrics.EvidenceSupportedCount) / float64(len(results))
+	metrics.DirectEvidenceHitRate = float64(metrics.DirectEvidenceHitCount) / float64(len(results))
 	metrics.LatencyP50Ms = percentileInt64(latencies, 0.50)
 	metrics.LatencyP95Ms = percentileInt64(latencies, 0.95)
 	return metrics
+}
+
+func evalCaseEvidenceSupport(item model.EvalGroundTruthCase, chunks []model.RetrievalDebugChunk, hit bool) (bool, string) {
+	if !hit {
+		return false, "未命中期望证据"
+	}
+	if len(item.AnswerSnippets) == 0 {
+		return true, ""
+	}
+	if evalAnswerSnippetMatched(item.AnswerSnippets, chunks) {
+		return true, ""
+	}
+	return false, "命中来源但未覆盖答案证据片段"
+}
+
+func evalAnswerSnippetMatched(snippets []string, chunks []model.RetrievalDebugChunk) bool {
+	for _, chunk := range chunks {
+		chunkText := strings.ToLower(strings.TrimSpace(chunk.Text))
+		if chunkText == "" {
+			continue
+		}
+		for _, snippet := range snippets {
+			normalizedSnippet := strings.ToLower(strings.TrimSpace(snippet))
+			if normalizedSnippet != "" && strings.Contains(chunkText, normalizedSnippet) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func evalCaseDirectEvidence(item model.EvalGroundTruthCase, chunks []model.RetrievalDebugChunk) bool {
+	if len(parseFactQuerySpecs(item.Question)) == 0 {
+		return false
+	}
+	for _, chunk := range chunks {
+		if factEvidenceScore(item.Question, RetrievedChunk{DocumentChunk: DocumentChunk{
+			ID:              chunk.ID,
+			KnowledgeBaseID: chunk.KnowledgeBaseID,
+			DocumentID:      chunk.DocumentID,
+			DocumentName:    chunk.DocumentName,
+			Text:            chunk.Text,
+			Index:           chunk.Index,
+			Kind:            chunk.Kind,
+		}}) >= 5 {
+			return true
+		}
+	}
+	return false
 }
 
 func percentileInt64(values []int64, percentile float64) int64 {
@@ -1215,6 +1280,7 @@ func buildStructuredRowEvalCases(document model.Document, chunk DocumentChunk) [
 		if !ok {
 			continue
 		}
+		cases = append(cases, buildStructuredFactEvalCases(document, chunk, line, fields, 2)...)
 		for _, field := range selectStructuredEvalRowFields(fields, 2) {
 			question := fmt.Sprintf("《%s》第%s行的“%s”是什么？", document.Name, rowNumber, field.name)
 			answer := strings.TrimSpace(field.value)
@@ -1225,6 +1291,38 @@ func buildStructuredRowEvalCases(document model.Document, chunk DocumentChunk) [
 		}
 	}
 	return cases
+}
+
+func buildStructuredFactEvalCases(document model.Document, chunk DocumentChunk, line string, fields []structuredEvalRowField, limit int) []model.EvalGroundTruthCase {
+	if len(fields) == 0 || limit <= 0 {
+		return nil
+	}
+	subject, ok := selectStructuredFactSubject(fields)
+	if !ok {
+		return nil
+	}
+	attributes := selectStructuredFactAttributes(fields, subject.name, limit)
+	cases := make([]model.EvalGroundTruthCase, 0, len(attributes))
+	for _, attribute := range attributes {
+		answer := strings.TrimSpace(attribute.value)
+		if answer == "" {
+			continue
+		}
+		question := fmt.Sprintf("%s的%s%s", subject.value, attribute.name, structuredFactQuestionSuffix(attribute.name, answer))
+		cases = append(cases, newEvalCase(document, chunk, question, answer, []string{line}, classifyEvalAnswerType(answer), "hard", "structured fact query regression"))
+	}
+	return cases
+}
+
+func structuredFactQuestionSuffix(fieldName, answer string) string {
+	fieldName = strings.TrimSpace(fieldName)
+	if regexp.MustCompile(`电话|手机|编号|号|邮箱|地址|名称|姓名|名字|职称|职位|岗位|负责人|联系人|时间|日期`).MatchString(fieldName) {
+		return "是什么？"
+	}
+	if classifyEvalAnswerType(answer) == "numeric" {
+		return "是多少？"
+	}
+	return "是什么？"
 }
 
 func buildHeadingTextEvalCases(document model.Document, chunk DocumentChunk) []model.EvalGroundTruthCase {
@@ -1671,6 +1769,68 @@ func evalFileScope(fileName, sheetName string) string {
 type structuredEvalRowField struct {
 	name  string
 	value string
+}
+
+func selectStructuredFactSubject(fields []structuredEvalRowField) (structuredEvalRowField, bool) {
+	preferredNames := []string{"姓名", "名称", "名字", "学校", "公司", "单位", "机构", "项目", "标题"}
+	for _, preferred := range preferredNames {
+		for _, field := range fields {
+			if strings.Contains(field.name, preferred) && utf8.RuneCountInString(strings.TrimSpace(field.value)) >= 2 {
+				return field, true
+			}
+		}
+	}
+	for _, field := range fields {
+		value := strings.TrimSpace(field.value)
+		if utf8.RuneCountInString(value) >= 2 && utf8.RuneCountInString(value) <= 40 && !regexp.MustCompile(`^\d+(\.\d+)?$`).MatchString(value) {
+			return field, true
+		}
+	}
+	return structuredEvalRowField{}, false
+}
+
+func selectStructuredFactAttributes(fields []structuredEvalRowField, subjectName string, limit int) []structuredEvalRowField {
+	if len(fields) == 0 || limit <= 0 {
+		return nil
+	}
+	preferredNames := []string{
+		"建校时间", "成立时间", "创办时间", "时间", "日期",
+		"手机号", "电话", "联系方式", "地址", "邮箱",
+		"薪资", "工资", "价格", "金额", "年龄",
+		"职称", "职位", "岗位", "编号", "负责人", "联系人",
+	}
+	selected := make([]structuredEvalRowField, 0, limit)
+	used := map[int]struct{}{}
+	for _, preferred := range preferredNames {
+		for index, field := range fields {
+			if _, ok := used[index]; ok {
+				continue
+			}
+			if field.name == subjectName || strings.TrimSpace(field.value) == "" {
+				continue
+			}
+			if strings.Contains(field.name, preferred) {
+				selected = append(selected, field)
+				used[index] = struct{}{}
+				if len(selected) >= limit {
+					return selected
+				}
+			}
+		}
+	}
+	for index, field := range fields {
+		if _, ok := used[index]; ok {
+			continue
+		}
+		if field.name == subjectName || strings.TrimSpace(field.value) == "" {
+			continue
+		}
+		selected = append(selected, field)
+		if len(selected) >= limit {
+			break
+		}
+	}
+	return selected
 }
 
 func parseStructuredEvalRow(line string) (string, []structuredEvalRowField, bool) {

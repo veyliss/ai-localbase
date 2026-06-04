@@ -58,7 +58,7 @@ const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
       <div className="kb-panel-section-head">
         <div>
           <h3>质量趋势</h3>
-          <p>{runs.length} 次评估运行 · 关注 Hit Rate、MRR 和低置信变化</p>
+          <p>{runs.length} 次评估运行 · 关注 Hit Rate、MRR、低置信和证据支撑变化</p>
         </div>
         <button className="kb-panel-mini-btn" onClick={onRefresh} disabled={loading}>
           {loading ? '刷新中' : '刷新'}
@@ -89,6 +89,10 @@ const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
               <span>低置信</span>
             </div>
             <div>
+              <strong>{formatPercent(latest?.metrics.evidenceSupportRate ?? 0)}</strong>
+              <span>证据支撑</span>
+            </div>
+            <div>
               <strong>{latest?.metrics.latencyP95Ms ?? 0}ms</strong>
               <span>检索 P95</span>
             </div>
@@ -112,6 +116,8 @@ const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
                   <span>Hit {formatPercent(run.metrics.hitRate)}</span>
                   <span>MRR {run.metrics.mrr.toFixed(3)}</span>
                   <span>低置信 {run.metrics.lowConfidence}</span>
+                  <span>证据 {formatPercent(run.metrics.evidenceSupportRate ?? 0)}</span>
+                  <span>引用不准 {run.metrics.citationMismatchCount ?? 0}</span>
                   <span>P95 {run.metrics.latencyP95Ms}ms</span>
                 </div>
               </article>

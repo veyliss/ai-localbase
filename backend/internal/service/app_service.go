@@ -3612,12 +3612,13 @@ func filterRelevantChunks(query string, chunks []RetrievedChunk) []RetrievedChun
 	}
 	factSpecs := parseFactQuerySpecs(query)
 
-	// 检测是否为结构化数据查询（包含文件名或表格相关关键词）
+	// 检测是否为结构化表格数据查询（仅检查文件扩展名和表格关键词）
+	// 注意：不包括 len(factSpecs) > 0，因为事实问题查询（如"校长是谁"）也会产生 factSpecs
 	isStructuredQuery := strings.Contains(query, ".xlsx") || strings.Contains(query, ".csv") ||
 	                     strings.Contains(query, ".xls") || strings.Contains(query, "工作表") ||
-	                     strings.Contains(query, "表格") || len(factSpecs) > 0
+	                     strings.Contains(query, "表格")
 
-	// 对于结构化数据查询，完全信任向量检索结果，不进行词汇过滤
+	// 对于结构化表格数据查询，完全信任向量检索结果，不进行词汇过滤
 	if isStructuredQuery {
 		return chunks
 	}

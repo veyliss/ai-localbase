@@ -742,10 +742,11 @@ export const stageUpload = async (file: File): Promise<StageUploadResponse> => {
 export const batchIndexDocuments = async (
   knowledgeBaseId: string,
   uploadIds: string[],
+  concurrency?: number,
 ): Promise<BatchIndexResponse> => (
   requestJson<BatchIndexResponse>(
     `/api/knowledge-bases/${knowledgeBaseId}/documents/batch-index`,
-    jsonRequest({ uploadIds }, { method: 'POST' }),
+    jsonRequest({ uploadIds, concurrency }, { method: 'POST' }),
   )
 )
 

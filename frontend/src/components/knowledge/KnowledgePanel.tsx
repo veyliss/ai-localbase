@@ -643,6 +643,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
               />
 
               <main className="kb-workspace">
+                <UploadDropZone onFilesSelected={(files) => onUploadDirectory(activeKnowledgeBaseId!, files)}>
                 {selectedKnowledgeBase && activeKnowledgeBaseId ? (
                   <>
                     <section className="kb-workspace-hero">
@@ -805,6 +806,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                     <p className="kb-empty-sub">查看索引健康度、文档列表和检索调试结果</p>
                   </div>
                 )}
+                </UploadDropZone>
               </main>
             </div>
           )}

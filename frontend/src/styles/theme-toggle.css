@@ -1,0 +1,36 @@
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover, #f5f5f5);
+  color: var(--text-primary, #333);
+}
+
+.theme-toggle svg {
+  transition: transform 0.3s ease;
+}
+
+.theme-toggle:active svg {
+  transform: scale(0.9);
+}
+
+[data-theme="dark"] .theme-toggle {
+  color: var(--text-secondary, #aaa);
+}
+
+[data-theme="dark"] .theme-toggle:hover {
+  background: var(--bg-hover, #2a2a2a);
+  color: var(--text-primary, #eee);
+}

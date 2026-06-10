@@ -1,0 +1,107 @@
+/* ==========================================================================
+   设计代币系统 (Design Tokens)
+   极客智感风格 - Geek-Chic Tech Console
+   ========================================================================== */
+
+/* ==========================================================================
+   1. 优雅亮色模式 (Light Theme)
+   ========================================================================== */
+:root {
+  /* 基础背景色 */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+
+  /* 文字层级 */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
+
+  /* 核心品牌色 (量子靛蓝 Indigo) */
+  --color-primary: #4f46e5;
+  --color-primary-hover: #4338ca;
+  --color-primary-light: #eef2ff;
+
+  /* 语义反馈色 */
+  --color-success: #10b981;
+  --color-success-light: #ecfdf5;
+  --color-warning: #f59e0b;
+  --color-warning-light: #fffbeb;
+  --color-error: #ef4444;
+  --color-error-light: #fef2f2;
+
+  /* 物理材质质感 */
+  --border-color: #e2e8f0;
+  --border-color-hover: #cbd5e1;
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(226, 232, 240, 0.8);
+
+  /* 圆角代币 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  /* 柔和阴影 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.05);
+
+  /* 间距系统 (基于 4px) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  /* 贝塞尔过渡 */
+  --transition-fast: 0.12s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ==========================================================================
+   2. 极客暗色模式 (Dark Theme)
+   ========================================================================== */
+[data-theme="dark"] {
+  --bg-primary: #090d16;
+  --bg-secondary: #0f172a;
+  --bg-tertiary: #1e293b;
+
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #64748b;
+
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-light: rgba(99, 102, 241, 0.12);
+
+  --color-success: #34d399;
+  --color-success-light: rgba(52, 211, 153, 0.08);
+  --color-warning: #fbbf24;
+  --color-warning-light: rgba(251, 191, 36, 0.08);
+  --color-error: #f87171;
+  --color-error-light: rgba(248, 113, 113, 0.08);
+
+  --border-color: #1e293b;
+  --border-color-hover: #334155;
+  --glass-bg: rgba(9, 13, 22, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.08);
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* ==========================================================================
+   3. 全局基础样式
+   ========================================================================== */
+* {
+  transition: background-color var(--transition-normal),
+              border-color var(--transition-normal),
+              color var(--transition-normal);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}

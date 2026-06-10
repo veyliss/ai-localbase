@@ -42,23 +42,24 @@ const formatDateTime = (value: string) => {
 }
 
 const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
-  runs,
+  runs = [],
   loading,
   error,
   onRefresh,
 }) => {
-  const latest = runs[0] ?? null
-  const previous = runs[1] ?? null
+  const safeRuns = Array.isArray(runs) ? runs : []
+  const latest = safeRuns[0] ?? null
+  const previous = safeRuns[1] ?? null
   const hitRateDelta = latest && previous ? latest.metrics.hitRate - previous.metrics.hitRate : null
   const mrrDelta = latest && previous ? latest.metrics.mrr - previous.metrics.mrr : null
-  const visibleRuns = runs.slice(0, 6)
+  const visibleRuns = safeRuns.slice(0, 6)
 
   return (
-    <section className={`kb-eval-trend-panel${runs.length === 0 ? ' kb-eval-trend-panel--empty' : ''}`}>
+    <section className={`kb-eval-trend-panel${safeRuns.length === 0 ? ' kb-eval-trend-panel--empty' : ''}`}>
       <div className="kb-panel-section-head">
         <div>
           <h3>质量趋势</h3>
-          <p>{runs.length} 次评估运行 · 关注 Hit Rate、MRR、低置信和证据支撑变化</p>
+          <p>{safeRuns.length} 次评估运行 · 关注 Hit Rate、MRR、低置信和证据支撑变化</p>
         </div>
         <button className="kb-panel-mini-btn" onClick={onRefresh} disabled={loading}>
           {loading ? '刷新中' : '刷新'}
@@ -67,9 +68,9 @@ const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
 
       {error && <div className="kb-eval-history-error">{error}</div>}
 
-      {loading && runs.length === 0 ? (
+      {loading && safeRuns.length === 0 ? (
         <div className="kb-eval-trend-empty">正在加载评估趋势</div>
-      ) : runs.length === 0 ? (
+      ) : safeRuns.length === 0 ? (
         <div className="kb-eval-trend-empty">暂无运行记录，打开评估集并点击“运行评估”后会生成趋势。</div>
       ) : (
         <>

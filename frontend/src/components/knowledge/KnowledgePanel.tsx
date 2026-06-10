@@ -25,6 +25,7 @@ import ConfirmDialog from '../common/ConfirmDialog'
 import UploadDropZone from '../common/UploadDropZone'
 import { useKnowledgeBase } from './contexts/KnowledgeBaseContext'
 import { useDocument } from './contexts/DocumentContext'
+import { useEvalDataset } from './contexts/EvalDatasetContext'
 
 interface KnowledgePanelProps {
   open: boolean
@@ -119,6 +120,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   // Use Context
   const kbContext = useKnowledgeBase()
   const docContext = useDocument()
+  const evalContext = useEvalDataset()
 
   // UI state (non-business logic)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -128,17 +130,6 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   const [showUploadTaskDetails, setShowUploadTaskDetails] = useState(false)
   const [showFailedItems, setShowFailedItems] = useState(false)
   const [showSkippedItems, setShowSkippedItems] = useState(false)
-  const [generatingEvalKnowledgeBaseId, setGeneratingEvalKnowledgeBaseId] = useState<string | null>(null)
-  const [evalDataset, setEvalDataset] = useState<GenerateEvalDatasetResponse | null>(null)
-  const [evalDatasetScopeName, setEvalDatasetScopeName] = useState('')
-  const [evalDatasetSummaries, setEvalDatasetSummaries] = useState<EvalDatasetSummary[]>([])
-  const [evalDatasetHistoryLoading, setEvalDatasetHistoryLoading] = useState(false)
-  const [evalDatasetHistoryError, setEvalDatasetHistoryError] = useState('')
-  const [evalRunSummaries, setEvalRunSummaries] = useState<EvalRunSummary[]>([])
-  const [evalRunHistoryLoading, setEvalRunHistoryLoading] = useState(false)
-  const [evalRunHistoryError, setEvalRunHistoryError] = useState('')
-  const [openingEvalDatasetId, setOpeningEvalDatasetId] = useState<string | null>(null)
-  const [deletingEvalDatasetId, setDeletingEvalDatasetId] = useState<string | null>(null)
   const [healthByKnowledgeBase, setHealthByKnowledgeBase] = useState<Record<string, KnowledgeBaseHealthResponse>>({})
   const [healthLoadingId, setHealthLoadingId] = useState<string | null>(null)
   const [healthError, setHealthError] = useState('')
@@ -147,8 +138,6 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   const [retrievalDebugKnowledgeBaseId, setRetrievalDebugKnowledgeBaseId] = useState<string | null>(null)
   const [retrievalDebugResult, setRetrievalDebugResult] = useState<RetrievalDebugResponse | null>(null)
   const [retrievalDebugError, setRetrievalDebugError] = useState('')
-  const [savingEvalCandidate, setSavingEvalCandidate] = useState(false)
-  const [evalCandidateSaveMessage, setEvalCandidateSaveMessage] = useState('')
 
   // 确认对话框状态
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -163,8 +152,6 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     onConfirm: () => {},
   })
   const directoryInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
-  const evalDatasetLoadSeq = useRef(0)
-  const evalRunLoadSeq = useRef(0)
 
   const selectedKnowledgeBase = useMemo(
     () => knowledgeBases.find((item) => item.id === selectedKnowledgeBaseId) ?? knowledgeBases[0] ?? null,
@@ -181,63 +168,13 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   useEffect(() => {
     setRetrievalDebugResult(null)
     setRetrievalDebugError('')
-    setEvalCandidateSaveMessage('')
   }, [selectedKnowledgeBaseId, selectedDocumentId])
 
-  const loadEvalDatasets = useCallback(async (knowledgeBaseId: string) => {
-    const requestSeq = evalDatasetLoadSeq.current + 1
-    evalDatasetLoadSeq.current = requestSeq
-    setEvalDatasetHistoryLoading(true)
-    setEvalDatasetHistoryError('')
-    try {
-      const items = await onListEvalDatasets(knowledgeBaseId)
-      if (evalDatasetLoadSeq.current !== requestSeq) return
-      setEvalDatasetSummaries(items)
-    } catch (error) {
-      if (evalDatasetLoadSeq.current !== requestSeq) return
-      setEvalDatasetHistoryError(error instanceof Error ? error.message : '加载评估集历史失败')
-    } finally {
-      if (evalDatasetLoadSeq.current === requestSeq) {
-        setEvalDatasetHistoryLoading(false)
-      }
-    }
-  }, [onListEvalDatasets])
-
-  const loadEvalRuns = useCallback(async (knowledgeBaseId: string) => {
-    const requestSeq = evalRunLoadSeq.current + 1
-    evalRunLoadSeq.current = requestSeq
-    setEvalRunHistoryLoading(true)
-    setEvalRunHistoryError('')
-    try {
-      const items = await onListEvalRuns(knowledgeBaseId)
-      if (evalRunLoadSeq.current !== requestSeq) return
-      setEvalRunSummaries(items)
-    } catch (error) {
-      if (evalRunLoadSeq.current !== requestSeq) return
-      setEvalRunHistoryError(error instanceof Error ? error.message : '加载评估趋势失败')
-    } finally {
-      if (evalRunLoadSeq.current === requestSeq) {
-        setEvalRunHistoryLoading(false)
-      }
-    }
-  }, [onListEvalRuns])
-
   useEffect(() => {
-    if (!open || !activeKnowledgeBaseId) {
-      evalDatasetLoadSeq.current += 1
-      evalRunLoadSeq.current += 1
-      setEvalDatasetSummaries([])
-      setEvalDatasetHistoryError('')
-      setEvalDatasetHistoryLoading(false)
-      setEvalRunSummaries([])
-      setEvalRunHistoryError('')
-      setEvalRunHistoryLoading(false)
-      return
-    }
-
-    void loadEvalDatasets(activeKnowledgeBaseId)
-    void loadEvalRuns(activeKnowledgeBaseId)
-  }, [open, activeKnowledgeBaseId, loadEvalDatasets, loadEvalRuns])
+    if (!open || !activeKnowledgeBaseId) return
+    void evalContext.loadEvalDatasets(activeKnowledgeBaseId)
+    void evalContext.loadEvalRuns(activeKnowledgeBaseId)
+  }, [open, activeKnowledgeBaseId, evalContext])
 
   const selectedKnowledgeBaseHealthKey = useMemo(() => {
     if (!activeKnowledgeBaseId || !selectedKnowledgeBase) return ''
@@ -294,46 +231,15 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   }
 
   const handleGenerateEvalDataset = async (knowledgeBaseId: string) => {
-    setGeneratingEvalKnowledgeBaseId(knowledgeBaseId)
-    try {
-      const dataset = await onGenerateEvalDataset(knowledgeBaseId)
-      setEvalDataset(dataset)
-      setEvalDatasetScopeName(
-        knowledgeBases.find((knowledgeBase) => knowledgeBase.id === knowledgeBaseId)?.name ?? knowledgeBaseId,
-      )
-      void loadEvalDatasets(knowledgeBaseId)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '生成评估集失败，请稍后重试。'
-      window.alert(`生成评估集失败：${message}`)
-    } finally {
-      setGeneratingEvalKnowledgeBaseId(null)
-    }
+    await evalContext.generateEvalDataset(knowledgeBaseId)
   }
 
   const handleOpenSavedEvalDataset = async (datasetId: string) => {
-    setOpeningEvalDatasetId(datasetId)
-    try {
-      const detail = await onFetchEvalDataset(datasetId)
-      setEvalDataset({
-        datasetId: detail.id,
-        knowledgeBaseId: detail.knowledgeBaseId,
-        documentId: detail.documentId,
-        count: detail.count,
-        documentCount: detail.documentCount,
-        createdAt: detail.createdAt,
-        items: detail.items,
-      })
-      setEvalDatasetScopeName(detail.name || selectedKnowledgeBase?.name || detail.knowledgeBaseId || '评估集')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '加载评估集失败'
-      window.alert(`加载评估集失败：${message}`)
-    } finally {
-      setOpeningEvalDatasetId(null)
-    }
+    await evalContext.openEvalDataset(datasetId)
   }
 
   const handleDeleteSavedEvalDataset = async (datasetId: string) => {
-    const target = evalDatasetSummaries.find((dataset) => dataset.id === datasetId)
+    const target = evalContext.evalDatasetSummaries.find((dataset) => dataset.id === datasetId)
 
     setConfirmDialog({
       open: true,
@@ -341,16 +247,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
       message: `确认删除「${target?.name || datasetId}」？`,
       onConfirm: async () => {
         setConfirmDialog({ ...confirmDialog, open: false })
-        setDeletingEvalDatasetId(datasetId)
-        try {
-          await onDeleteEvalDataset(datasetId)
-          setEvalDatasetSummaries((prev) => prev.filter((dataset) => dataset.id !== datasetId))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : '删除评估集失败'
-          window.alert(`删除评估集失败：${message}`)
-        } finally {
-          setDeletingEvalDatasetId(null)
-        }
+        await evalContext.deleteEvalDataset(datasetId)
       }
     })
   }
@@ -360,33 +257,17 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     itemId: string,
     item: EvalGroundTruthCase,
   ) => {
-    const response = await onUpdateEvalDatasetItem(datasetId, itemId, item)
-    setEvalDataset((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        count: response.dataset.count,
-        items: prev.items.map((existing) => existing.id === itemId ? response.item : existing),
-      }
-    })
+    const response = await evalContext.updateDatasetItem(datasetId, itemId, item)
     if (activeKnowledgeBaseId) {
-      void loadEvalDatasets(activeKnowledgeBaseId)
+      void evalContext.loadEvalDatasets(activeKnowledgeBaseId)
     }
     return response.item
   }
 
   const handleDeleteEvalDatasetItem = async (datasetId: string, itemId: string) => {
-    const response = await onDeleteEvalDatasetItem(datasetId, itemId)
-    setEvalDataset((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        count: response.dataset.count,
-        items: prev.items.filter((item) => item.id !== itemId),
-      }
-    })
+    await evalContext.deleteDatasetItem(datasetId, itemId)
     if (activeKnowledgeBaseId) {
-      void loadEvalDatasets(activeKnowledgeBaseId)
+      void evalContext.loadEvalDatasets(activeKnowledgeBaseId)
     }
   }
 
@@ -394,9 +275,9 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     datasetId: string,
     options?: RetrievalSearchMode | EvalRunOptions,
   ) => {
-    const report = await onRunEvalDataset(datasetId, options)
+    const report = await evalContext.runEvalDataset(datasetId, options)
     if (activeKnowledgeBaseId) {
-      void loadEvalRuns(activeKnowledgeBaseId)
+      void evalContext.loadEvalRuns(activeKnowledgeBaseId)
     }
     return report
   }
@@ -475,25 +356,9 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   }
 
   const handleAddRetrievalEvalCandidate = async (knowledgeBaseId: string) => {
-    if (!retrievalDebugResult?.evalCandidate) {
-      return
-    }
-
-    setSavingEvalCandidate(true)
-    setEvalCandidateSaveMessage('')
-    try {
-      const dataset = await onAddEvalDatasetCandidate(
-        knowledgeBaseId,
-        selectedDocumentId,
-        retrievalDebugResult.evalCandidate,
-      )
-      setEvalCandidateSaveMessage(`已加入「${dataset.name}」`)
-      await loadEvalDatasets(knowledgeBaseId)
-    } catch (error) {
-      setEvalCandidateSaveMessage(error instanceof Error ? error.message : '加入待审核评估集失败')
-    } finally {
-      setSavingEvalCandidate(false)
-    }
+    if (!retrievalDebugResult?.evalCandidate) return
+    const { query, groundTruth } = retrievalDebugResult.evalCandidate
+    await evalContext.saveEvalCandidate(knowledgeBaseId, selectedDocumentId, query, groundTruth)
   }
 
   const registerDirectoryInput = (knowledgeBaseId: string, element: HTMLInputElement | null) => {
@@ -606,7 +471,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       knowledgeBase={selectedKnowledgeBase}
                       health={activeHealth}
                       selectedScopeLabel={selectedScopeLabel}
-                      generatingEvalDataset={generatingEvalKnowledgeBaseId === activeKnowledgeBaseId}
+                      generatingEvalDataset={evalContext.generatingKnowledgeBaseId === activeKnowledgeBaseId}
                       onUploadFiles={(e) => handleFileChange(activeKnowledgeBaseId, e)}
                       onUploadDirectory={(e) => handleDirectoryChange(activeKnowledgeBaseId, e)}
                       onGenerateEvalDataset={() => void handleGenerateEvalDataset(activeKnowledgeBaseId)}
@@ -634,16 +499,6 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       retrievalDebugResult={retrievalDebugResult}
                       retrievalDebugError={retrievalDebugError}
                       retrievalDebugKnowledgeBaseId={retrievalDebugKnowledgeBaseId}
-                      savingEvalCandidate={savingEvalCandidate}
-                      evalCandidateSaveMessage={evalCandidateSaveMessage}
-                      evalDatasetSummaries={evalDatasetSummaries}
-                      evalDatasetHistoryLoading={evalDatasetHistoryLoading}
-                      evalDatasetHistoryError={evalDatasetHistoryError}
-                      openingEvalDatasetId={openingEvalDatasetId}
-                      deletingEvalDatasetId={deletingEvalDatasetId}
-                      evalRunSummaries={evalRunSummaries}
-                      evalRunHistoryLoading={evalRunHistoryLoading}
-                      evalRunHistoryError={evalRunHistoryError}
                       onToggleUploadTaskDetails={() => setShowUploadTaskDetails(prev => !prev)}
                       onToggleFailedItems={() => setShowFailedItems(prev => !prev)}
                       onToggleSkippedItems={() => setShowSkippedItems(prev => !prev)}
@@ -698,15 +553,14 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
           error={docContext.documentDetailError}
           focusChunkId={docContext.documentDetailFocusChunkId}
           onClose={docContext.closeDocumentDetail}
-          onClose={closeDocumentDetail}
         />
       )}
 
-      {evalDataset && (
+      {evalContext.evalDataset && (
         <EvalDatasetDialog
-          dataset={evalDataset}
-          scopeName={evalDatasetScopeName}
-          onClose={() => setEvalDataset(null)}
+          dataset={evalContext.evalDataset}
+          scopeName={evalContext.evalDatasetScopeName}
+          onClose={() => evalContext.closeEvalDataset()}
           onUpdateItem={handleUpdateEvalDatasetItem}
           onDeleteItem={handleDeleteEvalDatasetItem}
           onRun={handleRunEvalDataset}

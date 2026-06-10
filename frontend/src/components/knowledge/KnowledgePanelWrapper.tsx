@@ -1,6 +1,7 @@
 import React from 'react'
 import { DocumentProvider } from './contexts/DocumentContext'
 import { KnowledgeBaseProvider } from './contexts/KnowledgeBaseContext'
+import { EvalDatasetProvider } from './contexts/EvalDatasetContext'
 import KnowledgePanel from './KnowledgePanel'
 import type { CitationNavigationTarget, DirectoryUploadTask, KnowledgeBase } from '../../App'
 import type {
@@ -85,7 +86,9 @@ const KnowledgePanelWrapper: React.FC<KnowledgePanelWrapperProps> = (props) => {
       initialCollapsed={props.collapsedKnowledgeBases}
     >
       <DocumentProvider>
-        <KnowledgePanel {...props} />
+        <EvalDatasetProvider>
+          <KnowledgePanel {...props} />
+        </EvalDatasetProvider>
       </DocumentProvider>
     </KnowledgeBaseProvider>
   )

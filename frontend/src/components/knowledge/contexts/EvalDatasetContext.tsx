@@ -14,7 +14,7 @@ import {
   generateEvalDataset as apiGenerateEvalDataset,
   listEvalDatasets,
   listEvalRuns,
-  fetchEvalDataset,
+  getEvalDataset,
   deleteEvalDataset as apiDeleteEvalDataset,
   updateEvalDatasetItem,
   deleteEvalDatasetItem,
@@ -131,10 +131,10 @@ export const EvalDatasetProvider: React.FC<EvalDatasetProviderProps> = ({ childr
     setEvalDatasetHistoryError('')
 
     try {
-      const summaries = await listEvalDatasets(knowledgeBaseId)
+      const response = await listEvalDatasets(knowledgeBaseId)
 
       if (currentSeq === evalDatasetLoadSeqRef.current) {
-        setEvalDatasetSummaries(summaries)
+        setEvalDatasetSummaries(response.items ?? [])
       }
     } catch (err) {
       if (currentSeq === evalDatasetLoadSeqRef.current) {
@@ -151,7 +151,7 @@ export const EvalDatasetProvider: React.FC<EvalDatasetProviderProps> = ({ childr
   const openEvalDataset = useCallback(async (datasetId: string) => {
     setOpeningEvalDatasetId(datasetId)
     try {
-      const detail = await fetchEvalDataset(datasetId)
+      const detail = await getEvalDataset(datasetId)
       setEvalDataset(detail)
 
       // Set scope name based on dataset
@@ -237,10 +237,10 @@ export const EvalDatasetProvider: React.FC<EvalDatasetProviderProps> = ({ childr
     setEvalRunHistoryError('')
 
     try {
-      const runs = await listEvalRuns(knowledgeBaseId)
+      const response = await listEvalRuns(knowledgeBaseId)
 
       if (currentSeq === evalRunLoadSeqRef.current) {
-        setEvalRunSummaries(runs)
+        setEvalRunSummaries(response.items ?? [])
       }
     } catch (err) {
       if (currentSeq === evalRunLoadSeqRef.current) {

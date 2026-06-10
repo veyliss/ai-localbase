@@ -14,6 +14,7 @@ import EvalDatasetHistoryPanel from './EvalDatasetHistoryPanel'
 import EvalRunTrendPanel from './EvalRunTrendPanel'
 import DocumentList from './DocumentList'
 import { useDocument } from './contexts/DocumentContext'
+import { useEvalDataset } from './contexts/EvalDatasetContext'
 
 interface MainWorkspaceProps {
   knowledgeBase: KnowledgeBase
@@ -36,16 +37,6 @@ interface MainWorkspaceProps {
   retrievalDebugResult: RetrievalDebugResponse | null
   retrievalDebugError: string
   retrievalDebugKnowledgeBaseId: string | null
-  savingEvalCandidate: boolean
-  evalCandidateSaveMessage: string
-  evalDatasetSummaries: EvalDatasetSummary[]
-  evalDatasetHistoryLoading: boolean
-  evalDatasetHistoryError: string
-  openingEvalDatasetId: string | null
-  deletingEvalDatasetId: string | null
-  evalRunSummaries: EvalRunSummary[]
-  evalRunHistoryLoading: boolean
-  evalRunHistoryError: string
   onToggleUploadTaskDetails: () => void
   onToggleFailedItems: () => void
   onToggleSkippedItems: () => void
@@ -87,16 +78,6 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
   retrievalDebugResult,
   retrievalDebugError,
   retrievalDebugKnowledgeBaseId,
-  savingEvalCandidate,
-  evalCandidateSaveMessage,
-  evalDatasetSummaries,
-  evalDatasetHistoryLoading,
-  evalDatasetHistoryError,
-  openingEvalDatasetId,
-  deletingEvalDatasetId,
-  evalRunSummaries,
-  evalRunHistoryLoading,
-  evalRunHistoryError,
   onToggleUploadTaskDetails,
   onToggleFailedItems,
   onToggleSkippedItems,
@@ -117,6 +98,7 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
   onRemoveDocument,
 }) => {
   const docContext = useDocument()
+  const evalContext = useEvalDataset()
 
   return (
     <>
@@ -159,8 +141,8 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
           result={retrievalDebugResult}
           error={retrievalDebugError}
           loading={retrievalDebugKnowledgeBaseId === knowledgeBaseId}
-          savingEvalCandidate={savingEvalCandidate}
-          evalCandidateSaveMessage={evalCandidateSaveMessage}
+          savingEvalCandidate={evalContext.savingEvalCandidate}
+          evalCandidateSaveMessage={evalContext.evalCandidateSaveMessage}
           onQueryChange={onSetRetrievalQuery}
           onSearchModeChange={onSetRetrievalSearchMode}
           onRun={onRunRetrievalDebug}
@@ -170,20 +152,20 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
       </div>
 
       <EvalDatasetHistoryPanel
-        datasets={evalDatasetSummaries}
-        loading={evalDatasetHistoryLoading}
-        error={evalDatasetHistoryError}
-        openingDatasetId={openingEvalDatasetId}
-        deletingDatasetId={deletingEvalDatasetId}
+        datasets={evalContext.evalDatasetSummaries}
+        loading={evalContext.evalDatasetHistoryLoading}
+        error={evalContext.evalDatasetHistoryError}
+        openingDatasetId={evalContext.openingEvalDatasetId}
+        deletingDatasetId={evalContext.deletingEvalDatasetId}
         onRefresh={onLoadEvalDatasets}
         onOpen={onOpenSavedEvalDataset}
         onDelete={onDeleteSavedEvalDataset}
       />
 
       <EvalRunTrendPanel
-        runs={evalRunSummaries}
-        loading={evalRunHistoryLoading}
-        error={evalRunHistoryError}
+        runs={evalContext.evalRunSummaries}
+        loading={evalContext.evalRunHistoryLoading}
+        error={evalContext.evalRunHistoryError}
         onRefresh={onLoadEvalRuns}
       />
 

@@ -1,0 +1,680 @@
+/* ==========================================================================
+   Unified visual language
+   ========================================================================== */
+
+:root {
+  accent-color: var(--color-primary);
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.18);
+  color: var(--text-primary);
+}
+
+html {
+  background: var(--bg-app);
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--radius-full);
+  background: rgba(100, 116, 139, 0.42);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 0.58);
+  background-clip: padding-box;
+}
+
+/* App shell */
+.chat-page {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.chat-area {
+  background: var(--bg-app);
+}
+
+.sidebar {
+  background: linear-gradient(180deg, var(--bg-sidebar) 0%, #111827 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-inverse);
+}
+
+.sidebar-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-header h2 {
+  color: var(--text-inverse);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.toggle-btn,
+.sidebar-icon-btn,
+.sidebar-nav-btn,
+.conversation-item,
+.conversation-menu-trigger,
+.conversation-menu-item,
+.settings-entry,
+.ghost-btn,
+.danger-btn {
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.toggle-btn,
+.ghost-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted-inverse);
+}
+
+.toggle-btn:hover,
+.ghost-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text-inverse);
+  filter: none;
+}
+
+.section + .section,
+.sidebar-footer {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+.section-title-row,
+.section-title-row h3,
+.sidebar-section-header {
+  color: rgba(248, 250, 252, 0.48);
+  letter-spacing: 0.06em;
+}
+
+.conversation-item,
+.sidebar-nav-btn,
+.settings-entry {
+  color: rgba(248, 250, 252, 0.72);
+}
+
+.conversation-item:hover,
+.sidebar-nav-btn:hover,
+.settings-entry:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-inverse);
+  filter: none;
+}
+
+.conversation-item.active,
+.sidebar-nav-btn.active,
+.sidebar-icon-btn.active {
+  background: rgba(37, 99, 235, 0.22);
+  color: #bfdbfe;
+  box-shadow: inset 3px 0 0 #60a5fa;
+}
+
+.conversation-meta,
+.conversation-time {
+  color: rgba(248, 250, 252, 0.36);
+}
+
+.conversation-menu {
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+  background: #172033;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+}
+
+/* Shared controls */
+.chat-clear-btn,
+.kb-upload-btn,
+.kb-eval-btn,
+.kb-panel-mini-btn,
+.kb-doc-action,
+.kb-scope-btn,
+.settings-close-btn,
+.kb-close-btn,
+.confirm-btn,
+.kb-retrieval-eval button,
+.kb-retrieval-run,
+.kb-create-btn,
+.kb-confirm-btn,
+.kb-delete-yes,
+.kb-delete-no,
+.upload-preview-remove {
+  min-height: var(--control-height-sm);
+  border-radius: var(--radius-md);
+  font-weight: 750;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.chat-clear-btn,
+.kb-upload-btn,
+.kb-eval-btn,
+.kb-panel-mini-btn,
+.kb-doc-action,
+.kb-scope-btn,
+.settings-close-btn,
+.confirm-btn--cancel,
+.kb-delete-no {
+  border: 1px solid var(--border-color);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.chat-clear-btn:hover,
+.kb-upload-btn:hover,
+.kb-eval-btn:hover:not(:disabled),
+.kb-panel-mini-btn:hover:not(:disabled),
+.kb-doc-action:hover:not(:disabled),
+.kb-scope-btn:hover,
+.settings-close-btn:hover,
+.confirm-btn--cancel:hover,
+.kb-delete-no:hover {
+  border-color: var(--border-color-hover);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  filter: none;
+}
+
+.send-btn,
+.input-mode-btn.active,
+.kb-retrieval-run,
+.kb-create-btn,
+.kb-confirm-btn,
+.confirm-btn--confirm,
+.kb-scope-btn--active,
+.kb-delete-yes {
+  border-color: transparent;
+  background: var(--color-primary);
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.send-btn:hover,
+.kb-retrieval-run:hover:not(:disabled),
+.kb-create-btn:hover,
+.kb-confirm-btn:hover:not(:disabled),
+.confirm-btn--confirm:hover,
+.kb-scope-btn--active:hover,
+.kb-delete-yes:hover {
+  background: var(--color-primary-hover);
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.danger-btn,
+.kb-rail-delete:hover,
+.confirm-btn--confirm {
+  color: #ffffff;
+}
+
+.kb-doc-remove {
+  color: var(--text-tertiary);
+}
+
+.danger-btn,
+.kb-doc-remove:hover,
+.kb-rail-delete:hover,
+.kb-delete-yes {
+  background: var(--color-error);
+}
+
+.kb-doc-remove:hover {
+  color: #ffffff;
+}
+
+/* Chat workspace */
+.chat-topbar,
+.input-area {
+  border-color: var(--border-color);
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+}
+
+.chat-topbar-title,
+.welcome-message h2,
+.message-citation-head strong {
+  color: var(--text-primary);
+}
+
+.chat-topbar-hint,
+.input-mode-hint,
+.input-mode-description,
+.message-time,
+.welcome-message,
+.welcome-message p {
+  color: var(--text-tertiary);
+}
+
+.topbar-pill,
+.prompt-chip,
+.message-citation-head span,
+.message-citation-head button,
+.kb-retrieval-summary span,
+.kb-retrieval-confidence-metrics span,
+.kb-retrieval-confidence-actions span,
+.kb-retrieval-contribution span,
+.kb-retrieval-reasons span,
+.kb-eval-preview-tags span,
+.kb-eval-trend-metrics span {
+  border-color: rgba(37, 99, 235, 0.18);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-active);
+}
+
+.message.user .message-content {
+  background: var(--color-primary);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.22);
+}
+
+.message.assistant .message-content,
+.message-citations,
+.message-citation,
+.input-container,
+.input-mode-group {
+  border-color: var(--border-color);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.input-container {
+  border-radius: var(--radius-xl);
+}
+
+.input-container:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+}
+
+.input-container textarea {
+  color: var(--text-primary);
+}
+
+.input-mode-btn {
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+
+.input-mode-btn:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-active);
+}
+
+/* Modals and dialogs */
+.settings-modal-backdrop,
+.kb-backdrop,
+.kb-dialog-backdrop,
+.confirm-backdrop {
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(8px);
+}
+
+.settings-modal,
+.kb-modal,
+.kb-eval-dialog,
+.confirm-dialog {
+  border: 1px solid rgba(226, 232, 240, 0.76);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-modal);
+}
+
+.settings-modal-header,
+.kb-header,
+.kb-eval-dialog-head,
+.confirm-header {
+  border-bottom-color: var(--border-color);
+  background: var(--surface-primary);
+}
+
+.settings-modal-header h3,
+.kb-header-title,
+.kb-eval-dialog-head h3,
+.confirm-header,
+.settings-section-head h3,
+.kb-panel-section-head h3,
+.kb-workspace-title h3,
+.kb-rail-head h3,
+.knowledge-panel-header h3 {
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+
+.settings-modal-header p,
+.kb-header-sub,
+.kb-eval-dialog-head span,
+.confirm-body,
+.settings-section-head p,
+.kb-panel-section-head p,
+.kb-workspace-title p,
+.kb-rail-head p {
+  color: var(--text-secondary);
+}
+
+/* Settings */
+.settings-modal-scroll,
+.settings-panel-block,
+.ai-config-panel {
+  background: var(--surface-primary);
+}
+
+.settings-panel-block {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-field input,
+.settings-field select,
+.settings-field textarea,
+.form-group input,
+.form-group textarea,
+.form-group select,
+.kb-retrieval-input {
+  min-height: var(--control-height-md);
+  border-color: var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.settings-field input:focus,
+.settings-field select:focus,
+.settings-field textarea:focus,
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus,
+.kb-retrieval-input:focus {
+  border-color: var(--color-primary);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-focus);
+}
+
+.settings-summary-grid,
+.settings-form-group + .settings-form-group,
+.knowledge-panel-header {
+  border-color: var(--border-subtle);
+}
+
+.settings-summary-item + .settings-summary-item {
+  border-left-color: var(--border-subtle);
+}
+
+.settings-summary-item span,
+.settings-summary-item small,
+.settings-form-group-head span,
+.settings-field span,
+.settings-field small {
+  color: var(--text-secondary);
+}
+
+.settings-summary-item strong,
+.settings-form-group-head strong {
+  color: var(--text-primary);
+}
+
+/* Knowledge workspace */
+.kb-modal.kb-modal--workspace {
+  background: var(--surface-primary);
+}
+
+.kb-workbench,
+.kb-workspace,
+.kb-modal--workspace .kb-header {
+  background: var(--surface-primary);
+}
+
+.kb-rail {
+  border-right-color: var(--border-color);
+  background: var(--surface-secondary);
+}
+
+.kb-rail-head {
+  border-bottom-color: var(--border-color);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.kb-rail-create,
+.kb-rail-item,
+.kb-workspace .kb-health-panel,
+.kb-workspace .kb-retrieval-debug,
+.kb-eval-history-item,
+.kb-eval-trend-item,
+.kb-retrieval-context,
+.kb-retrieval-trace,
+.kb-retrieval-hit,
+.kb-retrieval-confidence,
+.kb-retrieval-contribution,
+.kb-retrieval-eval,
+.kb-doc-item {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  box-shadow: none;
+}
+
+.kb-workspace .kb-health-panel,
+.kb-workspace .kb-retrieval-debug {
+  box-shadow: var(--shadow-sm);
+}
+
+.kb-rail-item:hover,
+.kb-rail-item--active,
+.kb-doc-item--active {
+  border-color: var(--border-color-hover);
+  background: var(--surface-primary);
+}
+
+.kb-rail-item--active,
+.kb-doc-item--active {
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.kb-rail-name,
+.kb-doc-name,
+.kb-retrieval-debug-head h3,
+.kb-retrieval-confidence strong,
+.kb-retrieval-contribution strong,
+.kb-retrieval-hit-head strong {
+  color: var(--text-primary);
+}
+
+.kb-rail-meta,
+.kb-workspace-kicker,
+.kb-workspace-metrics span,
+.kb-health-stats span,
+.kb-doc-meta,
+.kb-retrieval-debug-head p,
+.kb-retrieval-confidence p,
+.kb-retrieval-trace span,
+.kb-retrieval-hit-head,
+.kb-retrieval-context summary,
+.kb-retrieval-trace summary {
+  color: var(--text-secondary);
+}
+
+.kb-workspace-metrics,
+.kb-workspace-grid,
+.kb-health-stats,
+.kb-docs-panel .kb-scope-bar,
+.kb-eval-history-panel,
+.kb-eval-trend-panel,
+.kb-docs-panel {
+  border-color: var(--border-subtle);
+}
+
+.kb-workspace-metrics div,
+.kb-health-stats div,
+.kb-eval-trend-summary div {
+  border-left-color: var(--border-subtle);
+}
+
+.kb-retrieval-mode {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-active);
+}
+
+.kb-retrieval-mode-tabs {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: var(--surface-primary);
+}
+
+.kb-retrieval-mode-tabs button {
+  border-right-color: rgba(37, 99, 235, 0.14);
+  color: var(--text-secondary);
+}
+
+.kb-retrieval-mode-tabs button.active {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.kb-retrieval-confidence--low,
+.kb-eval-dialog-error,
+.kb-retrieval-error {
+  border-color: rgba(239, 68, 68, 0.26);
+  background: var(--color-error-light);
+  color: #b91c1c;
+}
+
+.kb-retrieval-confidence--normal {
+  border-color: rgba(16, 185, 129, 0.26);
+  background: var(--color-success-light);
+}
+
+.kb-retrieval-eval {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: var(--color-warning-light);
+}
+
+/* Evaluation */
+.kb-eval-summary-grid,
+.kb-eval-preview-item,
+.kb-eval-preview-head,
+.kb-eval-preview-evidence,
+.kb-eval-run-report {
+  border-color: var(--border-color);
+}
+
+.kb-eval-summary-grid div,
+.kb-eval-preview-head,
+.kb-eval-run-head,
+.kb-retrieval-trace div,
+.kb-retrieval-hit-head {
+  background: var(--surface-secondary);
+}
+
+.kb-eval-preview-question,
+.kb-eval-summary-grid strong,
+.kb-eval-trend-summary strong,
+.kb-eval-trend-item strong {
+  color: var(--text-primary);
+}
+
+.kb-eval-preview-answer,
+.kb-eval-summary-grid span,
+.kb-eval-trend-summary span,
+.kb-eval-trend-item div:first-child > span {
+  color: var(--text-secondary);
+}
+
+/* Feedback */
+.toast {
+  border: 1px solid var(--border-color);
+  border-left-width: 4px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+}
+
+.toast-success {
+  border-left-color: var(--color-success);
+}
+
+.toast-error {
+  border-left-color: var(--color-error);
+}
+
+.toast-warning {
+  border-left-color: var(--color-warning);
+}
+
+.toast-info {
+  border-left-color: var(--color-info);
+}
+
+.loading-bar-progress {
+  background: linear-gradient(90deg, var(--color-primary), var(--color-accent));
+}
+
+.upload-drop-zone.dragging {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.upload-preview,
+.skeleton,
+.document-item-skeleton,
+.message-content-skeleton {
+  border-color: var(--border-color);
+  background: var(--surface-primary);
+}
+
+@media (max-width: 720px) {
+  .settings-modal,
+  .kb-modal,
+  .kb-eval-dialog,
+  .confirm-dialog {
+    border-radius: var(--radius-xl);
+  }
+
+  .chat-topbar,
+  .input-area {
+    backdrop-filter: none;
+  }
+}

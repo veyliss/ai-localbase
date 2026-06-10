@@ -7,20 +7,31 @@
    1. 优雅亮色模式 (Light Theme)
    ========================================================================== */
 :root {
+  color-scheme: light;
+
   /* 基础背景色 */
   --bg-primary: #ffffff;
   --bg-secondary: #f8fafc;
   --bg-tertiary: #f1f5f9;
+  --bg-app: #f4f6f9;
+  --bg-sidebar: #0f172a;
+  --bg-sidebar-elevated: #172033;
 
   /* 文字层级 */
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --text-tertiary: #94a3b8;
+  --text-inverse: #f8fafc;
+  --text-muted-inverse: rgba(248, 250, 252, 0.64);
 
-  /* 核心品牌色 (量子靛蓝 Indigo) */
-  --color-primary: #4f46e5;
-  --color-primary-hover: #4338ca;
-  --color-primary-light: #eef2ff;
+  /* 核心品牌色 */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-active: #1e40af;
+  --color-primary-light: #dbeafe;
+  --color-primary-soft: #eff6ff;
+  --color-accent: #4f46e5;
+  --color-accent-light: #eef2ff;
 
   /* 语义反馈色 */
   --color-success: #10b981;
@@ -29,30 +40,59 @@
   --color-warning-light: #fffbeb;
   --color-error: #ef4444;
   --color-error-light: #fef2f2;
+  --color-info: #3b82f6;
+  --color-info-light: #eff6ff;
 
   /* 物理材质质感 */
   --border-color: #e2e8f0;
   --border-color-hover: #cbd5e1;
+  --border-subtle: #eef2f7;
+  --surface-primary: #ffffff;
+  --surface-secondary: #f8fafc;
+  --surface-muted: #f1f5f9;
   --glass-bg: rgba(255, 255, 255, 0.75);
   --glass-border: rgba(226, 232, 240, 0.8);
 
   /* 圆角代币 */
+  --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 999px;
 
   /* 柔和阴影 */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 20px 25px -5px rgba(15, 23, 42, 0.1), 0 8px 10px -6px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 18px 40px -20px rgba(15, 23, 42, 0.32), 0 8px 18px -14px rgba(15, 23, 42, 0.2);
+  --shadow-modal: 0 30px 90px rgba(15, 23, 42, 0.28);
+  --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.14);
 
   /* 间距系统 (基于 4px) */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
+  --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  /* 字体系统 */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", Monaco, Menlo, Consolas, "Liberation Mono", monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --control-height-sm: 32px;
+  --control-height-md: 38px;
+  --control-height-lg: 44px;
 
   /* 贝塞尔过渡 */
   --transition-fast: 0.12s cubic-bezier(0.4, 0, 0.2, 1);
@@ -63,17 +103,28 @@
    2. 极客暗色模式 (Dark Theme)
    ========================================================================== */
 [data-theme="dark"] {
+  color-scheme: dark;
+
   --bg-primary: #090d16;
   --bg-secondary: #0f172a;
   --bg-tertiary: #1e293b;
+  --bg-app: #0b1120;
+  --bg-sidebar: #050816;
+  --bg-sidebar-elevated: #111827;
 
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
   --text-tertiary: #64748b;
+  --text-inverse: #f8fafc;
+  --text-muted-inverse: rgba(248, 250, 252, 0.66);
 
-  --color-primary: #6366f1;
-  --color-primary-hover: #4f46e5;
-  --color-primary-light: rgba(99, 102, 241, 0.12);
+  --color-primary: #60a5fa;
+  --color-primary-hover: #3b82f6;
+  --color-primary-active: #2563eb;
+  --color-primary-light: rgba(96, 165, 250, 0.16);
+  --color-primary-soft: rgba(96, 165, 250, 0.1);
+  --color-accent: #818cf8;
+  --color-accent-light: rgba(129, 140, 248, 0.14);
 
   --color-success: #34d399;
   --color-success-light: rgba(52, 211, 153, 0.08);
@@ -81,15 +132,23 @@
   --color-warning-light: rgba(251, 191, 36, 0.08);
   --color-error: #f87171;
   --color-error-light: rgba(248, 113, 113, 0.08);
+  --color-info: #60a5fa;
+  --color-info-light: rgba(96, 165, 250, 0.1);
 
   --border-color: #1e293b;
   --border-color-hover: #334155;
+  --border-subtle: rgba(148, 163, 184, 0.14);
+  --surface-primary: #101827;
+  --surface-secondary: #0f172a;
+  --surface-muted: #1e293b;
   --glass-bg: rgba(9, 13, 22, 0.7);
   --glass-border: rgba(255, 255, 255, 0.08);
 
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 20px 30px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 30px 90px rgba(0, 0, 0, 0.54);
+  --shadow-focus: 0 0 0 3px rgba(96, 165, 250, 0.22);
 }
 
 /* ==========================================================================

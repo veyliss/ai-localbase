@@ -6,13 +6,11 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
-  color: #333;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
   line-height: 1.6;
 }
 
@@ -31,31 +29,36 @@ body {
 
 .btn {
   display: inline-block;
-  padding: 10px 20px;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-4);
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-md);
+  font-weight: 700;
   text-decoration: none;
-  transition: all 0.3s ease;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .btn-primary {
-  background-color: #007bff;
+  background-color: var(--color-primary);
   color: white;
 }
 
 .btn-primary:hover {
-  background-color: #0056b3;
+  background-color: var(--color-primary-hover);
 }
 
 .btn-secondary {
-  background-color: #6c757d;
-  color: white;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
 }
 
 .btn-secondary:hover {
-  background-color: #545b62;
+  background-color: var(--surface-secondary);
+  border-color: var(--border-color-hover);
+  color: var(--text-primary);
 }
 
 /* Form styles */
@@ -73,18 +76,22 @@ body {
 .form-group textarea,
 .form-group select {
   width: 100%;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-md);
 }
 
 .form-group input:focus,
 .form-group textarea:focus,
 .form-group select:focus {
   outline: none;
-  border-color: #007bff;
-  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
 }
 
 /* Loading spinner */
@@ -93,7 +100,7 @@ body {
   width: 20px;
   height: 20px;
   border: 3px solid #f3f3f3;
-  border-top: 3px solid #007bff;
+  border-top: 3px solid var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -105,21 +112,21 @@ body {
 
 /* Error message */
 .error {
-  color: #dc3545;
-  background-color: #f8d7da;
-  border: 1px solid #f5c6cb;
+  color: var(--color-error);
+  background-color: var(--color-error-light);
+  border: 1px solid rgba(239, 68, 68, 0.24);
   padding: 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   margin: 10px 0;
 }
 
 /* Success message */
 .success {
-  color: #155724;
-  background-color: #d4edda;
-  border: 1px solid #c3e6cb;
+  color: var(--color-success);
+  background-color: var(--color-success-light);
+  border: 1px solid rgba(16, 185, 129, 0.24);
   padding: 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   margin: 10px 0;
 }
 

@@ -1,8 +1,10 @@
 import './App.css'
 import ChatArea from './components/ChatArea'
 import Sidebar from './components/Sidebar'
+import Login from './components/Login'
 import { ToastProvider } from './components/common/Toast'
 import LoadingBar from './components/common/LoadingBar'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE_PATH,
@@ -26,6 +28,7 @@ import {
   getEvalDataset,
   listEvalDatasets,
   listEvalRuns,
+  parseJsonResponse,
   reindexKnowledgeBaseDocument,
   resetMcpToken,
   runEvalDataset,
@@ -444,7 +447,10 @@ const sleep = (delayMs: number) =>
     window.setTimeout(resolve, delayMs)
   })
 
-function App() {
+function AppContent() {
+  const { isAuthenticated, logout, token } = useAuth()
+  const [authCheckDone, setAuthCheckDone] = useState(false)
+  const [authRequired, setAuthRequired] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
@@ -596,6 +602,10 @@ function App() {
   }, [selectedDocumentId, selectedKnowledgeBase])
 
   useEffect(() => {
+    if (!authCheckDone || (authRequired && !isAuthenticated)) {
+      return
+    }
+
     let canceled = false
 
     const bootstrapApp = async () => {
@@ -657,7 +667,7 @@ function App() {
     return () => {
       canceled = true
     }
-  }, [])
+  }, [authCheckDone, authRequired, isAuthenticated])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1770,7 +1780,10 @@ function App() {
         return
       }
 
-      const data = (await fallbackResponse.json()) as ChatCompletionResponse
+      const data = await parseJsonResponse<ChatCompletionResponse>(fallbackResponse)
+      if (!data) {
+        throw new Error('聊天接口返回空响应')
+      }
       finalizeAssistantMessage(
         data.choices[0]?.message?.content || '后端未返回有效回答。',
         normalizeChatMetadata(data.metadata),
@@ -2071,6 +2084,56 @@ function App() {
     setIsKnowledgePanelOpen(true)
   }
 
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const health = await fetchBackendHealth()
+        const authEnabled = health?.config?.auth_enabled === 'true'
+        if (!authEnabled) {
+          setAuthRequired(false)
+          return
+        }
+
+        setAuthRequired(true)
+        if (!isAuthenticated || !token) {
+          return
+        }
+
+        const response = await fetch(`${API_BASE_PATH}/api/auth/status`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        })
+        if (response.status === 401) {
+          logout()
+        }
+      } catch {
+        if (isAuthenticated && token) {
+          setAuthRequired(false)
+          return
+        }
+
+        try {
+          const response = await fetch(`${API_BASE_PATH}/api/knowledge-bases`)
+          setAuthRequired(response.status === 401)
+        } catch {
+          setAuthRequired(false)
+        }
+      } finally {
+        setAuthCheckDone(true)
+      }
+    }
+    checkAuth()
+  }, [isAuthenticated, logout, token])
+
+  if (!authCheckDone) {
+    return null // Or a loading spinner
+  }
+
+  if (authRequired && !isAuthenticated) {
+    return <Login />
+  }
+
   return (
     <ToastProvider>
       <LoadingBar loading={globalLoading} />
@@ -2144,6 +2207,14 @@ function App() {
       />
       </div>
     </ToastProvider>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   )
 }
 

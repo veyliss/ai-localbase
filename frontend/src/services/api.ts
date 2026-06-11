@@ -19,6 +19,7 @@ export interface ApiErrorResponse {
 
 export interface HealthResponse {
   status?: string
+  config?: Record<string, string>
 }
 
 export interface BackendDocumentItem {
@@ -411,9 +412,21 @@ export const normalizeConversation = (conversation: BackendConversation): Conver
   })),
 })
 
+export const parseJsonResponse = async <T>(response: Response): Promise<T | null> => {
+  const text = await response.text()
+  if (!text.trim()) {
+    return null
+  }
+
+  return JSON.parse(text) as T
+}
+
 export const extractErrorMessage = async (response: Response) => {
   try {
-    const errorBody = (await response.json()) as ApiErrorResponse
+    const errorBody = await parseJsonResponse<ApiErrorResponse>(response)
+    if (!errorBody) {
+      return response.statusText || '请求失败'
+    }
     if (typeof errorBody.error === 'string') {
       return errorBody.error || '请求失败'
     }
@@ -424,16 +437,53 @@ export const extractErrorMessage = async (response: Response) => {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_PATH}${path}`, init)
+  const token = localStorage.getItem('auth_token')
+  const headers = new Headers(init?.headers)
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  const response = await fetch(`${API_BASE_PATH}${path}`, {
+    ...init,
+    headers,
+  })
+
+  if (response.status === 401) {
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('token_expires_at')
+    throw new Error('未授权，请重新登录')
+  }
+
   if (!response.ok) {
     throw new Error(await extractErrorMessage(response))
   }
 
-  return (await response.json()) as T
+  const data = await parseJsonResponse<T>(response)
+  if (data === null) {
+    throw new Error('后端返回了空响应')
+  }
+
+  return data
 }
 
 async function requestOk(path: string, init?: RequestInit): Promise<void> {
-  const response = await fetch(`${API_BASE_PATH}${path}`, init)
+  const token = localStorage.getItem('auth_token')
+  const headers = new Headers(init?.headers)
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  const response = await fetch(`${API_BASE_PATH}${path}`, {
+    ...init,
+    headers,
+  })
+
+  if (response.status === 401) {
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('token_expires_at')
+    throw new Error('未授权，请重新登录')
+  }
+
   if (!response.ok) {
     throw new Error(await extractErrorMessage(response))
   }
@@ -469,7 +519,7 @@ export const fetchBackendHealth = async (): Promise<HealthResponse | null> => {
       return null
     }
 
-    return (await response.json()) as HealthResponse
+    return await parseJsonResponse<HealthResponse>(response)
   } catch {
     return null
   }

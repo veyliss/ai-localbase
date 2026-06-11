@@ -322,6 +322,8 @@ func (s *AppService) GetHealthConfigMap(serverConfig model.ServerConfig) map[str
 		"upload_dir":         serverConfig.UploadDir,
 		"state_file":         serverConfig.StateFile,
 		"knowledge_bases":    fmt.Sprintf("%d", kbCount),
+		"auth_enabled":       fmt.Sprintf("%t", serverConfig.EnableAuth),
+		"auth_username":      serverConfig.AuthUsername,
 		"qdrant_url":         serverConfig.QdrantURL,
 		"qdrant_status":      qdrantStatus,
 		"qdrant_vector_size": fmt.Sprintf("%d", serverConfig.QdrantVectorSize),

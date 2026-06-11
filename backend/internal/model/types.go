@@ -31,6 +31,10 @@ type ServerConfig struct {
 	RetrievalMaxContextChars       int
 	RetrievalEnableAutoExpand      bool
 	EvalKnowledgeBaseID            string
+	EnableAuth                     bool
+	AuthUsername                   string
+	AuthPassword                   string
+	JWTSecret                      string
 }
 
 type AppState struct {

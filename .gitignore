@@ -29,6 +29,7 @@ backend/main
 backend/cmd
 backend/eval/cmd/eval_main
 backend/ai-localbase
+ai-localbase-server
 
 # Node.js / npm
 frontend/node_modules/

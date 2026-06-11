@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-localbase/internal/auth"
 	"ai-localbase/internal/handler"
 	"ai-localbase/internal/mcp"
 	"ai-localbase/internal/model"
@@ -15,15 +16,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHandler, serverConfig model.ServerConfig, mcpServer *mcp.Server, frontendFS fs.FS) *gin.Engine {
+func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHandler, authHandler *handler.AuthHandler, serverConfig model.ServerConfig, mcpServer *mcp.Server, frontendFS fs.FS) *gin.Engine {
 	r := gin.New()
 	r.Use(requestIDMiddleware(), accessLogMiddleware(), gin.Recovery(), corsMiddleware())
 
 	r.GET("/health", appHandler.Health)
-	r.POST("/upload", appHandler.Upload)
 
-	api := r.Group("/api")
+	// Auth endpoints (always available for consistency)
+	authGroup := r.Group("/api/auth")
 	{
+		authGroup.POST("/login", authHandler.Login)
+	}
+
+	// Apply auth middleware conditionally
+	api := r.Group("/api")
+	if serverConfig.EnableAuth {
+		api.Use(auth.Middleware())
+	}
+	{
+		api.GET("/auth/status", authHandler.Status)
 		api.GET("/config", appHandler.GetConfig)
 		api.PUT("/config", appHandler.UpdateConfig)
 		api.POST("/config/mcp/reset-token", appHandler.ResetMCPToken)
@@ -61,7 +72,17 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 		api.DELETE("/knowledge-bases/:id/documents/:documentId", appHandler.DeleteDocument)
 	}
 
+	// Upload endpoint (protected if auth enabled)
+	if serverConfig.EnableAuth {
+		r.POST("/upload", auth.Middleware(), appHandler.Upload)
+	} else {
+		r.POST("/upload", appHandler.Upload)
+	}
+
 	v1 := r.Group("/v1")
+	if serverConfig.EnableAuth {
+		v1.Use(auth.Middleware())
+	}
 	{
 		v1.POST("/chat/completions", appHandler.ChatCompletions)
 		v1.POST("/chat/completions/stream", appHandler.ChatCompletionsStream)

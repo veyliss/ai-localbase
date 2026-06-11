@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"ai-localbase/internal/auth"
 	"ai-localbase/internal/config"
 	"ai-localbase/internal/handler"
 	"ai-localbase/internal/mcp"
@@ -14,6 +15,15 @@ import (
 
 func main() {
 	serverConfig := config.LoadServerConfig()
+
+	// Initialize JWT secret
+	if serverConfig.EnableAuth {
+		auth.InitJWTSecret(serverConfig.JWTSecret, serverConfig.AuthUsername)
+		if serverConfig.AuthPassword == "" {
+			log.Fatal("AUTH_PASSWORD must be set when ENABLE_AUTH=true")
+		}
+		log.Printf("Authentication enabled, username: %s", serverConfig.AuthUsername)
+	}
 
 	if err := os.MkdirAll(serverConfig.UploadDir, 0o755); err != nil {
 		log.Fatalf("failed to create upload directory: %v", err)
@@ -45,8 +55,9 @@ func main() {
 	toolPlanner := mcp.NewToolUsePlanner(mcpRegistry)
 	appHandler := handler.NewAppHandler(serverConfig, appService, llmService, toolPlanner)
 	configHandler := handler.NewConfigHandler(appService, qdrantService)
+	authHandler := handler.NewAuthHandler(serverConfig.AuthUsername, serverConfig.AuthPassword, serverConfig.EnableAuth)
 	mcpServer := mcp.NewServer(mcpRegistry, appService, serverConfig)
-	r := router.NewRouter(appHandler, configHandler, serverConfig, mcpServer, frontendFS())
+	r := router.NewRouter(appHandler, configHandler, authHandler, serverConfig, mcpServer, frontendFS())
 
 	log.Printf("backend server listening on :%s", serverConfig.Port)
 	if err := r.Run(":" + serverConfig.Port); err != nil {

@@ -38,6 +38,10 @@ func LoadServerConfig() model.ServerConfig {
 		RetrievalMaxContextChars:       getEnvAsInt("RETRIEVAL_MAX_CONTEXT_CHARS", 2400),
 		RetrievalEnableAutoExpand:      getEnvAsBool("RETRIEVAL_ENABLE_AUTO_EXPAND", false),
 		EvalKnowledgeBaseID:            getEnv("EVAL_KNOWLEDGE_BASE_ID", ""),
+		EnableAuth:                     getEnvAsBool("ENABLE_AUTH", false),
+		AuthUsername:                   getEnv("AUTH_USERNAME", "admin"),
+		AuthPassword:                   getEnv("AUTH_PASSWORD", ""),
+		JWTSecret:                      getEnv("JWT_SECRET", ""),
 	}
 }
 

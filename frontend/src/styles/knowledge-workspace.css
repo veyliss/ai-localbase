@@ -1,36 +1,36 @@
-.kb-modal.kb-modal--workspace {
-  width: min(1720px, calc(100vw - 48px));
-  height: min(92vh, 960px);
-  max-height: none;
-  border-radius: 20px;
+.kb-slide-in {
+  width: min(1480px, calc(100vw - 64px));
+  max-width: 1480px;
+  height: min(88vh, 900px);
+  max-height: calc(100vh - 64px);
   background: #ffffff;
-  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.26);
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.26);
 }
 
-.kb-modal--workspace .kb-header {
+.kb-slide-in .kb-header {
   padding: 16px 22px;
   background: #ffffff;
   border-bottom: 1px solid #e6edf5;
 }
 
-.kb-modal--workspace .kb-header-title {
+.kb-slide-in .kb-header-title {
   font-size: 18px;
 }
 
-.kb-modal--workspace .kb-create-btn,
-.kb-modal--workspace .kb-confirm-btn {
+.kb-slide-in .kb-create-btn,
+.kb-slide-in .kb-confirm-btn {
   background: #0f172a;
   box-shadow: none;
 }
 
-.kb-modal--workspace .kb-create-btn,
-.kb-modal--workspace .kb-close-btn {
+.kb-slide-in .kb-create-btn,
+.kb-slide-in .kb-close-btn {
   min-height: 36px;
   border-radius: 10px;
 }
 
-.kb-modal--workspace .kb-create-btn:hover,
-.kb-modal--workspace .kb-confirm-btn:hover:not(:disabled) {
+.kb-slide-in .kb-create-btn:hover,
+.kb-slide-in .kb-confirm-btn:hover:not(:disabled) {
   background: #1e293b;
   transform: translateY(-1px);
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
@@ -859,8 +859,9 @@
 }
 
 @media (max-width: 980px) {
-  .kb-modal.kb-modal--workspace {
-    height: min(94vh, 940px);
+  .kb-slide-in {
+    width: calc(100vw - 40px);
+    max-height: calc(100vh - 40px);
   }
 
   .kb-workbench {
@@ -896,17 +897,14 @@
 }
 
 @media (max-width: 640px) {
-  .kb-backdrop {
-    padding: 10px;
+  .kb-slide-in {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
+    border-radius: 16px;
   }
 
-  .kb-modal.kb-modal--workspace {
-    width: 100%;
-    height: calc(100vh - 20px);
-    border-radius: 14px;
-  }
-
-  .kb-modal--workspace .kb-header {
+  .kb-slide-in .kb-header {
     align-items: flex-start;
     flex-direction: column;
   }

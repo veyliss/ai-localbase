@@ -78,8 +78,8 @@ select:disabled {
 }
 
 .sidebar {
-  background: linear-gradient(180deg, var(--bg-sidebar) 0%, #111827 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, var(--bg-sidebar) 0%, #0e1525 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   color: var(--text-inverse);
 }
 
@@ -141,7 +141,7 @@ select:disabled {
 .conversation-item:hover,
 .sidebar-nav-btn:hover,
 .settings-entry:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-sidebar-hover);
   color: var(--text-inverse);
   filter: none;
 }
@@ -149,7 +149,7 @@ select:disabled {
 .conversation-item.active,
 .sidebar-nav-btn.active,
 .sidebar-icon-btn.active {
-  background: rgba(37, 99, 235, 0.22);
+  background: var(--color-sidebar-accent);
   color: #bfdbfe;
   box-shadow: inset 3px 0 0 #60a5fa;
 }
@@ -167,7 +167,6 @@ select:disabled {
 }
 
 /* Shared controls */
-.chat-clear-btn,
 .kb-upload-btn,
 .kb-eval-btn,
 .kb-panel-mini-btn,
@@ -190,7 +189,6 @@ select:disabled {
     color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
-.chat-clear-btn,
 .kb-upload-btn,
 .kb-eval-btn,
 .kb-panel-mini-btn,
@@ -205,7 +203,6 @@ select:disabled {
   box-shadow: none;
 }
 
-.chat-clear-btn:hover,
 .kb-upload-btn:hover,
 .kb-eval-btn:hover:not(:disabled),
 .kb-panel-mini-btn:hover:not(:disabled),
@@ -220,8 +217,7 @@ select:disabled {
   filter: none;
 }
 
-.send-btn,
-.input-mode-btn.active,
+.send-btn.send-btn-active,
 .kb-retrieval-run,
 .kb-create-btn,
 .kb-confirm-btn,
@@ -234,7 +230,7 @@ select:disabled {
   box-shadow: none;
 }
 
-.send-btn:hover,
+.send-btn.send-btn-active:hover,
 .kb-retrieval-run:hover:not(:disabled),
 .kb-create-btn:hover,
 .kb-confirm-btn:hover:not(:disabled),
@@ -271,8 +267,8 @@ select:disabled {
 .chat-topbar,
 .input-area {
   border-color: var(--border-color);
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
 }
 
 .chat-topbar-title,
@@ -282,15 +278,13 @@ select:disabled {
 }
 
 .chat-topbar-hint,
-.input-mode-hint,
-.input-mode-description,
 .message-time,
 .welcome-message,
 .welcome-message p {
   color: var(--text-tertiary);
 }
 
-.topbar-pill,
+.topbar-badge,
 .prompt-chip,
 .message-citation-head span,
 .message-citation-head button,
@@ -307,18 +301,23 @@ select:disabled {
 }
 
 .message.user .message-content {
-  background: var(--color-primary);
-  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.22);
+  background: var(--surface-chat-user);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.18);
+  border-radius: 14px 14px 4px 14px;
 }
 
 .message.assistant .message-content,
 .message-citations,
 .message-citation,
-.input-container,
-.input-mode-group {
+.input-container {
   border-color: var(--border-color);
-  background: var(--surface-primary);
+  background: var(--surface-chat-ai);
   box-shadow: var(--shadow-sm);
+}
+
+.message.assistant .message-content {
+  border-radius: 14px 14px 14px 4px;
+  border: 1px solid var(--border-subtle);
 }
 
 .input-container {
@@ -334,19 +333,8 @@ select:disabled {
   color: var(--text-primary);
 }
 
-.input-mode-btn {
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-}
-
-.input-mode-btn:hover {
-  background: var(--color-primary-soft);
-  color: var(--color-primary-active);
-}
-
 /* Modals and dialogs */
 .settings-modal-backdrop,
-.kb-backdrop,
 .kb-dialog-backdrop,
 .confirm-backdrop {
   background: rgba(15, 23, 42, 0.58);
@@ -354,7 +342,7 @@ select:disabled {
 }
 
 .settings-modal,
-.kb-modal,
+.kb-slide-in,
 .kb-eval-dialog,
 .confirm-dialog {
   border: 1px solid rgba(226, 232, 240, 0.76);
@@ -458,13 +446,13 @@ select:disabled {
 }
 
 /* Knowledge workspace */
-.kb-modal.kb-modal--workspace {
+.kb-slide-in {
   background: var(--surface-primary);
 }
 
 .kb-workbench,
 .kb-workspace,
-.kb-modal--workspace .kb-header {
+.kb-slide-in .kb-header {
   background: var(--surface-primary);
 }
 
@@ -667,7 +655,7 @@ select:disabled {
 
 @media (max-width: 720px) {
   .settings-modal,
-  .kb-modal,
+  .kb-slide-in,
   .kb-eval-dialog,
   .confirm-dialog {
     border-radius: var(--radius-xl);

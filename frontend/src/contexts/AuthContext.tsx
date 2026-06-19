@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react'
-import { parseJsonResponse } from '../services/api'
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, type ReactNode } from 'react'
+import { AUTH_UNAUTHORIZED_EVENT, parseJsonResponse } from '../services/api'
 
 interface AuthContextValue {
   token: string | null
@@ -23,8 +23,24 @@ interface AuthProviderProps {
   children: ReactNode
 }
 
+const readStoredToken = () => {
+  const storedToken = localStorage.getItem('auth_token')
+  if (!storedToken) {
+    return null
+  }
+
+  const expiresAt = Number(localStorage.getItem('token_expires_at') || '0')
+  if (!Number.isFinite(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('token_expires_at')
+    return null
+  }
+
+  return storedToken
+}
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'))
+  const [token, setToken] = useState<string | null>(readStoredToken)
   const [authError, setAuthError] = useState('')
 
   const login = useCallback(async (password: string) => {
@@ -66,6 +82,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.removeItem('token_expires_at')
     setToken(null)
   }, [])
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      logout()
+    }
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'auth_token' || event.key === 'token_expires_at') {
+        setToken(readStoredToken())
+      }
+    }
+
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized)
+    window.addEventListener('storage', handleStorage)
+    return () => {
+      window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, handleUnauthorized)
+      window.removeEventListener('storage', handleStorage)
+    }
+  }, [logout])
 
   const value = useMemo<AuthContextValue>(
     () => ({

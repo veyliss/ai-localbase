@@ -318,16 +318,9 @@ func (s *AppService) GetHealthConfigMap(serverConfig model.ServerConfig) map[str
 	}
 
 	return map[string]string{
-		"port":               serverConfig.Port,
-		"upload_dir":         serverConfig.UploadDir,
-		"state_file":         serverConfig.StateFile,
-		"knowledge_bases":    fmt.Sprintf("%d", kbCount),
-		"auth_enabled":       fmt.Sprintf("%t", serverConfig.EnableAuth),
-		"auth_username":      serverConfig.AuthUsername,
-		"qdrant_url":         serverConfig.QdrantURL,
-		"qdrant_status":      qdrantStatus,
-		"qdrant_vector_size": fmt.Sprintf("%d", serverConfig.QdrantVectorSize),
-		"qdrant_distance":    serverConfig.QdrantDistance,
+		"auth_enabled":    fmt.Sprintf("%t", serverConfig.EnableAuth),
+		"knowledge_bases": fmt.Sprintf("%d", kbCount),
+		"qdrant_status":   qdrantStatus,
 	}
 }
 
@@ -4082,8 +4075,8 @@ func filterRelevantChunks(query string, chunks []RetrievedChunk) []RetrievedChun
 	// 检测是否为结构化表格数据查询（仅检查文件扩展名和表格关键词）
 	// 注意：不包括 len(factSpecs) > 0，因为事实问题查询（如"校长是谁"）也会产生 factSpecs
 	isStructuredQuery := strings.Contains(query, ".xlsx") || strings.Contains(query, ".csv") ||
-	                     strings.Contains(query, ".xls") || strings.Contains(query, "工作表") ||
-	                     strings.Contains(query, "表格")
+		strings.Contains(query, ".xls") || strings.Contains(query, "工作表") ||
+		strings.Contains(query, "表格")
 
 	// 对于结构化表格数据查询，完全信任向量检索结果，不进行词汇过滤
 	if isStructuredQuery {

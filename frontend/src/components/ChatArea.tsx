@@ -8,8 +8,9 @@ import type {
   ChatSourceMetadata,
   KnowledgeBase,
 } from '../App'
-import MarkdownRenderer from './chat/MarkdownRenderer'
-import { chunkKindLabel } from './knowledge/knowledgeLabels'
+import MessageCard from './chat/MessageCard'
+import ConfirmDialog from './common/ConfirmDialog'
+
 interface ChatAreaProps {
   sidebarOpen: boolean
   activeConversation: Conversation
@@ -40,100 +41,6 @@ const formatTime = (value: string) =>
     minute: '2-digit',
   })
 
-const sourceIdentity = (source: ChatSourceMetadata, index: number) =>
-  [
-    source.toolName,
-    source.knowledgeBaseId,
-    source.documentId,
-    source.chunkId,
-    source.chunkIndex,
-  ].filter(Boolean).join(':') || `source-${index}`
-
-const normalizeSources = (sources?: ChatSourceMetadata[]) => {
-  if (!sources || sources.length === 0) return []
-  const seen = new Set<string>()
-  return sources.filter((source, index) => {
-    const key = sourceIdentity(source, index)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return Boolean(source.documentName || source.toolName || source.snippet)
-  })
-}
-
-const sourceTypeLabel = (source: ChatSourceMetadata) => {
-  if (source.toolName) return `工具：${source.toolName}`
-  if (source.sourceType === 'structured-data') return '结构化数据'
-  if (source.chunkKind) return chunkKindLabel(source.chunkKind)
-  return '来源'
-}
-
-const sourceRankLabel = (source: ChatSourceMetadata, index: number) => {
-  if (source.chunkIndex) return `#${source.chunkIndex}`
-  return `#${index + 1}`
-}
-
-const scoreLabel = (score?: string) => {
-  if (!score) return ''
-  const value = Number(score)
-  if (!Number.isFinite(value)) return ''
-  return `分数 ${value.toFixed(4)}`
-}
-
-const citationConfidenceLabel = (value?: string) => {
-  switch (value) {
-    case 'high':
-      return '强证据'
-    case 'medium':
-      return '中证据'
-    case 'low':
-      return '弱证据'
-    default:
-      return ''
-  }
-}
-
-const MessageCitations: React.FC<{
-  sources: ChatSourceMetadata[]
-  onOpenCitationSource?: (source: ChatSourceMetadata) => void
-}> = ({ sources, onOpenCitationSource }) => {
-  const visibleSources = normalizeSources(sources).slice(0, 6)
-  if (visibleSources.length === 0) return null
-
-  return (
-    <details className="message-citations">
-      <summary>
-        <span>引用来源</span>
-        <strong>{visibleSources.length}</strong>
-      </summary>
-      <div className="message-citation-list">
-        {visibleSources.map((source, index) => (
-          <article className="message-citation" key={sourceIdentity(source, index)}>
-            <div className="message-citation-head">
-              <strong>{source.documentName || source.toolName || '未知来源'}</strong>
-              <span>{sourceTypeLabel(source)}</span>
-              <span>{sourceRankLabel(source, index)}</span>
-              {citationConfidenceLabel(source.citationConfidence) && (
-                <span>{citationConfidenceLabel(source.citationConfidence)}</span>
-              )}
-              {scoreLabel(source.score) && <span>{scoreLabel(source.score)}</span>}
-              {source.documentId && (
-                <button
-                  type="button"
-                  onClick={() => onOpenCitationSource?.(source)}
-                  disabled={!onOpenCitationSource}
-                >
-                  定位
-                </button>
-              )}
-            </div>
-            {source.snippet && <p>{source.snippet}</p>}
-          </article>
-        ))}
-      </div>
-    </details>
-  )
-}
-
 const ChatArea: React.FC<ChatAreaProps> = ({
   sidebarOpen,
   activeConversation,
@@ -153,9 +60,27 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 }) => {
   const [inputValue, setInputValue] = useState('')
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [showModeMenu, setShowModeMenu] = useState(false)
+  const [showTopbarSub, setShowTopbarSub] = useState(false)
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState(activeConversation.title)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const canSend = inputValue.trim().length > 0 && !(enforceSingleFlight && isGlobalGenerating)
+
+  const hasMessages = activeConversation.messages.length > 0
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    const lineHeight = 22
+    const maxHeight = lineHeight * 6
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`
+  }, [inputValue])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -177,26 +102,22 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     : selectedKnowledgeBase
       ? `知识库问答：${selectedKnowledgeBase.name}`
       : '未选择知识库'
+  const knowledgeBaseBadgeText = selectedKnowledgeBase?.name ?? '未选择知识库'
+  const retrievalScopeText = selectedDocument
+    ? `文档：${selectedDocument.name}`
+    : selectedKnowledgeBase
+      ? '全部文档'
+      : '未选择范围'
+  const retrievalScopeTitle = selectedDocument
+    ? `当前检索范围：单独文档「${selectedDocument.name}」`
+    : selectedKnowledgeBase
+      ? `当前检索范围：知识库「${selectedKnowledgeBase.name}」的全部文档`
+      : '当前检索范围：未选择'
 
   const activeModeModel =
     chatMode === 'think'
       ? chatModeSettings.thinkModel || config.chat.model
       : chatModeSettings.fastModel || config.chat.model
-
-  const toolbarItems = [
-    {
-      icon: '📚',
-      text: scopeText,
-    },
-    {
-      icon: chatMode === 'think' ? '🧠' : '⚡',
-      text: `${chatMode === 'think' ? '思考模式' : '快速模式'} · ${activeModeModel}`,
-    },
-    {
-      icon: '💬',
-      text: `${conversationStats.totalCount} 条消息`,
-    },
-  ]
 
   const handleSubmit = async () => {
     const content = inputValue.trim()
@@ -227,41 +148,85 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     }
   }
 
+  const handleConfirmClearConversation = () => {
+    setShowClearConfirm(false)
+    onClearConversation()
+  }
+
   return (
     <main className={`chat-area ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
       <div className="chat-topbar">
-        <div className="chat-topbar-left">
-          <span className="chat-topbar-title">AI Assistant</span>
-          <span className="chat-topbar-sep">·</span>
-          <span className="chat-topbar-hint">{activeConversation.title}</span>
-          <span className="chat-topbar-sep">·</span>
-          <span className="chat-topbar-hint">{formatTime(activeConversation.updatedAt)}</span>
-        </div>
+        <div className="chat-topbar-main">
+          <div className="chat-topbar-left">
+            {editingTitle ? (
+              <input
+                className="chat-topbar-title-input"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={() => setEditingTitle(false)}
+                onKeyDown={(e) => { if (e.key === 'Enter') setEditingTitle(false) }}
+                autoFocus
+              />
+            ) : (
+              <span
+                className="chat-topbar-title"
+                onDoubleClick={() => { setTitleDraft(activeConversation.title); setEditingTitle(true) }}
+                title="双击编辑标题"
+              >
+                {activeConversation.title}
+              </span>
+            )}
+          </div>
 
-        <div className="chat-topbar-pills">
-          {toolbarItems.map((item) => (
-            <div key={item.text} className="topbar-pill" title={item.text}>
-              <span className="topbar-pill-icon">{item.icon}</span>
-              <span className="topbar-pill-text">{item.text}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="chat-topbar-right">
-          {enforceSingleFlight && isGlobalGenerating && (
-            <span className="chat-topbar-hint" aria-live="polite">
-              正在后台生成：{generatingConversationTitle}
+          <div className="chat-topbar-badges">
+            <span className="topbar-badge topbar-badge-kb" title={`当前知识库：${knowledgeBaseBadgeText}`}>
+              📚 {knowledgeBaseBadgeText}
             </span>
-          )}
-          <button
-            type="button"
-            className="chat-clear-btn"
-            onClick={onClearConversation}
-            disabled={isLoading}
-          >
-            清空对话
-          </button>
+            <span className="topbar-badge topbar-badge-scope" title={retrievalScopeTitle}>
+              📄 {retrievalScopeText}
+            </span>
+            <span className="topbar-badge" title={`${chatMode === 'think' ? '思考模式' : '快速模式'} · ${activeModeModel}`}>
+              {chatMode === 'think' ? '🧠' : '⚡'} {activeModeModel}
+            </span>
+          </div>
+
+          <div className="chat-topbar-right">
+            {enforceSingleFlight && isGlobalGenerating && (
+              <span className="chat-topbar-hint" aria-live="polite">
+                生成中：{generatingConversationTitle}
+              </span>
+            )}
+            <div className="chat-topbar-actions" aria-label="对话操作">
+              <button
+                type="button"
+                className="chat-topbar-info-btn"
+                onClick={() => setShowTopbarSub(prev => !prev)}
+                title="消息统计"
+                aria-label="消息统计"
+              >
+                <span className="chat-topbar-info-icon" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="chat-topbar-clear-btn"
+                onClick={() => setShowClearConfirm(true)}
+                disabled={isLoading}
+                title="清空对话"
+                aria-label="清空对话"
+              >
+                <span className="chat-topbar-clear-icon" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         </div>
+
+        {showTopbarSub && (
+          <div className="chat-topbar-sub">
+            <span className="topbar-sub-stat">💬 {conversationStats.totalCount} 条消息</span>
+            <span className="topbar-sub-stat">👤 {conversationStats.userCount} 条提问</span>
+            <span className="topbar-sub-stat">🕐 {formatTime(activeConversation.updatedAt)}</span>
+          </div>
+        )}
       </div>
 
       <div className="messages-container">
@@ -277,68 +242,17 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               message.role === 'assistant' &&
               message.id === activeConversation.messages.at(-1)?.id &&
               !message.content.trim()
-            const degradedMetadata =
-              message.role === 'assistant' && message.metadata?.degraded
-                ? message.metadata
-                : null
 
             return (
-              <div key={message.id} className={`message ${message.role}`}>
-                {!isStreamingPlaceholder && message.content.trim() && (
-                  <button
-                    type="button"
-                    className="message-copy-btn"
-                    onClick={() => {
-                      void handleCopyMessage(message.id, message.content)
-                    }}
-                    aria-label="复制消息"
-                    title={copiedMessageId === message.id ? '已复制' : '复制消息'}
-                  >
-                    {copiedMessageId === message.id ? '✓' : '⧉'}
-                  </button>
-                )}
-                <div
-                  className={`message-content ${
-                    isStreamingPlaceholder ? 'message-content-thinking' : ''
-                  } ${message.role === 'assistant' ? 'message-content-markdown' : ''}`}
-                >
-                  {degradedMetadata && (
-                    <div className="message-degraded-banner" role="status" aria-live="polite">
-                      <div className="message-degraded-title">
-                        ⚠ 当前回答为降级回复，模型或检索链路出现异常
-                      </div>
-                      {degradedMetadata.fallbackStrategy && (
-                        <div className="message-degraded-detail">
-                          策略：{degradedMetadata.fallbackStrategy}
-                        </div>
-                      )}
-                      {degradedMetadata.upstreamError && (
-                        <div className="message-degraded-subtle">
-                          上游错误：{degradedMetadata.upstreamError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {isStreamingPlaceholder ? (
-                    <div className="thinking-indicator" aria-label="AI 正在思考">
-                      <span className="thinking-dot" />
-                      <span className="thinking-dot" />
-                      <span className="thinking-dot" />
-                    </div>
-                  ) : message.role === 'assistant' ? (
-                    <MarkdownRenderer content={message.content} />
-                  ) : (
-                    message.content
-                  )}
-                </div>
-                {message.role === 'assistant' && message.metadata?.sources && (
-                  <MessageCitations
-                    sources={message.metadata.sources}
-                    onOpenCitationSource={onOpenCitationSource}
-                  />
-                )}
-                <div className="message-time">{formatTime(message.timestamp)}</div>
-              </div>
+              <MessageCard
+                key={message.id}
+                message={message}
+                isLoading={isLoading}
+                isStreamingPlaceholder={isStreamingPlaceholder}
+                onCopyMessage={handleCopyMessage}
+                onOpenCitationSource={onOpenCitationSource}
+                copiedMessageId={copiedMessageId}
+              />
             )
           })
         )}
@@ -352,57 +266,74 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="prompt-list">
-        {suggestedPrompts.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            className="prompt-chip"
-            disabled={enforceSingleFlight && isGlobalGenerating}
-            onClick={() => {
-              void onSendMessage(prompt)
-            }}
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
+      {!hasMessages && (
+        <div className="prompt-list">
+          {suggestedPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="prompt-chip"
+              disabled={enforceSingleFlight && isGlobalGenerating}
+              onClick={() => {
+                void onSendMessage(prompt)
+              }}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="input-area">
-        <div className="input-mode-bar">
-          <div className="input-mode-group" role="tablist" aria-label="回答模式选择">
-            <button
-              type="button"
-              className={`input-mode-btn ${chatMode === 'fast' ? 'active' : ''}`}
-              onClick={() => onChatModeChange('fast')}
-              disabled={isLoading}
-            >
-              ⚡ 快速模式
-            </button>
-            <button
-              type="button"
-              className={`input-mode-btn ${chatMode === 'think' ? 'active' : ''}`}
-              onClick={() => onChatModeChange('think')}
-              disabled={isLoading}
-            >
-              🧠 思考模式
-            </button>
-          </div>
-          <div className="input-mode-hint">
-            <div>
-              当前使用：{chatMode === 'think' ? '思考模式' : '快速模式'}
-              {' · '}
-              模型：{activeModeModel}
-            </div>
-            <div className="input-mode-description">
-              {chatMode === 'think'
-                ? '质量优先，适合复杂分析与推理，响应会更慢。'
-                : '速度优先，适合日常问答与知识库检索。'}
-            </div>
-          </div>
+        <div className="input-context-row">
+          <span className="input-context-icon">📚</span>
+          <span className="input-context-text">{scopeText}</span>
+          {selectedDocument && (
+            <span className="input-context-badge">文档</span>
+          )}
         </div>
         <div className="input-container">
+          <div className="input-mode-compact">
+            <button
+              type="button"
+              className="input-mode-toggle"
+              onClick={() => setShowModeMenu((prev) => !prev)}
+              title={`${chatMode === 'think' ? '思考模式' : '快速模式'} · ${activeModeModel}`}
+            >
+              {chatMode === 'think' ? '🧠' : '⚡'}
+            </button>
+            {showModeMenu && (
+              <div className="input-mode-dropdown">
+                <button
+                  type="button"
+                  className={`input-mode-dropdown-item ${chatMode === 'fast' ? 'active' : ''}`}
+                  onClick={() => { onChatModeChange('fast'); setShowModeMenu(false) }}
+                >
+                  <span>⚡</span>
+                  <span className="input-mode-dropdown-label">
+                    <strong>快速模式</strong>
+                    <small>速度优先，日常问答</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`input-mode-dropdown-item ${chatMode === 'think' ? 'active' : ''}`}
+                  onClick={() => { onChatModeChange('think'); setShowModeMenu(false) }}
+                >
+                  <span>🧠</span>
+                  <span className="input-mode-dropdown-label">
+                    <strong>思考模式</strong>
+                    <small>质量优先，复杂分析</small>
+                  </span>
+                </button>
+                <div className="input-mode-dropdown-model">
+                  模型：{activeModeModel}
+                </div>
+              </div>
+            )}
+          </div>
           <textarea
+            ref={textareaRef}
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
             onKeyDown={handleKeyDown}
@@ -411,7 +342,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 ? `当前正在后台生成「${generatingConversationTitle}」，请等待完成后再发送`
                 : '输入您的问题，Enter 发送，Shift + Enter 换行'
             }
-            rows={3}
+            rows={1}
           />
           <button
             type="button"
@@ -419,12 +350,23 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               void handleSubmit()
             }}
             disabled={!canSend}
-            className="send-btn"
+            className={`send-btn ${canSend ? 'send-btn-active' : ''}`}
+            aria-label="发送消息"
           >
-            {isLoading ? '发送中...' : enforceSingleFlight && isGlobalGenerating ? '排队中' : '发送'}
+            {isLoading ? '…' : '↑'}
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showClearConfirm}
+        title="清空对话"
+        message="确认清空当前对话的全部消息吗？此操作不可撤销。"
+        confirmText="清空"
+        cancelText="取消"
+        onConfirm={handleConfirmClearConversation}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </main>
   )
 }

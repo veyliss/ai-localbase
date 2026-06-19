@@ -20,13 +20,11 @@ var jwtSecret []byte
 var configuredUsername string
 
 func InitJWTSecret(secret, username string) {
-	if secret == "" {
-		secret = "change-me-in-production"
-	}
+	username = strings.TrimSpace(username)
 	if username == "" {
-		username = "admin"
+		username = "root"
 	}
-	jwtSecret = []byte(secret)
+	jwtSecret = []byte(strings.TrimSpace(secret))
 	configuredUsername = username
 }
 
@@ -36,6 +34,10 @@ func GetConfiguredUsername() string {
 
 // GenerateToken 生成 JWT token
 func GenerateToken(username string, duration time.Duration) (string, error) {
+	if len(jwtSecret) == 0 {
+		return "", errors.New("jwt secret is not initialized")
+	}
+
 	claims := Claims{
 		Username:  username,
 		ExpiresAt: time.Now().Add(duration).Unix(),
@@ -60,6 +62,10 @@ func GenerateToken(username string, duration time.Duration) (string, error) {
 
 // ValidateToken 验证 JWT token
 func ValidateToken(tokenString string) (*Claims, error) {
+	if len(jwtSecret) == 0 {
+		return nil, errors.New("jwt secret is not initialized")
+	}
+
 	parts := strings.Split(tokenString, ".")
 	if len(parts) != 3 {
 		return nil, errors.New("invalid token format")
@@ -85,6 +91,12 @@ func ValidateToken(tokenString string) (*Claims, error) {
 
 	if time.Now().Unix() > claims.ExpiresAt {
 		return nil, errors.New("token expired")
+	}
+	if claims.ExpiresAt <= 0 {
+		return nil, errors.New("invalid expiration")
+	}
+	if configuredUsername != "" && claims.Username != configuredUsername {
+		return nil, errors.New("invalid subject")
 	}
 
 	return &claims, nil

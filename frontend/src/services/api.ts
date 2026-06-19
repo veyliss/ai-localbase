@@ -8,6 +8,7 @@ import type {
 } from '../App'
 
 export const API_BASE_PATH = ''
+export const AUTH_UNAUTHORIZED_EVENT = 'ai-localbase:auth-unauthorized'
 
 export interface ApiErrorResponse {
   error?: string | {
@@ -449,8 +450,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (response.status === 401) {
-    localStorage.removeItem('auth_token')
-    localStorage.removeItem('token_expires_at')
+    clearStoredAuth()
     throw new Error('未授权，请重新登录')
   }
 
@@ -479,14 +479,19 @@ async function requestOk(path: string, init?: RequestInit): Promise<void> {
   })
 
   if (response.status === 401) {
-    localStorage.removeItem('auth_token')
-    localStorage.removeItem('token_expires_at')
+    clearStoredAuth()
     throw new Error('未授权，请重新登录')
   }
 
   if (!response.ok) {
     throw new Error(await extractErrorMessage(response))
   }
+}
+
+export const clearStoredAuth = () => {
+  localStorage.removeItem('auth_token')
+  localStorage.removeItem('token_expires_at')
+  window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT))
 }
 
 const jsonRequest = (body: unknown, init: RequestInit = {}): RequestInit => ({

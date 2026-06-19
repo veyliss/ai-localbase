@@ -28,6 +28,7 @@ import type {
 } from '../services/api'
 import KnowledgePanelWrapper from './knowledge/KnowledgePanelWrapper'
 import SettingsPanel from './settings/SettingsPanel'
+import CreateKnowledgeBaseDialog from './knowledge/CreateKnowledgeBaseDialog'
 
 interface SidebarProps {
   isOpen: boolean
@@ -107,6 +108,7 @@ interface SidebarProps {
   onThinkModelChange: (value: string) => void
   onCopyMcpToken: () => Promise<void>
   onResetMcpToken: () => Promise<void>
+  onLogout: () => void
 }
 
 const formatDateTime = (value: string) =>
@@ -166,6 +168,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onThinkModelChange,
   onCopyMcpToken,
   onResetMcpToken,
+  onLogout,
 }) => {
   const [collapsedKnowledgeBases, setCollapsedKnowledgeBases] = useState<
     Record<string, boolean>
@@ -174,8 +177,41 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [isComposingTitle, setIsComposingTitle] = useState(false)
+  const [conversationFilter, setConversationFilter] = useState('')
+
+  // 创建知识库弹窗状态
+  const [showCreateKbModal, setShowCreateKbModal] = useState(false)
+  const [newKbName, setNewKbName] = useState('')
+  const [newKbDescription, setNewKbDescription] = useState('')
+
+  const handleOpenCreateKb = () => {
+    setNewKbName('')
+    setNewKbDescription('')
+    setShowCreateKbModal(true)
+  }
+
+  const handleConfirmCreateKb = () => {
+    const trimmedName = newKbName.trim()
+    if (!trimmedName) return
+    onCreateKnowledgeBase(trimmedName, newKbDescription.trim())
+    setShowCreateKbModal(false)
+    setNewKbName('')
+    setNewKbDescription('')
+  }
+
+  const handleCancelCreateKb = () => {
+    setShowCreateKbModal(false)
+    setNewKbName('')
+    setNewKbDescription('')
+  }
 
   const sortedKnowledgeBases = useMemo(() => knowledgeBases, [knowledgeBases])
+
+  const filteredConversations = useMemo(() => {
+    if (!conversationFilter.trim()) return conversations
+    const q = conversationFilter.toLowerCase()
+    return conversations.filter((c) => c.title.toLowerCase().includes(q))
+  }, [conversations, conversationFilter])
 
   const toggleKnowledgeBaseCollapse = (knowledgeBaseId: string) => {
     setCollapsedKnowledgeBases((prev) => ({
@@ -203,8 +239,18 @@ const Sidebar: React.FC<SidebarProps> = ({
               </button>
             </div>
 
+            <div className="sidebar-search-wrap">
+              <input
+                type="text"
+                className="sidebar-search-input"
+                placeholder="搜索会话…"
+                value={conversationFilter}
+                onChange={(e) => setConversationFilter(e.target.value)}
+              />
+            </div>
+
             <div className="conversation-list">
-              {conversations.map((conversation) => {
+              {filteredConversations.map((conversation) => {
                 const isMenuOpen = menuConversationId === conversation.id
                 const isEditing = editingConversationId === conversation.id
 
@@ -384,6 +430,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           onThinkModelChange={onThinkModelChange}
           onCopyMcpToken={onCopyMcpToken}
           onResetMcpToken={onResetMcpToken}
+          onLogout={onLogout}
         />
       )}
 
@@ -421,6 +468,18 @@ const Sidebar: React.FC<SidebarProps> = ({
         onCitationNavigationHandled={onCitationNavigationHandled}
         onClose={onToggleKnowledgePanel}
       />
+
+      {/* 创建知识库弹窗 - 独立于侧边栏 */}
+      {showCreateKbModal && (
+        <CreateKnowledgeBaseDialog
+          name={newKbName}
+          description={newKbDescription}
+          onNameChange={setNewKbName}
+          onDescriptionChange={setNewKbDescription}
+          onCancel={handleCancelCreateKb}
+          onConfirm={handleConfirmCreateKb}
+        />
+      )}
     </>
   )
 }

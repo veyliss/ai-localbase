@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
+	"strings"
 
 	"ai-localbase/internal/auth"
 	"ai-localbase/internal/config"
 	"ai-localbase/internal/handler"
 	"ai-localbase/internal/mcp"
+	"ai-localbase/internal/model"
 	"ai-localbase/internal/router"
 	"ai-localbase/internal/service"
 )
@@ -16,12 +19,12 @@ import (
 func main() {
 	serverConfig := config.LoadServerConfig()
 
-	// Initialize JWT secret
+	if err := validateAuthConfig(serverConfig); err != nil {
+		log.Fatal(err)
+	}
+
 	if serverConfig.EnableAuth {
 		auth.InitJWTSecret(serverConfig.JWTSecret, serverConfig.AuthUsername)
-		if serverConfig.AuthPassword == "" {
-			log.Fatal("AUTH_PASSWORD must be set when ENABLE_AUTH=true")
-		}
 		log.Printf("Authentication enabled, username: %s", serverConfig.AuthUsername)
 	}
 
@@ -63,4 +66,21 @@ func main() {
 	if err := r.Run(":" + serverConfig.Port); err != nil {
 		log.Fatalf("failed to start server: %v", err)
 	}
+}
+
+func validateAuthConfig(serverConfig model.ServerConfig) error {
+	if !serverConfig.EnableAuth {
+		return nil
+	}
+	if serverConfig.AuthPassword == "" {
+		return errors.New("AUTH_PASSWORD must be set when ENABLE_AUTH=true")
+	}
+	jwtSecret := strings.TrimSpace(serverConfig.JWTSecret)
+	if jwtSecret == "" {
+		return errors.New("JWT_SECRET must be set when ENABLE_AUTH=true")
+	}
+	if len(jwtSecret) < 32 {
+		return errors.New("JWT_SECRET must be at least 32 characters when ENABLE_AUTH=true")
+	}
+	return nil
 }

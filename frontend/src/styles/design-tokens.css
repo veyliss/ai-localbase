@@ -13,8 +13,8 @@
   --bg-primary: #ffffff;
   --bg-secondary: #f8fafc;
   --bg-tertiary: #f1f5f9;
-  --bg-app: #f4f6f9;
-  --bg-sidebar: #0f172a;
+  --bg-app: #f8f9fc;
+  --bg-sidebar: #0c1222;
   --bg-sidebar-elevated: #172033;
 
   /* 文字层级 */
@@ -61,8 +61,8 @@
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
   --radius-2xl: 20px;
   --radius-full: 999px;
 
@@ -72,6 +72,15 @@
   --shadow-lg: 0 18px 40px -20px rgba(15, 23, 42, 0.32), 0 8px 18px -14px rgba(15, 23, 42, 0.2);
   --shadow-modal: 0 30px 90px rgba(15, 23, 42, 0.28);
   --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.14);
+
+  /* 聊天专用令牌 */
+  --surface-chat-user: var(--color-user-bubble);
+  --surface-chat-ai: var(--surface-primary);
+  --border-input: var(--border-color);
+
+  /* 侧边栏专用令牌 */
+  --color-sidebar-accent: rgba(96, 165, 250, 0.15);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
 
   /* 间距系统 (基于 4px) */
   --space-1: 0.25rem;
@@ -123,6 +132,12 @@
   --bg-app: #0b1120;
   --bg-sidebar: #050816;
   --bg-sidebar-elevated: #111827;
+
+  --surface-chat-user: var(--color-user-bubble);
+  --surface-chat-ai: var(--surface-primary);
+  --border-input: var(--border-color);
+  --color-sidebar-accent: rgba(96, 165, 250, 0.15);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
 
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;

@@ -361,24 +361,38 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
 
   return (
     <>
-      <div className="kb-backdrop" onClick={onClose}>
-        <div className="kb-modal kb-modal--workspace" onClick={(event) => event.stopPropagation()}>
-          <header className="kb-header">
-            <div className="kb-header-left">
-              <div>
-                <h2 className="kb-header-title">知识库管理</h2>
-                <p className="kb-header-sub">
-                  共 {knowledgeBases.length} 个知识库 · {totalDocuments} 份文档
-                </p>
+      {open && (
+        <div className="kb-modal-backdrop" onClick={onClose}>
+          <aside className="kb-slide-in" onClick={(e) => e.stopPropagation()}>
+            <header className="kb-header">
+              <div className="kb-header-left">
+                <div>
+                  <h2 className="kb-header-title">知识库管理</h2>
+                  <p className="kb-header-sub">
+                    共 {knowledgeBases.length} 个知识库 · {totalDocuments} 份文档
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="kb-header-actions">
-              <button className="kb-create-btn" onClick={handleOpenCreate}>
-                <span>+</span> 新建知识库
-              </button>
-              <button className="kb-close-btn" onClick={onClose} title="关闭">x</button>
-            </div>
-          </header>
+              <div className="kb-header-actions">
+                <button className="kb-create-btn" onClick={handleOpenCreate}>
+                  <span>+</span> 新建
+                </button>
+                <button className="kb-close-btn" onClick={onClose} title="关闭">✕</button>
+              </div>
+            </header>
+
+        {/* Breadcrumb */}
+        <div className="kb-breadcrumb">
+          <span className="kb-breadcrumb-item">{selectedKnowledgeBase?.name ?? '选择知识库'}</span>
+          {selectedDocumentId && (
+            <>
+              <span className="kb-breadcrumb-sep">/</span>
+              <span className="kb-breadcrumb-item kb-breadcrumb-current">
+                {selectedKnowledgeBase?.documents.find((d) => d.id === selectedDocumentId)?.name ?? '文档'}
+              </span>
+            </>
+          )}
+        </div>
 
           {knowledgeBases.length === 0 ? (
             <div className="kb-empty">
@@ -467,8 +481,9 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
               </main>
             </div>
           )}
+          </aside>
         </div>
-      </div>
+      )}
 
       {showCreateModal && (
         <CreateKnowledgeBaseDialog

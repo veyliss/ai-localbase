@@ -2088,6 +2088,9 @@ function AppContent() {
     const checkAuth = async () => {
       try {
         const health = await fetchBackendHealth()
+        if (!health) {
+          throw new Error('health check unavailable')
+        }
         const authEnabled = health?.config?.auth_enabled === 'true'
         if (!authEnabled) {
           setAuthRequired(false)
@@ -2105,19 +2108,30 @@ function AppContent() {
           },
         })
         if (response.status === 401) {
+          setAuthRequired(true)
           logout()
-        }
-      } catch {
-        if (isAuthenticated && token) {
-          setAuthRequired(false)
           return
         }
-
+        if (!response.ok) {
+          throw new Error('auth status check failed')
+        }
+      } catch {
         try {
-          const response = await fetch(`${API_BASE_PATH}/api/knowledge-bases`)
-          setAuthRequired(response.status === 401)
+          const headers = new Headers()
+          if (token) {
+            headers.set('Authorization', `Bearer ${token}`)
+          }
+          const response = await fetch(`${API_BASE_PATH}/api/knowledge-bases`, { headers })
+          if (response.status === 401) {
+            setAuthRequired(true)
+            if (isAuthenticated) {
+              logout()
+            }
+            return
+          }
+          setAuthRequired(!response.ok)
         } catch {
-          setAuthRequired(false)
+          setAuthRequired(true)
         }
       } finally {
         setAuthCheckDone(true)
@@ -2187,6 +2201,7 @@ function AppContent() {
         onThinkModelChange={handleThinkModelChange}
         onCopyMcpToken={handleCopyMcpToken}
         onResetMcpToken={handleResetMcpToken}
+        onLogout={logout}
       />
       <ChatArea
         sidebarOpen={sidebarOpen}

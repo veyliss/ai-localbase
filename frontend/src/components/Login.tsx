@@ -4,17 +4,11 @@ import '../styles/Login.css'
 
 const Login: React.FC = () => {
   const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('admin')
   const { login, authError } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const passwordRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    const envUsername = import.meta.env.VITE_AUTH_USERNAME || 'admin'
-    setUsername(envUsername)
-  }, [])
 
   useEffect(() => {
     passwordRef.current?.focus()
@@ -194,34 +188,20 @@ const Login: React.FC = () => {
           <form onSubmit={handleSubmit} className="login-form">
             <div className={`input-wrapper ${isFocused ? 'focused' : ''}`}>
               <svg className="input-icon" viewBox="0 0 24 24" fill="none">
-                <path d="M20 21V19C20 16.7951 19.5276 15.6306 18.6808 14.7109C17.834 13.7912 16.6598 13.1893 15.4 13H8.6C7.34018 13.1893 6.16598 13.7912 5.31922 14.7109C4.47246 15.6306 4 16.7951 4 19V21" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-              <input
-                type="text"
-                value={username}
-                disabled
-                className="login-input username-field"
-                aria-label="账号"
-              />
-            </div>
-
-            <div className={`input-wrapper ${isFocused ? 'focused' : ''}`}>
-              <svg className="input-icon" viewBox="0 0 24 24" fill="none">
                 <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="1.5"/>
                 <path d="M7 11V7C7 4.23858 9.23858 2 12 2C14.7614 2 17 4.23858 17 7V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
               <input
                 ref={passwordRef}
                 type="password"
-                placeholder="请输入密码"
+                placeholder="请输入访问密码"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 disabled={isLoading}
                 className="login-input password-field"
-                aria-label="密码"
+                aria-label="访问密码"
                 required
               />
               <button

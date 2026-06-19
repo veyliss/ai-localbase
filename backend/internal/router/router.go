@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 
 func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHandler, authHandler *handler.AuthHandler, serverConfig model.ServerConfig, mcpServer *mcp.Server, frontendFS fs.FS) *gin.Engine {
 	r := gin.New()
-	r.Use(requestIDMiddleware(), accessLogMiddleware(), gin.Recovery(), corsMiddleware())
+	r.Use(requestIDMiddleware(), accessLogMiddleware(), gin.Recovery(), corsMiddleware(serverConfig.EnableAuth))
 
 	r.GET("/health", appHandler.Health)
 
@@ -117,9 +118,15 @@ func spaHandler(frontendFS fs.FS) gin.HandlerFunc {
 	}
 }
 
-func corsMiddleware() gin.HandlerFunc {
+func corsMiddleware(authEnabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := strings.TrimSpace(c.GetHeader("Origin"))
+		if !authEnabled {
+			c.Header("Access-Control-Allow-Origin", "*")
+		} else if isLocalDevelopmentOrigin(origin) {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+		}
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-Id")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Expose-Headers", "X-Request-Id")
@@ -131,6 +138,23 @@ func corsMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func isLocalDevelopmentOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 func requestIDMiddleware() gin.HandlerFunc {

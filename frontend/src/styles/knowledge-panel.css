@@ -4,38 +4,88 @@
    ========================================================================== */
 
 /* ==========================================================================
-   1. 遮罩层 (Backdrop)
+   1. 弹窗容器 (Modal Container) - 居中弹窗而非侧边栏
    ========================================================================== */
-.kb-backdrop {
+
+/* 弹窗遮罩 */
+.kb-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 1500;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-6);
+  padding: var(--space-8);  /* 增加边距 */
   background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(4px);
+  animation: backdropFadeIn 0.2s ease-out;
 }
 
-/* ==========================================================================
-   2. 模态框容器 (Modal)
-   ========================================================================== */
-.kb-modal {
-  width: min(960px, 100%);
-  max-height: min(90vh, 1000px);
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 主弹窗 - 居中大弹窗 */
+.kb-slide-in {
+  width: 100%;
+  max-width: 1400px;  /* 从 1200px 增加到 1400px */
+  height: 85vh;       /* 从 90vh 减少到 85vh，留出上下边距 */
+  max-height: 850px;  /* 从 900px 减少到 850px */
   background: var(--bg-primary);
-  border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-modal);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: kbSlideIn 0.25s ease;
+  position: relative;
+  z-index: 1501;
+  animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes kbSlideIn {
-  from { opacity: 0; transform: scale(0.97) translateY(12px); }
-  to   { opacity: 1; transform: scale(1) translateY(0); }
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* ==========================================================================
+   2. Breadcrumb
+   ========================================================================== */
+.kb-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px var(--space-7);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.04));
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.kb-breadcrumb-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.kb-breadcrumb-sep {
+  color: var(--text-tertiary);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.kb-breadcrumb-current {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 /* ==========================================================================
@@ -1753,149 +1803,251 @@
   font-weight: 700;
 }
 
-/* Create KB dialog */
+/* ==========================================================================
+   创建知识库弹窗 - 使用设计代币系统（与 settings-panel.css 统一）
+   ========================================================================== */
+
+/* 弹窗遮罩 - 与 settings-modal-backdrop 一致 */
 .kb-create-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 2000;  /* 确保在侧边栏(100)之上 */
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: var(--space-6);
   background: rgba(15, 23, 42, 0.5);
   backdrop-filter: blur(4px);
+  animation: backdropFadeIn 0.2s ease-out;
 }
 
+@keyframes backdropFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 弹窗容器 - Medium Modal (600px) */
 .kb-create-dialog {
-  width: min(480px, 100%);
-  background: #fff;
-  border-radius: 20px;
-  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.28);
+  width: 100%;
+  max-width: 600px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
   overflow: hidden;
-  animation: kbSlideIn 0.2s ease;
+  animation: dialogSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+@keyframes dialogSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 弹窗头部 */
 .kb-create-dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 24px 16px;
-  border-bottom: 1px solid #f1f5f9;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
 }
 
 .kb-create-dialog-header h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--text-lg);
   font-weight: 700;
-  color: #0f172a;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
 
+.kb-close-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.kb-close-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* 弹窗内容 */
 .kb-create-dialog-body {
-  padding: 20px 24px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
+/* 表单字段 - 与 settings-form-group 一致 */
 .kb-form-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .kb-form-label {
-  font-size: 13px;
+  display: block;
+  font-size: var(--text-sm);
   font-weight: 600;
-  color: #374151;
+  color: var(--text-primary);
+  line-height: 1.3;
 }
 
 .kb-required {
-  color: #ef4444;
+  color: var(--color-error);
 }
 
+/* 表单输入框 - 与 settings-form-group input 完全一致 */
 .kb-form-input {
-  padding: 10px 14px;
-  border: 1.5px solid #e2e8f0;
-  border-radius: 10px;
-  font-size: 14px;
-  font-family: inherit;
-  color: #0f172a;
-  background: #f8fafc;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+  min-height: var(--control-height-md);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
   outline: none;
+  transition: border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              background-color var(--transition-fast);
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.kb-form-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.kb-form-input:hover {
+  border-color: var(--border-color-hover);
 }
 
 .kb-form-input:focus {
-  border-color: #6366f1;
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+  background: var(--bg-primary);
 }
 
+/* 文本域 */
 .kb-form-textarea {
-  padding: 10px 14px;
-  border: 1.5px solid #e2e8f0;
-  border-radius: 10px;
-  font-size: 14px;
-  font-family: inherit;
-  color: #0f172a;
-  background: #f8fafc;
+  width: 100%;
+  min-height: 80px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  background: var(--bg-secondary);
   resize: vertical;
-  transition: border-color 0.15s, box-shadow 0.15s;
   outline: none;
+  transition: border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              background-color var(--transition-fast);
+  font-family: inherit;
   line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.kb-form-textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.kb-form-textarea:hover {
+  border-color: var(--border-color-hover);
 }
 
 .kb-form-textarea:focus {
-  border-color: #6366f1;
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+  background: var(--bg-primary);
 }
 
+/* 弹窗底部 */
 .kb-create-dialog-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 16px 24px 20px;
-  border-top: 1px solid #f1f5f9;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
 }
 
+/* 取消按钮 - Secondary 样式 */
 .kb-cancel-btn {
-  padding: 9px 20px;
-  border: 1.5px solid #e2e8f0;
-  border-radius: 10px;
-  background: #fff;
-  color: #64748b;
-  font-size: 14px;
+  min-height: var(--control-height-md);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--transition-fast),
+              border-color var(--transition-fast),
+              color var(--transition-fast);
   font-family: inherit;
 }
 
 .kb-cancel-btn:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
-  color: #374151;
+  border-color: var(--border-color-hover);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
 }
 
+.kb-cancel-btn:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+}
+
+/* 确认按钮 - Primary 样式 */
 .kb-confirm-btn {
-  padding: 9px 20px;
+  min-height: var(--control-height-md);
+  padding: var(--space-2) var(--space-5);
   border: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
-  color: #fff;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+  color: white;
+  font-size: var(--text-md);
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+  transition: all var(--transition-fast);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
   font-family: inherit;
 }
 
 .kb-confirm-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+}
+
+.kb-confirm-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.kb-confirm-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus), 0 2px 8px rgba(37, 99, 235, 0.2);
 }
 
 .kb-confirm-btn:disabled {
@@ -1904,6 +2056,94 @@
   transform: none;
   box-shadow: none;
 }
+
+/* ==========================================================================
+   暗色模式适配 - 创建知识库弹窗
+   ========================================================================== */
+
+[data-theme="dark"] .kb-create-dialog {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .kb-create-dialog-header {
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border-color);
+}
+
+[data-theme="dark"] .kb-create-dialog-footer {
+  background: var(--bg-secondary);
+  border-top-color: var(--border-color);
+}
+
+[data-theme="dark"] .kb-form-input,
+[data-theme="dark"] .kb-form-textarea {
+  background: var(--bg-secondary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .kb-form-input:hover,
+[data-theme="dark"] .kb-form-textarea:hover {
+  border-color: var(--border-color-hover);
+}
+
+[data-theme="dark"] .kb-form-input:focus,
+[data-theme="dark"] .kb-form-textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+  background: var(--bg-primary);
+}
+
+[data-theme="dark"] .kb-cancel-btn {
+  background: var(--bg-primary);
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .kb-cancel-btn:hover {
+  background: var(--bg-secondary);
+  border-color: var(--border-color-hover);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .kb-close-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+/* ==========================================================================
+   响应式适配
+   ========================================================================== */
+
+@media (max-width: 640px) {
+  .kb-create-backdrop {
+    padding: var(--space-4);
+  }
+
+  .kb-create-dialog {
+    max-width: 100%;
+  }
+
+  .kb-create-dialog-header {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .kb-create-dialog-body {
+    padding: var(--space-4);
+  }
+
+  .kb-create-dialog-footer {
+    padding: var(--space-3) var(--space-4);
+    flex-direction: column-reverse;
+  }
+
+  .kb-cancel-btn,
+  .kb-confirm-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 
 .kb-detail-backdrop {
   position: fixed;

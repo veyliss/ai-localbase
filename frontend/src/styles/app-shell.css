@@ -14,11 +14,16 @@
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
-  transition: width 0.3s ease, transform 0.3s ease;
+  transition: transform 0.3s ease;
+  flex-shrink: 0;
 }
 
 .sidebar.closed {
-  width: 76px;
+  width: 320px;
+  transform: translateX(-100%);
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
 }
 
 .sidebar-header {
@@ -30,12 +35,15 @@
 }
 
 .sidebar.closed .sidebar-header {
-  justify-content: center;
+  /* no special styling needed when offscreen */
 }
 
-.sidebar.closed .sidebar-header h2,
+.sidebar.closed .sidebar-header h2 {
+  /* keep visible when using translateX offscreen */
+}
+
 .sidebar.closed .sidebar-body {
-  display: none;
+  /* content stays, just offscreen */
 }
 
 .toggle-btn,
@@ -240,4 +248,28 @@
 
 .settings-entry:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Responsive: Mobile sidebar overlay */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 100;
+    width: 300px;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+  }
+
+  .sidebar.closed {
+    transform: translateX(-100%);
+    position: fixed;
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  .sidebar.closed .sidebar-body {
+    display: flex;
+  }
 }

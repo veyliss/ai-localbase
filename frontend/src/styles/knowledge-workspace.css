@@ -8,7 +8,7 @@
 }
 
 /* ==========================================================================
-   知识库工作台精修
+   知识库工作台基础规则
    ========================================================================== */
 
 .kb-modal-backdrop {
@@ -2077,7 +2077,7 @@
 }
 
 /* ==========================================================================
-   知识库截图反馈微调
+   知识库工作台最终布局规则
    ========================================================================== */
 
 .kb-modal-backdrop {
@@ -2282,10 +2282,6 @@
   }
 }
 
-/* ==========================================================================
-   评估区域防挤压修复
-   ========================================================================== */
-
 .kb-modal-backdrop .kb-workspace {
   overflow-x: hidden;
 }
@@ -2337,6 +2333,23 @@
 
 .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-list {
   border-top: 0;
+}
+
+.kb-modal-backdrop .kb-eval-trend-insights {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 14px 0 2px;
+  padding: 11px 12px;
+  border: 1px solid var(--kb-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--kb-control-bg);
+}
+
+.kb-modal-backdrop .kb-eval-trend-insights span {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
 }
 
 .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-item {

@@ -41,6 +41,50 @@ const formatDateTime = (value: string) => {
   })
 }
 
+const evalTrendInsights = (
+  latest: EvalRunSummary | null,
+  previous: EvalRunSummary | null,
+) => {
+  if (!latest) return []
+
+  const insights: string[] = []
+  const metrics = latest.metrics
+  const hitRateDelta = previous ? metrics.hitRate - previous.metrics.hitRate : null
+  const mrrDelta = previous ? metrics.mrr - previous.metrics.mrr : null
+
+  if (metrics.hitRate < 0.7) {
+    insights.push('Hit Rate 偏低，优先检查召回范围、切分质量和检索模式。')
+  } else if (hitRateDelta !== null && hitRateDelta < -0.05) {
+    insights.push('Hit Rate 较上次下降，建议对比最近一次检索策略或索引变更。')
+  } else {
+    insights.push('Hit Rate 表现稳定，继续关注低置信与证据支撑。')
+  }
+
+  if (metrics.mrr < 0.45) {
+    insights.push('MRR 偏低，命中文档排序靠后，可尝试语义重排或混合检索。')
+  } else if (mrrDelta !== null && mrrDelta > 0.02) {
+    insights.push('MRR 有提升，当前排序策略较上一轮更有效。')
+  }
+
+  if (metrics.lowConfidence > 0) {
+    insights.push(`低置信 ${metrics.lowConfidence} 条，建议沉淀为评估样本并复核答案证据。`)
+  }
+
+  if (metrics.evidenceSupportRate < 0.85) {
+    insights.push('证据支撑不足，关注上下文压缩、引用片段和答案支撑关系。')
+  }
+
+  if (metrics.latencyP95Ms > 8000) {
+    insights.push('P95 延迟较高，建议检查改写、重排和模型调用耗时。')
+  }
+
+  if (metrics.citationMismatchCount > 0) {
+    insights.push(`引用不准 ${metrics.citationMismatchCount} 条，建议检查引用定位和 chunk 边界。`)
+  }
+
+  return insights.slice(0, 4)
+}
+
 const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
   runs = [],
   loading,
@@ -52,6 +96,7 @@ const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
   const previous = safeRuns[1] ?? null
   const hitRateDelta = latest && previous ? latest.metrics.hitRate - previous.metrics.hitRate : null
   const mrrDelta = latest && previous ? latest.metrics.mrr - previous.metrics.mrr : null
+  const insights = evalTrendInsights(latest, previous)
   const visibleRuns = safeRuns.slice(0, 6)
 
   return (
@@ -106,6 +151,13 @@ const EvalRunTrendPanel: React.FC<EvalRunTrendPanelProps> = ({
               <span>最新策略</span>
             </div>
           </div>
+          {insights.length > 0 && (
+            <div className="kb-eval-trend-insights" aria-label="质量趋势诊断建议">
+              {insights.map((insight) => (
+                <span key={insight}>{insight}</span>
+              ))}
+            </div>
+          )}
           <div className="kb-eval-trend-list">
             {visibleRuns.map((run) => (
               <article key={run.runId} className="kb-eval-trend-item">

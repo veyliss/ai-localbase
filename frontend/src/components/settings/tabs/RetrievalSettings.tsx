@@ -17,11 +17,16 @@ const RetrievalSettings: React.FC<RetrievalSettingsProps> = ({
     <div className="settings-tab-content">
       <section className="settings-card">
         <div className="settings-card-header">
-          <h3>召回策略</h3>
-          <p>决定先用什么方式召回，再如何排序</p>
+          <div className="settings-card-header-copy">
+            <h3>召回策略</h3>
+            <p>决定先用什么方式召回，再如何排序。</p>
+          </div>
+          <span className={`settings-status-pill ${config.hybridSearchEnabled ? 'enabled' : 'disabled'}`}>
+            {config.hybridSearchEnabled ? '混合可用' : '向量优先'}
+          </span>
         </div>
         <div className="settings-card-body">
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid-dense">
             <div className="settings-form-group">
               <label className="settings-form-label">默认模式</label>
               <select
@@ -78,11 +83,16 @@ const RetrievalSettings: React.FC<RetrievalSettingsProps> = ({
 
       <section className="settings-card">
         <div className="settings-card-header">
-          <h3>召回规模</h3>
-          <p>控制候选集大小和最终进入上下文的片段数量</p>
+          <div className="settings-card-header-copy">
+            <h3>召回规模</h3>
+            <p>控制候选集大小和最终进入上下文的片段数量。</p>
+          </div>
+          <span className="settings-status-pill neutral">
+            {config.topKKnowledgeBase} / {config.candidateTopKAllDocs}
+          </span>
         </div>
         <div className="settings-card-body">
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid-three">
             <div className="settings-form-group">
               <label className="settings-form-label">文档 TopK</label>
               <input
@@ -139,11 +149,16 @@ const RetrievalSettings: React.FC<RetrievalSettingsProps> = ({
 
       <section className="settings-card">
         <div className="settings-card-header">
-          <h3>上下文与补强</h3>
-          <p>控制进入回答前的证据长度和低置信兜底</p>
+          <div className="settings-card-header-copy">
+            <h3>上下文与补强</h3>
+            <p>控制进入回答前的证据长度和低置信兜底。</p>
+          </div>
+          <span className={`settings-status-pill ${config.enableLowConfidenceBoost ? 'enabled' : 'disabled'}`}>
+            {config.enableLowConfidenceBoost ? '补强开启' : '补强关闭'}
+          </span>
         </div>
         <div className="settings-card-body">
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid-dense">
             <div className="settings-form-group">
               <label className="settings-form-label">上下文字符</label>
               <input

@@ -33,19 +33,27 @@ const MCPSettings: React.FC<MCPSettingsProps> = ({ config, onCopyMcpToken, onRes
     <div className="settings-tab-content">
       <section className="settings-card">
         <div className="settings-card-header">
-          <h3>MCP 配置</h3>
-          <p>管理外部工具调用入口和访问 Token</p>
+          <div className="settings-card-header-copy">
+            <h3>MCP 配置</h3>
+            <p>管理外部工具调用入口和访问 Token。</p>
+          </div>
+          <span className={`settings-status-pill ${config.enabled ? 'enabled' : 'disabled'}`}>
+            {config.enabled ? '已启用' : '未启用'}
+          </span>
         </div>
         <div className="settings-card-body">
-          <div className="settings-form-grid">
-            <div className="settings-form-group">
-              <label className="settings-form-label">状态</label>
-              <input value={config.enabled ? '已启用' : '未启用'} readOnly className="settings-input-readonly" />
+          <div className="settings-readonly-grid">
+            <div className="settings-readonly-field">
+              <span>状态</span>
+              <strong>{config.enabled ? '已启用' : '未启用'}</strong>
             </div>
-            <div className="settings-form-group">
-              <label className="settings-form-label">Base Path</label>
-              <input value={config.basePath} readOnly className="settings-input-readonly" />
+            <div className="settings-readonly-field">
+              <span>Base Path</span>
+              <strong>{config.basePath || '未配置'}</strong>
             </div>
+          </div>
+
+          <div className="settings-form-grid settings-form-grid-dense">
             <div className="settings-form-group settings-form-group-full">
               <label className="settings-form-label">Token</label>
               <div className="settings-token-wrapper">

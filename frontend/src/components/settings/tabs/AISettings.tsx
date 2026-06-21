@@ -24,11 +24,14 @@ const AISettings: React.FC<AISettingsProps> = ({
     <div className="settings-tab-content">
       <section className="settings-card">
         <div className="settings-card-header">
-          <h3>聊天模型</h3>
-          <p>配置对话使用的 AI 模型参数</p>
+          <div className="settings-card-header-copy">
+            <h3>聊天模型</h3>
+            <p>配置对话生成、上下文窗口和思考模式模型。</p>
+          </div>
+          <span className="settings-status-pill neutral">{config.chat.provider}</span>
         </div>
         <div className="settings-card-body">
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid-dense">
             <div className="settings-form-group">
               <label className="settings-form-label">Provider</label>
               <select
@@ -67,7 +70,10 @@ const AISettings: React.FC<AISettingsProps> = ({
               />
             </div>
             <div className="settings-form-group settings-form-group-full">
-              <label className="settings-form-label">Temperature: {config.chat.temperature.toFixed(1)}</label>
+              <label className="settings-form-label settings-form-label-inline">
+                <span>Temperature</span>
+                <strong>{config.chat.temperature.toFixed(1)}</strong>
+              </label>
               <input
                 type="range"
                 min="0"
@@ -90,14 +96,16 @@ const AISettings: React.FC<AISettingsProps> = ({
               <small>限制每次发送给模型的最近消息条数，范围 1-100。</small>
             </div>
             <div className="settings-form-group settings-form-group-full">
-              <ModelConfigTest
-                type="chat"
-                provider={config.chat.provider}
-                baseUrl={config.chat.baseUrl}
-                modelName={config.chat.model}
-                apiKey={config.chat.apiKey}
-                temperature={config.chat.temperature}
-              />
+              <div className="settings-action-row">
+                <ModelConfigTest
+                  type="chat"
+                  provider={config.chat.provider}
+                  baseUrl={config.chat.baseUrl}
+                  modelName={config.chat.model}
+                  apiKey={config.chat.apiKey}
+                  temperature={config.chat.temperature}
+                />
+              </div>
             </div>
             <div className="settings-form-group settings-form-group-full">
               <label className="settings-form-label">思考模式模型</label>
@@ -115,11 +123,14 @@ const AISettings: React.FC<AISettingsProps> = ({
 
       <section className="settings-card">
         <div className="settings-card-header">
-          <h3>Embedding 模型</h3>
-          <p>配置文档索引和语义召回使用的向量模型</p>
+          <div className="settings-card-header-copy">
+            <h3>Embedding 模型</h3>
+            <p>配置文档索引和语义召回使用的向量模型。</p>
+          </div>
+          <span className="settings-status-pill neutral">{config.embedding.provider}</span>
         </div>
         <div className="settings-card-body">
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid-dense">
             <div className="settings-form-group">
               <label className="settings-form-label">Provider</label>
               <select
@@ -158,13 +169,15 @@ const AISettings: React.FC<AISettingsProps> = ({
               />
             </div>
             <div className="settings-form-group settings-form-group-full">
-              <ModelConfigTest
-                type="embedding"
-                provider={config.embedding.provider}
-                baseUrl={config.embedding.baseUrl}
-                modelName={config.embedding.model}
-                apiKey={config.embedding.apiKey}
-              />
+              <div className="settings-action-row">
+                <ModelConfigTest
+                  type="embedding"
+                  provider={config.embedding.provider}
+                  baseUrl={config.embedding.baseUrl}
+                  modelName={config.embedding.model}
+                  apiKey={config.embedding.apiKey}
+                />
+              </div>
             </div>
           </div>
         </div>

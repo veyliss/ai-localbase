@@ -15,10 +15,31 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   return (
     <>
       <div className="settings-tab-content">
+        <section className="settings-card">
+          <div className="settings-card-header">
+            <div className="settings-card-header-copy">
+              <h3>会话状态</h3>
+              <p>查看当前登录状态与会话操作入口。</p>
+            </div>
+            <span className="settings-status-pill enabled">已登录</span>
+          </div>
+          <div className="settings-card-body">
+            <div className="settings-system-state">
+              <div>
+                <span>当前状态</span>
+                <strong>已认证</strong>
+              </div>
+              <p>退出后会清理当前登录态，需要重新输入账户和密码。</p>
+            </div>
+          </div>
+        </section>
+
         <section className="settings-card settings-card-danger">
           <div className="settings-card-header">
-            <h3>会话管理</h3>
-            <p>安全相关操作，需谨慎执行</p>
+            <div className="settings-card-header-copy">
+              <h3>会话管理</h3>
+              <p>安全相关操作，需谨慎执行。</p>
+            </div>
           </div>
           <div className="settings-card-body">
             <div className="settings-danger-actions">

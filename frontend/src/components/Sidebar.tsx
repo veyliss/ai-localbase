@@ -28,7 +28,6 @@ import type {
 } from '../services/api'
 import KnowledgePanelWrapper from './knowledge/KnowledgePanelWrapper'
 import SettingsPanel from './settings/SettingsPanel'
-import CreateKnowledgeBaseDialog from './knowledge/CreateKnowledgeBaseDialog'
 
 interface SidebarProps {
   isOpen: boolean
@@ -178,32 +177,6 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [editingTitle, setEditingTitle] = useState('')
   const [isComposingTitle, setIsComposingTitle] = useState(false)
   const [conversationFilter, setConversationFilter] = useState('')
-
-  // 创建知识库弹窗状态
-  const [showCreateKbModal, setShowCreateKbModal] = useState(false)
-  const [newKbName, setNewKbName] = useState('')
-  const [newKbDescription, setNewKbDescription] = useState('')
-
-  const handleOpenCreateKb = () => {
-    setNewKbName('')
-    setNewKbDescription('')
-    setShowCreateKbModal(true)
-  }
-
-  const handleConfirmCreateKb = () => {
-    const trimmedName = newKbName.trim()
-    if (!trimmedName) return
-    onCreateKnowledgeBase(trimmedName, newKbDescription.trim())
-    setShowCreateKbModal(false)
-    setNewKbName('')
-    setNewKbDescription('')
-  }
-
-  const handleCancelCreateKb = () => {
-    setShowCreateKbModal(false)
-    setNewKbName('')
-    setNewKbDescription('')
-  }
 
   const sortedKnowledgeBases = useMemo(() => knowledgeBases, [knowledgeBases])
 
@@ -469,17 +442,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         onClose={onToggleKnowledgePanel}
       />
 
-      {/* 创建知识库弹窗 - 独立于侧边栏 */}
-      {showCreateKbModal && (
-        <CreateKnowledgeBaseDialog
-          name={newKbName}
-          description={newKbDescription}
-          onNameChange={setNewKbName}
-          onDescriptionChange={setNewKbDescription}
-          onCancel={handleCancelCreateKb}
-          onConfirm={handleConfirmCreateKb}
-        />
-      )}
     </>
   )
 }

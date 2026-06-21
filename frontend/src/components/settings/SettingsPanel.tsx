@@ -35,11 +35,11 @@ interface SettingsNavItem {
 }
 
 const navItems: SettingsNavItem[] = [
-  { id: 'general', label: '通用设置', description: '应用状态与基础信息', icon: '⚙️' },
-  { id: 'ai', label: 'AI 配置', description: '模型、接口与推理参数', icon: '🤖' },
-  { id: 'retrieval', label: '检索策略', description: '召回、重排与上下文规模', icon: '🔍' },
-  { id: 'mcp', label: 'MCP 设置', description: '工具调用与访问令牌', icon: '🔗' },
-  { id: 'system', label: '系统设置', description: '会话与安全操作', icon: '🛡️' },
+  { id: 'general', label: '通用设置', description: '应用状态与基础信息', icon: '总' },
+  { id: 'ai', label: 'AI 配置', description: '模型、接口与推理参数', icon: 'AI' },
+  { id: 'retrieval', label: '检索策略', description: '召回、重排与上下文规模', icon: '检' },
+  { id: 'mcp', label: 'MCP 设置', description: '工具调用与访问令牌', icon: 'M' },
+  { id: 'system', label: '系统设置', description: '会话与安全操作', icon: '系' },
 ]
 
 const getTabButtonId = (tabId: SettingsTab) => `settings-tab-${tabId}`
@@ -219,10 +219,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <main className="settings-main">
           <header className="settings-main-header">
             <div>
-              <p className="settings-main-eyebrow">当前分类</p>
               <h3>{activeNavItem.label}</h3>
+              <p>{activeNavItem.description}</p>
             </div>
-            <p>{activeNavItem.description}</p>
           </header>
 
           <div className="settings-summary-bar" aria-label="当前配置摘要">
@@ -237,6 +236,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <div className="settings-summary-item">
               <span>检索模式</span>
               <strong>{config.retrieval.defaultSearchMode === 'hybrid' ? '混合' : '向量'}</strong>
+            </div>
+            <div className="settings-summary-item">
+              <span>MCP</span>
+              <strong>{config.mcp.enabled ? '已启用' : '未启用'}</strong>
             </div>
           </div>
 

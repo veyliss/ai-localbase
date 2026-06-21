@@ -134,13 +134,11 @@ plans/
 # data
 data/*
 
-# 测试文件可能包含本地知识库数据，不上传
-*test*
-*Test*
-*TEST*
-
-# 前端源码单元测试需要进入仓库，供 CI 质量门禁执行
-!frontend/src/**/*.test.ts
-!frontend/src/**/*.test.tsx
-!frontend/src/**/*.spec.ts
-!frontend/src/**/*.spec.tsx
+# Test artifacts and local test data
+coverage/
+coverage.*
+*.lcov
+junit*.xml
+test-results/
+playwright-report/
+test-*.sh

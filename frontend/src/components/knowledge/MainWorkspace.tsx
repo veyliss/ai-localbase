@@ -149,24 +149,6 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
         />
       </div>
 
-      <EvalDatasetHistoryPanel
-        datasets={evalContext.evalDatasetSummaries}
-        loading={evalContext.evalDatasetHistoryLoading}
-        error={evalContext.evalDatasetHistoryError}
-        openingDatasetId={evalContext.openingEvalDatasetId}
-        deletingDatasetId={evalContext.deletingEvalDatasetId}
-        onRefresh={onLoadEvalDatasets}
-        onOpen={onOpenSavedEvalDataset}
-        onDelete={onDeleteSavedEvalDataset}
-      />
-
-      <EvalRunTrendPanel
-        runs={evalContext.evalRunSummaries}
-        loading={evalContext.evalRunHistoryLoading}
-        error={evalContext.evalRunHistoryError}
-        onRefresh={onLoadEvalRuns}
-      />
-
       <DocumentList
         documents={knowledgeBase.documents}
         healthDocuments={activeHealth?.documents}
@@ -178,6 +160,26 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
         onReindexDocument={onReindexDocument}
         onRemoveDocument={onRemoveDocument}
       />
+
+      <div className="kb-eval-grid">
+        <EvalDatasetHistoryPanel
+          datasets={evalContext.evalDatasetSummaries}
+          loading={evalContext.evalDatasetHistoryLoading}
+          error={evalContext.evalDatasetHistoryError}
+          openingDatasetId={evalContext.openingEvalDatasetId}
+          deletingDatasetId={evalContext.deletingEvalDatasetId}
+          onRefresh={onLoadEvalDatasets}
+          onOpen={onOpenSavedEvalDataset}
+          onDelete={onDeleteSavedEvalDataset}
+        />
+
+        <EvalRunTrendPanel
+          runs={evalContext.evalRunSummaries}
+          loading={evalContext.evalRunHistoryLoading}
+          error={evalContext.evalRunHistoryError}
+          onRefresh={onLoadEvalRuns}
+        />
+      </div>
     </>
   )
 }

@@ -74,7 +74,7 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
         </div>
       </div>
       <div className="kb-workspace-actions">
-        <label className="kb-upload-btn" title="上传文档">
+        <label className="kb-upload-btn kb-upload-btn--primary" title="上传文档">
           <span>+</span> 上传文件
           <input
             type="file"
@@ -99,7 +99,7 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
           onClick={onGenerateEvalDataset}
           disabled={knowledgeBase.documents.length === 0 || generatingEvalDataset}
         >
-          {generatingEvalDataset ? '生成中' : '评估集'}
+          {generatingEvalDataset ? '生成中' : '生成评估集'}
         </button>
       </div>
     </section>

@@ -116,7 +116,8 @@ const DocumentList: React.FC<DocumentListProps> = ({
         </div>
       </div>
 
-      <div className="kb-scope-bar">
+      <div className="kb-scope-bar" aria-label="检索范围">
+        <span className="kb-scope-label">范围</span>
         <button
           className={`kb-scope-btn${selectedDocumentId === null ? ' kb-scope-btn--active' : ''}`}
           onClick={() => onSelectDocument(null)}

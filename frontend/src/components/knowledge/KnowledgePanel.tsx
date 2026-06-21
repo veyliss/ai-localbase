@@ -381,19 +381,6 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
               </div>
             </header>
 
-        {/* Breadcrumb */}
-        <div className="kb-breadcrumb">
-          <span className="kb-breadcrumb-item">{selectedKnowledgeBase?.name ?? '选择知识库'}</span>
-          {selectedDocumentId && (
-            <>
-              <span className="kb-breadcrumb-sep">/</span>
-              <span className="kb-breadcrumb-item kb-breadcrumb-current">
-                {selectedKnowledgeBase?.documents.find((d) => d.id === selectedDocumentId)?.name ?? '文档'}
-              </span>
-            </>
-          )}
-        </div>
-
           {knowledgeBases.length === 0 ? (
             <div className="kb-empty">
               <p className="kb-empty-title">暂无知识库</p>

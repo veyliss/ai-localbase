@@ -157,6 +157,7 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 				KnowledgeBases: loadedState.KnowledgeBases,
 				EvalDatasets:   loadedState.EvalDatasets,
 				EvalRuns:       loadedState.EvalRuns,
+				Auth:           loadedState.Auth,
 			}
 			if service.state.KnowledgeBases == nil {
 				service.state.KnowledgeBases = map[string]model.KnowledgeBase{}
@@ -167,12 +168,24 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 			if service.state.EvalRuns == nil {
 				service.state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
 			}
+			ensureAuthState(&service.state.Auth)
 		}
 	}
 
 	if len(service.state.KnowledgeBases) == 0 {
-		service.state = defaultAppState(serverConfig)
+		defaultState := defaultAppState(serverConfig)
+		service.state.KnowledgeBases = defaultState.KnowledgeBases
+		if service.state.Config.Chat.Provider == "" {
+			service.state.Config = defaultState.Config
+		}
+		if service.state.EvalDatasets == nil {
+			service.state.EvalDatasets = map[string]model.EvalDataset{}
+		}
+		if service.state.EvalRuns == nil {
+			service.state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
+		}
 	}
+	ensureAuthState(&service.state.Auth)
 	service.state.Config.MCP.Enabled = serverConfig.EnableMCP
 	service.state.Config.MCP.BasePath = defaultMCPBasePath(service.state.Config.MCP.BasePath)
 	if strings.TrimSpace(service.state.Config.MCP.Token) == "" {
@@ -203,6 +216,7 @@ func (s *AppService) saveState() error {
 		KnowledgeBases: cloneKnowledgeBases(s.state.KnowledgeBases),
 		EvalDatasets:   cloneEvalDatasets(s.state.EvalDatasets),
 		EvalRuns:       cloneEvalRuns(s.state.EvalRuns),
+		Auth:           cloneAuthState(s.state.Auth),
 	}
 	s.state.Mu.RUnlock()
 
@@ -247,6 +261,55 @@ func cloneEvalRuns(source map[string]model.RunEvalDatasetResponse) map[string]mo
 	for id, run := range source {
 		run.Cases = cloneEvalRunCaseResults(run.Cases)
 		cloned[id] = run
+	}
+	return cloned
+}
+
+func ensureAuthState(state *model.AuthState) {
+	if state == nil {
+		return
+	}
+	if state.Users == nil {
+		state.Users = map[string]model.AuthUser{}
+	}
+	if state.Sessions == nil {
+		state.Sessions = map[string]model.AuthSession{}
+	}
+	if state.APIKeys == nil {
+		state.APIKeys = map[string]model.APIKey{}
+	}
+	if state.AppliedPasswordResetTokens == nil {
+		state.AppliedPasswordResetTokens = []string{}
+	}
+	if state.SecurityEvents == nil {
+		state.SecurityEvents = []model.SecurityEvent{}
+	}
+}
+
+func hasAuthUser(state model.AuthState) bool {
+	return len(state.Users) > 0
+}
+
+func cloneAuthState(source model.AuthState) model.AuthState {
+	cloned := model.AuthState{
+		Users:    make(map[string]model.AuthUser, len(source.Users)),
+		Sessions: make(map[string]model.AuthSession, len(source.Sessions)),
+		APIKeys:  make(map[string]model.APIKey, len(source.APIKeys)),
+		AppliedPasswordResetTokens: append(
+			[]string(nil),
+			source.AppliedPasswordResetTokens...,
+		),
+		SecurityEvents: append([]model.SecurityEvent(nil), source.SecurityEvents...),
+	}
+	for id, user := range source.Users {
+		cloned.Users[id] = user
+	}
+	for id, session := range source.Sessions {
+		cloned.Sessions[id] = session
+	}
+	for id, apiKey := range source.APIKeys {
+		apiKey.Scopes = append([]string(nil), apiKey.Scopes...)
+		cloned.APIKeys[id] = apiKey
 	}
 	return cloned
 }
@@ -304,12 +367,19 @@ func defaultAppState(serverConfig model.ServerConfig) *model.AppState {
 		},
 		EvalDatasets: map[string]model.EvalDataset{},
 		EvalRuns:     map[string]model.RunEvalDatasetResponse{},
+		Auth: model.AuthState{
+			Users:          map[string]model.AuthUser{},
+			Sessions:       map[string]model.AuthSession{},
+			APIKeys:        map[string]model.APIKey{},
+			SecurityEvents: []model.SecurityEvent{},
+		},
 	}
 }
 
 func (s *AppService) GetHealthConfigMap(serverConfig model.ServerConfig) map[string]string {
 	s.state.Mu.RLock()
 	kbCount := len(s.state.KnowledgeBases)
+	setupRequired := serverConfig.EnableAuth && !hasAuthUser(s.state.Auth)
 	s.state.Mu.RUnlock()
 
 	qdrantStatus := "disabled"
@@ -318,9 +388,10 @@ func (s *AppService) GetHealthConfigMap(serverConfig model.ServerConfig) map[str
 	}
 
 	return map[string]string{
-		"auth_enabled":    fmt.Sprintf("%t", serverConfig.EnableAuth),
-		"knowledge_bases": fmt.Sprintf("%d", kbCount),
-		"qdrant_status":   qdrantStatus,
+		"auth_enabled":        fmt.Sprintf("%t", serverConfig.EnableAuth),
+		"auth_setup_required": fmt.Sprintf("%t", setupRequired),
+		"knowledge_bases":     fmt.Sprintf("%d", kbCount),
+		"qdrant_status":       qdrantStatus,
 	}
 }
 

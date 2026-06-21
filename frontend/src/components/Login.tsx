@@ -3,18 +3,39 @@ import { useAuth } from '../contexts/AuthContext'
 import '../styles/Login.css'
 
 const Login: React.FC = () => {
+  const {
+    login,
+    setup,
+    authError,
+    authReady,
+    setupRequired,
+    setupTokenRequired,
+    username: configuredUsername,
+  } = useAuth()
+  const [username, setUsername] = useState(configuredUsername || 'root')
   const [password, setPassword] = useState('')
-  const { login, authError } = useAuth()
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [setupToken, setSetupToken] = useState('')
+  const [localError, setLocalError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isFocused, setIsFocused] = useState(false)
+  const [focusedField, setFocusedField] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
-    passwordRef.current?.focus()
-  }, [])
+    setUsername(configuredUsername || 'root')
+  }, [configuredUsername])
 
-  // 粒子背景动画
+  useEffect(() => {
+    if (setupRequired) {
+      usernameRef.current?.focus()
+      return
+    }
+    passwordRef.current?.focus()
+  }, [setupRequired])
+
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -23,8 +44,8 @@ const Login: React.FC = () => {
     if (!ctx) return
 
     let animationFrameId: number
-    let particles: Particle[] = []
-    let mouse: { x: number; y: number } = { x: -1000, y: -1000 }
+    const particles: Particle[] = []
+    const mouse: { x: number; y: number } = { x: -1000, y: -1000 }
 
     const resize = () => {
       canvas.width = window.innerWidth
@@ -66,47 +87,42 @@ const Login: React.FC = () => {
         this.x += this.vx
         this.y += this.vy
 
-        // 鼠标交互
         const dx = mouse.x - this.x
         const dy = mouse.y - this.y
         const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 150) {
+        if (dist > 0 && dist < 150) {
           const force = (150 - dist) / 150
           this.vx -= (dx / dist) * force * 0.02
           this.vy -= (dy / dist) * force * 0.02
         }
 
-        // 速度衰减
         this.vx *= 0.99
         this.vy *= 0.99
 
-        // 边界环绕
         if (this.x < 0) this.x = this.canvasWidth
         if (this.x > this.canvasWidth) this.x = 0
         if (this.y < 0) this.y = this.canvasHeight
         if (this.y > this.canvasHeight) this.y = 0
 
-        // 动态大小
         this.size = this.baseSize + Math.sin(Date.now() * 0.001 + this.x) * 0.5
       }
 
-      draw(ctx: CanvasRenderingContext2D) {
-        ctx.beginPath()
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(37, 99, 235, ${this.opacity})`
-        ctx.fill()
+      draw(nextCtx: CanvasRenderingContext2D) {
+        nextCtx.beginPath()
+        nextCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2)
+        nextCtx.fillStyle = `rgba(37, 99, 235, ${this.opacity})`
+        nextCtx.fill()
       }
     }
 
-    // 初始化粒子
     const particleCount = Math.min(Math.floor((canvas.width * canvas.height) / 15000), 100)
-    for (let i = 0; i < particleCount; i++) {
+    for (let i = 0; i < particleCount; i += 1) {
       particles.push(new Particle(canvas.width, canvas.height))
     }
 
     const drawConnections = () => {
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
+      for (let i = 0; i < particles.length; i += 1) {
+        for (let j = i + 1; j < particles.length; j += 1) {
           const dx = particles[i].x - particles[j].x
           const dy = particles[i].y - particles[j].y
           const dist = Math.sqrt(dx * dx + dy * dy)
@@ -126,12 +142,12 @@ const Login: React.FC = () => {
 
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-      
-      particles.forEach(p => {
-        p.update()
-        p.draw(ctx)
+
+      particles.forEach((particle) => {
+        particle.update()
+        particle.draw(ctx)
       })
-      
+
       drawConnections()
       animationFrameId = requestAnimationFrame(animate)
     }
@@ -147,122 +163,209 @@ const Login: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLocalError('')
+
+    if (setupRequired) {
+      if (password.length < 8) {
+        setLocalError('密码至少需要 8 个字符')
+        return
+      }
+      if (password !== confirmPassword) {
+        setLocalError('两次输入的密码不一致')
+        return
+      }
+      if (setupTokenRequired && !setupToken.trim()) {
+        setLocalError('请输入初始化 Token')
+        return
+      }
+    }
+
     setIsLoading(true)
     try {
-      await login(password)
+      if (setupRequired) {
+        await setup({ username: username.trim() || 'root', password, setupToken: setupToken.trim() || undefined })
+      } else {
+        await login(username.trim() || 'root', password)
+      }
     } catch {
-      // Error handled by context
+      // Error handled by context.
     } finally {
       setIsLoading(false)
     }
   }
 
+  const displayError = localError || authError
+  const submitDisabled = isLoading || !authReady || !password || !username.trim()
+    || (setupRequired && (!confirmPassword || (setupTokenRequired && !setupToken.trim())))
+
   return (
     <div className="login-page">
-      <canvas 
-        ref={canvasRef} 
+      <canvas
+        ref={canvasRef}
         className="login-canvas"
         aria-hidden="true"
       />
-      
+
       <div className="login-overlay"></div>
 
       <div className="login-content">
         <div className="login-card">
-          {/* Logo Section */}
           <div className="login-header">
             <div className="login-logo-wrapper">
               <div className="login-logo-icon">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
             </div>
+            <span className={`login-mode-pill ${setupRequired ? 'setup' : ''}`}>
+              {setupRequired ? '首次初始化' : 'Root 登录'}
+            </span>
             <h1 className="login-title">AI LocalBase</h1>
-            <p className="login-description">本地知识库智能管理系统</p>
+            <p className="login-description">
+              {setupRequired ? '创建本机 root 管理账户' : '使用 root 账户进入本地知识库'}
+            </p>
           </div>
 
-          {/* Form Section */}
           <form onSubmit={handleSubmit} className="login-form">
-            <div className={`input-wrapper ${isFocused ? 'focused' : ''}`}>
-              <svg className="input-icon" viewBox="0 0 24 24" fill="none">
+            <div className={`input-wrapper ${focusedField === 'username' ? 'focused' : ''}`}>
+              <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M20 21a8 8 0 0 0-16 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.5"/>
+              </svg>
+              <input
+                ref={usernameRef}
+                type="text"
+                placeholder="root"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                onFocus={() => setFocusedField('username')}
+                onBlur={() => setFocusedField('')}
+                disabled={isLoading || !authReady}
+                className="login-input username-field"
+                aria-label="用户名"
+                autoComplete="username"
+                required
+              />
+            </div>
+
+            <div className={`input-wrapper ${focusedField === 'password' ? 'focused' : ''}`}>
+              <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="1.5"/>
                 <path d="M7 11V7C7 4.23858 9.23858 2 12 2C14.7614 2 17 4.23858 17 7V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
               <input
                 ref={passwordRef}
-                type="password"
-                placeholder="请输入访问密码"
+                type={showPassword ? 'text' : 'password'}
+                placeholder={setupRequired ? '设置 root 密码' : '输入访问密码'}
                 value={password}
-                onChange={e => setPassword(e.target.value)}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => setIsFocused(false)}
-                disabled={isLoading}
+                onChange={(event) => setPassword(event.target.value)}
+                onFocus={() => setFocusedField('password')}
+                onBlur={() => setFocusedField('')}
+                disabled={isLoading || !authReady}
                 className="login-input password-field"
-                aria-label="访问密码"
+                aria-label="密码"
+                autoComplete={setupRequired ? 'new-password' : 'current-password'}
                 required
               />
               <button
                 type="button"
                 className="password-toggle"
-                onClick={() => {
-                  const input = passwordRef.current
-                  if (input) {
-                    input.type = input.type === 'password' ? 'text' : 'password'
-                  }
-                }}
+                onClick={() => setShowPassword((visible) => !visible)}
                 disabled={isLoading}
-                aria-label="切换密码可见性"
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
               >
-                <svg className="eye-icon eye-off" viewBox="0 0 24 24" fill="none">
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C7.78 20 3.4 17.12 1 12C3.4 6.88 7.78 4 12 4C13.42 4 14.8 4.3 16.04 4.84" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <path d="M9.29 6.29A3.01 3.01 0 0 1 12 4C16.22 4 20.6 6.88 23 12C21.4 15.38 19.08 17.7 16.5 18.94" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <path d="M1 1L23 23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <path d="M6.5 6.5C8.15 8.15 9.6 9.6 12 12C14.2 14.2 15.65 15.65 17.5 17.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                </svg>
-                <svg className="eye-icon eye-on" viewBox="0 0 24 24" fill="none">
-                  <path d="M1 12C1 12 5 4 12 4C19 4 23 12 23 12C23 12 19 20 12 20C5 20 1 12 1 12Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
-                </svg>
+                {showPassword ? (
+                  <svg className="eye-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M1 12C1 12 5 4 12 4C19 4 23 12 23 12C23 12 19 20 12 20C5 20 1 12 1 12Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
+                  </svg>
+                ) : (
+                  <svg className="eye-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C7.78 20 3.4 17.12 1 12C3.4 6.88 7.78 4 12 4C13.42 4 14.8 4.3 16.04 4.84" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    <path d="M1 1L23 23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                )}
               </button>
             </div>
 
-            {authError && (
+            {setupRequired && (
+              <>
+                <div className={`input-wrapper ${focusedField === 'confirm' ? 'focused' : ''}`}>
+                  <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="确认 root 密码"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    onFocus={() => setFocusedField('confirm')}
+                    onBlur={() => setFocusedField('')}
+                    disabled={isLoading || !authReady}
+                    className="login-input"
+                    aria-label="确认密码"
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+
+                {setupTokenRequired && (
+                  <div className={`input-wrapper ${focusedField === 'setupToken' ? 'focused' : ''}`}>
+                    <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M15 7h.01M11 11h.01M7 15h.01M9.4 21H5a2 2 0 0 1-2-2v-4.4a2 2 0 0 1 .59-1.42L13.17 3.6a2 2 0 0 1 2.82 0l4.41 4.41a2 2 0 0 1 0 2.82l-9.58 9.58A2 2 0 0 1 9.4 21Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                    </svg>
+                    <input
+                      type="password"
+                      placeholder="初始化 Token"
+                      value={setupToken}
+                      onChange={(event) => setSetupToken(event.target.value)}
+                      onFocus={() => setFocusedField('setupToken')}
+                      onBlur={() => setFocusedField('')}
+                      disabled={isLoading || !authReady}
+                      className="login-input"
+                      aria-label="初始化 Token"
+                      required
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {displayError && (
               <div className="login-error" role="alert">
-                <svg viewBox="0 0 24 24" fill="none">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/>
                   <path d="M12 8V12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                   <circle cx="12" cy="16" r="0.5" fill="currentColor"/>
                 </svg>
-                <span>{authError}</span>
+                <span>{displayError}</span>
               </div>
             )}
 
-            <button 
-              type="submit" 
-              className="login-submit-btn" 
-              disabled={isLoading || !password}
+            <button
+              type="submit"
+              className="login-submit-btn"
+              disabled={submitDisabled}
             >
               {isLoading ? (
                 <>
                   <span className="submit-spinner"></span>
-                  <span>验证中...</span>
+                  <span>{setupRequired ? '初始化中...' : '验证中...'}</span>
                 </>
               ) : (
-                '安全登录'
+                setupRequired ? '创建 root 账户' : '安全登录'
               )}
             </button>
           </form>
 
-          {/* Footer */}
           <div className="login-footer">
-            <p>本地部署 · 安全可控 · 数据隐私</p>
+            <p>{setupRequired ? '首次创建后，后续登录将使用 root 密码' : '本地部署 · 会话可吊销 · API Key 独立管理'}</p>
           </div>
         </div>
 
-        {/* Version Badge */}
         <div className="login-version">
           v1.3.0
         </div>

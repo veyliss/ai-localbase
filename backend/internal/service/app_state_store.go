@@ -14,6 +14,7 @@ type persistentAppState struct {
 	KnowledgeBases map[string]model.KnowledgeBase          `json:"knowledgeBases"`
 	EvalDatasets   map[string]model.EvalDataset            `json:"evalDatasets,omitempty"`
 	EvalRuns       map[string]model.RunEvalDatasetResponse `json:"evalRuns,omitempty"`
+	Auth           model.AuthState                         `json:"auth,omitempty"`
 }
 
 type AppStateStore struct {
@@ -57,6 +58,18 @@ func (s *AppStateStore) Load() (*persistentAppState, error) {
 	if state.EvalRuns == nil {
 		state.EvalRuns = map[string]model.RunEvalDatasetResponse{}
 	}
+	if state.Auth.Users == nil {
+		state.Auth.Users = map[string]model.AuthUser{}
+	}
+	if state.Auth.Sessions == nil {
+		state.Auth.Sessions = map[string]model.AuthSession{}
+	}
+	if state.Auth.APIKeys == nil {
+		state.Auth.APIKeys = map[string]model.APIKey{}
+	}
+	if state.Auth.AppliedPasswordResetTokens == nil {
+		state.Auth.AppliedPasswordResetTokens = []string{}
+	}
 	return &state, nil
 }
 
@@ -74,7 +87,7 @@ func (s *AppStateStore) Save(state persistentAppState) error {
 	}
 
 	tempFile := s.path + ".tmp"
-	if err := os.WriteFile(tempFile, content, 0o644); err != nil {
+	if err := os.WriteFile(tempFile, content, 0o600); err != nil {
 		return fmt.Errorf("write app state temp file: %w", err)
 	}
 	if err := os.Rename(tempFile, s.path); err != nil {

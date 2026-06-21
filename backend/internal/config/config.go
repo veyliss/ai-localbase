@@ -41,6 +41,9 @@ func LoadServerConfig() model.ServerConfig {
 		EnableAuth:                     getEnvAsBool("ENABLE_AUTH", false),
 		AuthUsername:                   getEnv("AUTH_USERNAME", "root"),
 		AuthPassword:                   getEnv("AUTH_PASSWORD", ""),
+		AuthSetupToken:                 getEnv("AUTH_SETUP_TOKEN", ""),
+		AuthResetToken:                 getEnv("AUTH_RESET_TOKEN", ""),
+		AuthResetPassword:              getEnv("AUTH_RESET_PASSWORD", ""),
 		JWTSecret:                      getEnv("JWT_SECRET", ""),
 	}
 }

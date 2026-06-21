@@ -2,12 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
 
-	"ai-localbase/internal/auth"
 	"ai-localbase/internal/config"
 	"ai-localbase/internal/handler"
 	"ai-localbase/internal/mcp"
@@ -21,11 +20,6 @@ func main() {
 
 	if err := validateAuthConfig(serverConfig); err != nil {
 		log.Fatal(err)
-	}
-
-	if serverConfig.EnableAuth {
-		auth.InitJWTSecret(serverConfig.JWTSecret, serverConfig.AuthUsername)
-		log.Printf("Authentication enabled, username: %s", serverConfig.AuthUsername)
 	}
 
 	if err := os.MkdirAll(serverConfig.UploadDir, 0o755); err != nil {
@@ -53,14 +47,26 @@ func main() {
 	}()
 
 	appService := service.NewAppService(qdrantService, stateStore, chatHistoryStore, serverConfig)
+	authService, err := service.NewAuthService(appService, serverConfig)
+	if err != nil {
+		log.Fatalf("failed to initialize auth service: %v", err)
+	}
+	if serverConfig.EnableAuth {
+		bootstrap := authService.Bootstrap()
+		if bootstrap.SetupRequired {
+			log.Printf("Authentication enabled, setup required for username: %s", bootstrap.Username)
+		} else {
+			log.Printf("Authentication enabled, username: %s", bootstrap.Username)
+		}
+	}
 	llmService := service.NewLLMService()
 	mcpRegistry := mcp.DefaultRegistry(appService)
 	toolPlanner := mcp.NewToolUsePlanner(mcpRegistry)
 	appHandler := handler.NewAppHandler(serverConfig, appService, llmService, toolPlanner)
 	configHandler := handler.NewConfigHandler(appService, qdrantService)
-	authHandler := handler.NewAuthHandler(serverConfig.AuthUsername, serverConfig.AuthPassword, serverConfig.EnableAuth)
+	authHandler := handler.NewAuthHandler(authService, serverConfig.EnableAuth)
 	mcpServer := mcp.NewServer(mcpRegistry, appService, serverConfig)
-	r := router.NewRouter(appHandler, configHandler, authHandler, serverConfig, mcpServer, frontendFS())
+	r := router.NewRouter(appHandler, configHandler, authHandler, authService, serverConfig, mcpServer, frontendFS())
 
 	log.Printf("backend server listening on :%s", serverConfig.Port)
 	if err := r.Run(":" + serverConfig.Port); err != nil {
@@ -72,15 +78,10 @@ func validateAuthConfig(serverConfig model.ServerConfig) error {
 	if !serverConfig.EnableAuth {
 		return nil
 	}
-	if serverConfig.AuthPassword == "" {
-		return errors.New("AUTH_PASSWORD must be set when ENABLE_AUTH=true")
-	}
-	jwtSecret := strings.TrimSpace(serverConfig.JWTSecret)
-	if jwtSecret == "" {
-		return errors.New("JWT_SECRET must be set when ENABLE_AUTH=true")
-	}
-	if len(jwtSecret) < 32 {
-		return errors.New("JWT_SECRET must be at least 32 characters when ENABLE_AUTH=true")
+	hasResetToken := strings.TrimSpace(serverConfig.AuthResetToken) != ""
+	hasResetPassword := strings.TrimSpace(serverConfig.AuthResetPassword) != ""
+	if hasResetToken != hasResetPassword {
+		return fmt.Errorf("AUTH_RESET_TOKEN and AUTH_RESET_PASSWORD must be set together")
 	}
 	return nil
 }

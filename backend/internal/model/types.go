@@ -34,6 +34,9 @@ type ServerConfig struct {
 	EnableAuth                     bool
 	AuthUsername                   string
 	AuthPassword                   string
+	AuthSetupToken                 string
+	AuthResetToken                 string
+	AuthResetPassword              string
 	JWTSecret                      string
 }
 
@@ -43,6 +46,58 @@ type AppState struct {
 	KnowledgeBases map[string]KnowledgeBase
 	EvalDatasets   map[string]EvalDataset
 	EvalRuns       map[string]RunEvalDatasetResponse
+	Auth           AuthState
+}
+
+type AuthState struct {
+	Users                      map[string]AuthUser    `json:"users,omitempty"`
+	Sessions                   map[string]AuthSession `json:"sessions,omitempty"`
+	APIKeys                    map[string]APIKey      `json:"apiKeys,omitempty"`
+	AppliedPasswordResetTokens []string               `json:"appliedPasswordResetTokens,omitempty"`
+	SecurityEvents             []SecurityEvent        `json:"securityEvents,omitempty"`
+}
+
+type AuthUser struct {
+	ID                string `json:"id"`
+	Username          string `json:"username"`
+	PasswordHash      string `json:"passwordHash"`
+	Role              string `json:"role"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
+	PasswordChangedAt string `json:"passwordChangedAt"`
+}
+
+type AuthSession struct {
+	ID         string `json:"id"`
+	UserID     string `json:"userId"`
+	TokenHash  string `json:"tokenHash"`
+	CreatedAt  string `json:"createdAt"`
+	ExpiresAt  string `json:"expiresAt"`
+	LastSeenAt string `json:"lastSeenAt"`
+	RevokedAt  string `json:"revokedAt,omitempty"`
+	UserAgent  string `json:"userAgent,omitempty"`
+	IP         string `json:"ip,omitempty"`
+}
+
+type APIKey struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Prefix     string   `json:"prefix"`
+	KeyHash    string   `json:"keyHash"`
+	Scopes     []string `json:"scopes"`
+	CreatedAt  string   `json:"createdAt"`
+	LastUsedAt string   `json:"lastUsedAt,omitempty"`
+	RevokedAt  string   `json:"revokedAt,omitempty"`
+}
+
+type SecurityEvent struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Username  string `json:"username,omitempty"`
+	IP        string `json:"ip,omitempty"`
+	UserAgent string `json:"userAgent,omitempty"`
+	CreatedAt string `json:"createdAt"`
+	Message   string `json:"message,omitempty"`
 }
 
 type HealthResponse struct {
@@ -597,12 +652,12 @@ type RetrievalDebugVerboseDetails struct {
 }
 
 type MMREffectAnalysis struct {
-	RemovedDuplicates int                       `json:"removedDuplicates"`
-	ReorderedItems    int                       `json:"reorderedItems"`
-	DiversityScore    float64                   `json:"diversityScore"`
-	BeforeMMR         []RetrievalDebugChunk     `json:"beforeMMR,omitempty"`
-	AfterMMR          []RetrievalDebugChunk     `json:"afterMMR,omitempty"`
-	RankingChanges    []RankingChange           `json:"rankingChanges,omitempty"`
+	RemovedDuplicates int                   `json:"removedDuplicates"`
+	ReorderedItems    int                   `json:"reorderedItems"`
+	DiversityScore    float64               `json:"diversityScore"`
+	BeforeMMR         []RetrievalDebugChunk `json:"beforeMMR,omitempty"`
+	AfterMMR          []RetrievalDebugChunk `json:"afterMMR,omitempty"`
+	RankingChanges    []RankingChange       `json:"rankingChanges,omitempty"`
 }
 
 type RankingChange struct {
@@ -615,9 +670,9 @@ type RankingChange struct {
 }
 
 type QueryRewriteDebugDetails struct {
-	OriginalQuery     string   `json:"originalQuery"`
-	RewrittenQueries  []string `json:"rewrittenQueries"`
-	RewriteMs         int64    `json:"rewriteMs"`
-	TotalQueries      int      `json:"totalQueries"`
-	HitsPerQuery      []int    `json:"hitsPerQuery,omitempty"`
+	OriginalQuery    string   `json:"originalQuery"`
+	RewrittenQueries []string `json:"rewrittenQueries"`
+	RewriteMs        int64    `json:"rewriteMs"`
+	TotalQueries     int      `json:"totalQueries"`
+	HitsPerQuery     []int    `json:"hitsPerQuery,omitempty"`
 }

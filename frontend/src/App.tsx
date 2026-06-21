@@ -448,7 +448,7 @@ const sleep = (delayMs: number) =>
   })
 
 function AppContent() {
-  const { isAuthenticated, logout, token } = useAuth()
+  const { isAuthenticated, logout } = useAuth()
   const [authCheckDone, setAuthCheckDone] = useState(false)
   const [authRequired, setAuthRequired] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -1762,6 +1762,7 @@ function AppContent() {
       const fallbackResponse = await withTimeout(
         fetch(`${API_BASE_PATH}/v1/chat/completions`, {
           method: 'POST',
+          credentials: 'same-origin',
           headers: {
             'Content-Type': 'application/json',
           },
@@ -1803,6 +1804,7 @@ function AppContent() {
       try {
         streamResponse = await fetch(`${API_BASE_PATH}/v1/chat/completions/stream`, {
           method: 'POST',
+          credentials: 'same-origin',
           headers: {
             'Content-Type': 'application/json',
             Accept: 'text/event-stream',
@@ -2098,18 +2100,16 @@ function AppContent() {
         }
 
         setAuthRequired(true)
-        if (!isAuthenticated || !token) {
+        if (!isAuthenticated) {
           return
         }
 
         const response = await fetch(`${API_BASE_PATH}/api/auth/status`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          credentials: 'same-origin',
         })
         if (response.status === 401) {
           setAuthRequired(true)
-          logout()
+          void logout()
           return
         }
         if (!response.ok) {
@@ -2117,15 +2117,13 @@ function AppContent() {
         }
       } catch {
         try {
-          const headers = new Headers()
-          if (token) {
-            headers.set('Authorization', `Bearer ${token}`)
-          }
-          const response = await fetch(`${API_BASE_PATH}/api/knowledge-bases`, { headers })
+          const response = await fetch(`${API_BASE_PATH}/api/knowledge-bases`, {
+            credentials: 'same-origin',
+          })
           if (response.status === 401) {
             setAuthRequired(true)
             if (isAuthenticated) {
-              logout()
+              void logout()
             }
             return
           }
@@ -2138,7 +2136,7 @@ function AppContent() {
       }
     }
     checkAuth()
-  }, [isAuthenticated, logout, token])
+  }, [isAuthenticated, logout])
 
   if (!authCheckDone) {
     return null // Or a loading spinner

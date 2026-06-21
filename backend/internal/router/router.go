@@ -12,12 +12,13 @@ import (
 	"ai-localbase/internal/handler"
 	"ai-localbase/internal/mcp"
 	"ai-localbase/internal/model"
+	"ai-localbase/internal/service"
 	"ai-localbase/internal/util"
 
 	"github.com/gin-gonic/gin"
 )
 
-func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHandler, authHandler *handler.AuthHandler, serverConfig model.ServerConfig, mcpServer *mcp.Server, frontendFS fs.FS) *gin.Engine {
+func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHandler, authHandler *handler.AuthHandler, authService *service.AuthService, serverConfig model.ServerConfig, mcpServer *mcp.Server, frontendFS fs.FS) *gin.Engine {
 	r := gin.New()
 	r.Use(requestIDMiddleware(), accessLogMiddleware(), gin.Recovery(), corsMiddleware(serverConfig.EnableAuth))
 
@@ -26,16 +27,26 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 	// Auth endpoints (always available for consistency)
 	authGroup := r.Group("/api/auth")
 	{
+		authGroup.GET("/bootstrap", authHandler.Bootstrap)
+		authGroup.POST("/setup", authHandler.Setup)
 		authGroup.POST("/login", authHandler.Login)
 	}
 
 	// Apply auth middleware conditionally
 	api := r.Group("/api")
 	if serverConfig.EnableAuth {
-		api.Use(auth.Middleware())
+		api.Use(auth.SessionMiddleware(authService))
 	}
 	{
 		api.GET("/auth/status", authHandler.Status)
+		api.POST("/auth/logout", authHandler.Logout)
+		api.POST("/auth/logout-all", authHandler.LogoutAll)
+		api.POST("/auth/change-password", authHandler.ChangePassword)
+		api.GET("/auth/sessions", authHandler.ListSessions)
+		api.GET("/auth/api-keys", authHandler.ListAPIKeys)
+		api.POST("/auth/api-keys", authHandler.CreateAPIKey)
+		api.DELETE("/auth/api-keys/:id", authHandler.RevokeAPIKey)
+		api.GET("/auth/security-events", authHandler.ListSecurityEvents)
 		api.GET("/config", appHandler.GetConfig)
 		api.PUT("/config", appHandler.UpdateConfig)
 		api.POST("/config/mcp/reset-token", appHandler.ResetMCPToken)
@@ -75,14 +86,14 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 
 	// Upload endpoint (protected if auth enabled)
 	if serverConfig.EnableAuth {
-		r.POST("/upload", auth.Middleware(), appHandler.Upload)
+		r.POST("/upload", auth.SessionMiddleware(authService), appHandler.Upload)
 	} else {
 		r.POST("/upload", appHandler.Upload)
 	}
 
 	v1 := r.Group("/v1")
 	if serverConfig.EnableAuth {
-		v1.Use(auth.Middleware())
+		v1.Use(auth.SessionOrAPIKeyMiddleware(authService, "openai:chat"))
 	}
 	{
 		v1.POST("/chat/completions", appHandler.ChatCompletions)
@@ -125,6 +136,7 @@ func corsMiddleware(authEnabled bool) gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", "*")
 		} else if isLocalDevelopmentOrigin(origin) {
 			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Vary", "Origin")
 		}
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-Id")

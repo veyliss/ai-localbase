@@ -23,6 +23,64 @@ export interface HealthResponse {
   config?: Record<string, string>
 }
 
+export interface AuthBootstrapResponse {
+  auth_enabled: boolean
+  setup_required: boolean
+  setup_token_required: boolean
+  username: string
+}
+
+export interface AuthLoginResponse {
+  expires_at: number
+  username: string
+}
+
+export interface AuthStatusResponse {
+  authenticated: boolean
+  auth_enabled?: boolean
+  username?: string
+  userId?: string
+  sessionId?: string
+  authType?: string
+  expires_at?: number
+}
+
+export interface AuthSessionInfo {
+  id: string
+  createdAt: string
+  expiresAt: string
+  lastSeenAt: string
+  revokedAt?: string
+  userAgent?: string
+  ip?: string
+  current?: boolean
+}
+
+export interface AuthAPIKeyInfo {
+  id: string
+  name: string
+  prefix: string
+  scopes: string[]
+  createdAt: string
+  lastUsedAt?: string
+  revokedAt?: string
+}
+
+export interface CreatedAuthAPIKey {
+  item: AuthAPIKeyInfo
+  token: string
+}
+
+export interface SecurityEventInfo {
+  id: string
+  type: string
+  username?: string
+  ip?: string
+  userAgent?: string
+  createdAt: string
+  message?: string
+}
+
 export interface BackendDocumentItem {
   id: string
   name: string
@@ -438,14 +496,11 @@ export const extractErrorMessage = async (response: Response) => {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('auth_token')
   const headers = new Headers(init?.headers)
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
 
   const response = await fetch(`${API_BASE_PATH}${path}`, {
     ...init,
+    credentials: init?.credentials ?? 'same-origin',
     headers,
   })
 
@@ -467,14 +522,11 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestOk(path: string, init?: RequestInit): Promise<void> {
-  const token = localStorage.getItem('auth_token')
   const headers = new Headers(init?.headers)
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
 
   const response = await fetch(`${API_BASE_PATH}${path}`, {
     ...init,
+    credentials: init?.credentials ?? 'same-origin',
     headers,
   })
 
@@ -491,6 +543,8 @@ async function requestOk(path: string, init?: RequestInit): Promise<void> {
 export const clearStoredAuth = () => {
   localStorage.removeItem('auth_token')
   localStorage.removeItem('token_expires_at')
+  localStorage.removeItem('auth_expires_at')
+  localStorage.removeItem('auth_username')
   window.dispatchEvent(new Event(AUTH_UNAUTHORIZED_EVENT))
 }
 
@@ -528,6 +582,109 @@ export const fetchBackendHealth = async (): Promise<HealthResponse | null> => {
   } catch {
     return null
   }
+}
+
+export const fetchAuthBootstrap = async (): Promise<AuthBootstrapResponse> => {
+  const response = await fetch(`${API_BASE_PATH}/api/auth/bootstrap`, {
+    credentials: 'same-origin',
+  })
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  const data = await parseJsonResponse<AuthBootstrapResponse>(response)
+  if (!data) {
+    throw new Error('认证初始化接口返回空响应')
+  }
+  return data
+}
+
+export const setupAuth = async (payload: {
+  username: string
+  password: string
+  setupToken?: string
+}): Promise<AuthLoginResponse> => {
+  const response = await fetch(`${API_BASE_PATH}/api/auth/setup`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  const data = await parseJsonResponse<AuthLoginResponse>(response)
+  if (!data?.expires_at) {
+    throw new Error('初始化接口返回空响应')
+  }
+  return data
+}
+
+export const loginAuth = async (payload: {
+  username: string
+  password: string
+}): Promise<AuthLoginResponse> => {
+  const response = await fetch(`${API_BASE_PATH}/api/auth/login`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  const data = await parseJsonResponse<AuthLoginResponse>(response)
+  if (!data?.expires_at) {
+    throw new Error('登录接口返回空响应')
+  }
+  return data
+}
+
+export const fetchAuthStatus = async (): Promise<AuthStatusResponse> => (
+  requestJson<AuthStatusResponse>('/api/auth/status')
+)
+
+export const logoutAuth = async (): Promise<void> => (
+  requestOk('/api/auth/logout', { method: 'POST' })
+)
+
+export const logoutAllAuth = async (): Promise<void> => (
+  requestOk('/api/auth/logout-all', { method: 'POST' })
+)
+
+export const changeAuthPassword = async (payload: {
+  currentPassword: string
+  newPassword: string
+}): Promise<void> => (
+  requestOk('/api/auth/change-password', jsonRequest(payload, { method: 'POST' }))
+)
+
+export const fetchAuthSessions = async (): Promise<AuthSessionInfo[]> => {
+  const data = await requestJson<{ items: AuthSessionInfo[] }>('/api/auth/sessions')
+  return data.items ?? []
+}
+
+export const fetchAuthAPIKeys = async (): Promise<AuthAPIKeyInfo[]> => {
+  const data = await requestJson<{ items: AuthAPIKeyInfo[] }>('/api/auth/api-keys')
+  return data.items ?? []
+}
+
+export const createAuthAPIKey = async (payload: {
+  name: string
+  scopes?: string[]
+}): Promise<CreatedAuthAPIKey> => (
+  requestJson<CreatedAuthAPIKey>('/api/auth/api-keys', jsonRequest(payload, { method: 'POST' }))
+)
+
+export const revokeAuthAPIKey = async (id: string): Promise<void> => (
+  requestOk(`/api/auth/api-keys/${encodeURIComponent(id)}`, { method: 'DELETE' })
+)
+
+export const fetchSecurityEvents = async (limit = 50): Promise<SecurityEventInfo[]> => {
+  const data = await requestJson<{ items: SecurityEventInfo[] }>(`/api/auth/security-events?limit=${limit}`)
+  return data.items ?? []
 }
 
 export const fetchInitialAppData = async () => {

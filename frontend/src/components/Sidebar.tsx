@@ -107,7 +107,7 @@ interface SidebarProps {
   onThinkModelChange: (value: string) => void
   onCopyMcpToken: () => Promise<void>
   onResetMcpToken: () => Promise<void>
-  onLogout: () => void
+  onLogout: () => void | Promise<void>
 }
 
 const formatDateTime = (value: string) =>

@@ -24,7 +24,7 @@ interface SettingsPanelProps {
   onThinkModelChange: (value: string) => void
   onCopyMcpToken: () => Promise<void>
   onResetMcpToken: () => Promise<void>
-  onLogout: () => void
+  onLogout: () => void | Promise<void>
 }
 
 interface SettingsNavItem {

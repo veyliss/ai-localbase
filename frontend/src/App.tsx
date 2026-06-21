@@ -17,7 +17,10 @@ import {
   deleteEvalDatasetItem,
   deleteKnowledgeBase,
   deleteKnowledgeBaseDocument,
+  deleteMessage,
+  editMessage,
   extractErrorMessage,
+  exportConversation,
   fetchKnowledgeBaseHealth,
   fetchKnowledgeBaseDocumentDetail,
   fetchBackendHealth,
@@ -30,6 +33,7 @@ import {
   listEvalRuns,
   parseJsonResponse,
   reindexKnowledgeBaseDocument,
+  regenerateMessage,
   resetMcpToken,
   runEvalDataset,
   saveConversation,
@@ -687,6 +691,30 @@ function AppContent() {
     return saveConversation(conversation)
   }
 
+  const replaceConversation = useCallback((updatedConversation: Conversation) => {
+    setConversations((prev) => {
+      const hasConversation = prev.some(
+        (conversation) => conversation.id === updatedConversation.id,
+      )
+      if (!hasConversation) {
+        return [updatedConversation, ...prev]
+      }
+
+      return prev.map((conversation) =>
+        conversation.id === updatedConversation.id ? updatedConversation : conversation,
+      )
+    })
+  }, [])
+
+  const ensureNoActiveGeneration = (actionText: string) => {
+    if (!streamingConversationId) {
+      return true
+    }
+
+    window.alert(`当前正在生成「${generatingConversationTitle}」，请等待完成后再${actionText}。`)
+    return false
+  }
+
   const handleCreateConversation = async () => {
     const conversation = createWelcomeConversation()
 
@@ -844,6 +872,77 @@ function AppContent() {
           : conversation,
       ),
     )
+  }
+
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    if (!activeConversation || !ensureNoActiveGeneration('编辑消息')) {
+      return
+    }
+
+    try {
+      const updatedConversation = await editMessage(
+        activeConversation.id,
+        messageId,
+        newContent,
+      )
+      replaceConversation(updatedConversation)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '编辑消息失败，请稍后重试。'
+      window.alert(`编辑消息失败：${message}`)
+    }
+  }
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!activeConversation || !ensureNoActiveGeneration('删除消息')) {
+      return
+    }
+
+    if (activeConversation.messages.length <= 1) {
+      window.alert('当前对话至少需要保留一条消息。')
+      return
+    }
+
+    try {
+      const updatedConversation = await deleteMessage(activeConversation.id, messageId)
+      replaceConversation(updatedConversation)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '删除消息失败，请稍后重试。'
+      window.alert(`删除消息失败：${message}`)
+    }
+  }
+
+  const handleRegenerateMessage = async (messageId: string) => {
+    if (!activeConversation || !ensureNoActiveGeneration('重新生成')) {
+      return
+    }
+
+    const conversationId = activeConversation.id
+    setStreamingConversationId(conversationId)
+    try {
+      const updatedConversation = await regenerateMessage(conversationId, messageId)
+      replaceConversation(updatedConversation)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : '重新生成失败，请稍后重试。'
+      window.alert(`重新生成失败：${message}`)
+    } finally {
+      setStreamingConversationId((current) =>
+        current === conversationId ? null : current,
+      )
+    }
+  }
+
+  const handleExportConversation = async (
+    conversationId: string,
+    format: 'markdown',
+  ) => {
+    if (streamingConversationId === conversationId) {
+      throw new Error('当前对话仍在生成，请完成后再导出。')
+    }
+
+    return exportConversation(conversationId, format)
   }
 
   const handleCreateKnowledgeBase = async (name: string, description: string) => {
@@ -2216,6 +2315,10 @@ function AppContent() {
         onChatModeChange={setChatMode}
         onSendMessage={handleSendMessage}
         onClearConversation={handleClearConversation}
+        onEditMessage={handleEditMessage}
+        onDeleteMessage={handleDeleteMessage}
+        onRegenerateMessage={handleRegenerateMessage}
+        onExportConversation={handleExportConversation}
         onOpenCitationSource={handleOpenCitationSource}
       />
       </div>

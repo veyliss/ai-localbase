@@ -58,6 +58,7 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 		api.PUT("/conversations/:id", appHandler.SaveConversation)
 		api.DELETE("/conversations/:id", appHandler.DeleteConversation)
 		api.PUT("/conversations/:id/messages/:msgId", appHandler.EditMessage)
+		api.DELETE("/conversations/:id/messages/:msgId", appHandler.DeleteMessage)
 		api.POST("/conversations/:id/messages/:msgId/regenerate", appHandler.RegenerateMessage)
 		api.GET("/conversations/:id/export", appHandler.ExportConversation)
 		api.GET("/knowledge-bases", appHandler.ListKnowledgeBases)

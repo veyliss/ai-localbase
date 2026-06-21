@@ -127,7 +127,17 @@ func (h *AppHandler) EditMessage(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, conversation)
+	c.JSON(http.StatusOK, gin.H{"conversation": conversation})
+}
+
+func (h *AppHandler) DeleteMessage(c *gin.Context) {
+	conversation, err := h.appService.DeleteMessage(c.Param("id"), c.Param("msgId"))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"conversation": conversation})
 }
 
 func (h *AppHandler) RegenerateMessage(c *gin.Context) {

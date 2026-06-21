@@ -2152,6 +2152,59 @@ func (s *AppService) EditMessage(conversationID, messageID string, req model.Edi
 	return conversation, nil
 }
 
+func (s *AppService) DeleteMessage(conversationID, messageID string) (*model.Conversation, error) {
+	if s == nil {
+		return nil, fmt.Errorf("app service is nil")
+	}
+	if s.chatHistory == nil {
+		return nil, fmt.Errorf("chat history store is not configured")
+	}
+
+	conversationID = strings.TrimSpace(conversationID)
+	messageID = strings.TrimSpace(messageID)
+
+	if conversationID == "" {
+		return nil, fmt.Errorf("conversation id is required")
+	}
+	if messageID == "" {
+		return nil, fmt.Errorf("message id is required")
+	}
+
+	conversation, err := s.chatHistory.GetConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if conversation == nil {
+		return nil, fmt.Errorf("conversation not found")
+	}
+	if len(conversation.Messages) <= 1 {
+		return nil, fmt.Errorf("cannot delete the last message")
+	}
+
+	messageIndex := -1
+	for i, msg := range conversation.Messages {
+		if msg.ID == messageID {
+			messageIndex = i
+			break
+		}
+	}
+	if messageIndex == -1 {
+		return nil, fmt.Errorf("message not found")
+	}
+
+	conversation.Messages = append(
+		conversation.Messages[:messageIndex],
+		conversation.Messages[messageIndex+1:]...,
+	)
+	conversation.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	if err := s.chatHistory.SaveConversation(*conversation); err != nil {
+		return nil, err
+	}
+
+	return conversation, nil
+}
+
 func (s *AppService) ExportConversation(conversationID string) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("app service is nil")

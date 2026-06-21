@@ -982,23 +982,31 @@ export const getDocumentIndexStatus = async (
 
 export interface EditMessageRequest {
   messageId: string
-  newContent: string
+  content: string
 }
 
 export interface EditMessageResponse {
   conversation: BackendConversation
 }
 
+type MessageMutationResponse = BackendConversation | {
+  conversation: BackendConversation
+}
+
+const normalizeMessageMutationResponse = (response: MessageMutationResponse): Conversation => (
+  normalizeConversation('conversation' in response ? response.conversation : response)
+)
+
 export const editMessage = async (
   conversationId: string,
   messageId: string,
   newContent: string,
 ): Promise<Conversation> => {
-  const response = await requestJson<EditMessageResponse>(
+  const response = await requestJson<MessageMutationResponse>(
     `/api/conversations/${conversationId}/messages/${messageId}`,
-    jsonRequest({ newContent }, { method: 'PUT' }),
+    jsonRequest({ content: newContent }, { method: 'PUT' }),
   )
-  return normalizeConversation(response.conversation)
+  return normalizeMessageMutationResponse(response)
 }
 
 export interface RegenerateMessageRequest {
@@ -1028,24 +1036,30 @@ export const deleteMessage = async (
   conversationId: string,
   messageId: string,
 ): Promise<Conversation> => {
-  const response = await requestJson<DeleteMessageResponse>(
+  const response = await requestJson<MessageMutationResponse>(
     `/api/conversations/${conversationId}/messages/${messageId}`,
     { method: 'DELETE' },
   )
-  return normalizeConversation(response.conversation)
-}
-
-export interface ExportConversationResponse {
-  content: string
-  format: string
+  return normalizeMessageMutationResponse(response)
 }
 
 export const exportConversation = async (
   conversationId: string,
   format: 'markdown' = 'markdown',
 ): Promise<string> => {
-  const response = await requestJson<ExportConversationResponse>(
-    `/api/conversations/${conversationId}/export?format=${format}`,
+  const response = await fetch(
+    `${API_BASE_PATH}/api/conversations/${conversationId}/export?format=${encodeURIComponent(format)}`,
+    { credentials: 'same-origin' },
   )
-  return response.content
+
+  if (response.status === 401) {
+    clearStoredAuth()
+    throw new Error('未授权，请重新登录')
+  }
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  return response.text()
 }

@@ -9,6 +9,7 @@ import type {
   KnowledgeBase,
 } from '../App'
 import MessageCard from './chat/MessageCard'
+import ConversationExportDialog from './chat/ConversationExportDialog'
 import ConfirmDialog from './common/ConfirmDialog'
 
 interface ChatAreaProps {
@@ -26,6 +27,10 @@ interface ChatAreaProps {
   onChatModeChange: (mode: ChatMode) => void
   onSendMessage: (content: string) => Promise<void>
   onClearConversation: () => void
+  onEditMessage?: (messageId: string, newContent: string) => Promise<void>
+  onDeleteMessage?: (messageId: string) => Promise<void>
+  onRegenerateMessage?: (messageId: string) => Promise<void>
+  onExportConversation?: (conversationId: string, format: 'markdown') => Promise<string>
   onOpenCitationSource?: (source: ChatSourceMetadata) => void
 }
 
@@ -56,12 +61,17 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onChatModeChange,
   onSendMessage,
   onClearConversation,
+  onEditMessage,
+  onDeleteMessage,
+  onRegenerateMessage,
+  onExportConversation,
   onOpenCitationSource,
 }) => {
   const [inputValue, setInputValue] = useState('')
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [showModeMenu, setShowModeMenu] = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [showExportDialog, setShowExportDialog] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(activeConversation.title)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -95,6 +105,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       totalCount: activeConversation.messages.length,
     }
   }, [activeConversation.messages])
+
+  const hasUserMessages = conversationStats.userCount > 0
+  const canUseMessageActions = !isGlobalGenerating
+  const canExportConversation = Boolean(onExportConversation) && hasUserMessages && !isGlobalGenerating
 
   const scopeText = selectedDocument
     ? `文档问答：${selectedDocument.name}`
@@ -198,7 +212,17 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             <div className="chat-topbar-actions" aria-label="对话操作">
               <button
                 type="button"
-                className="chat-topbar-clear-btn"
+                className="chat-topbar-action-btn chat-topbar-export-btn"
+                onClick={() => setShowExportDialog(true)}
+                disabled={!canExportConversation}
+                title={canExportConversation ? '导出对话' : '暂无可导出的对话'}
+                aria-label="导出对话"
+              >
+                <span className="chat-topbar-export-icon" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="chat-topbar-action-btn chat-topbar-clear-btn"
                 onClick={() => setShowClearConfirm(true)}
                 disabled={isLoading}
                 title="清空对话"
@@ -224,12 +248,19 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             <p>先选择知识库，或者指定知识库中的单个文档后再进行问答</p>
           </div>
         ) : (
-          activeConversation.messages.map((message) => {
+          activeConversation.messages.map((message, index) => {
             const isStreamingPlaceholder =
               isLoading &&
               message.role === 'assistant' &&
               message.id === activeConversation.messages.at(-1)?.id &&
               !message.content.trim()
+            const previousMessage = activeConversation.messages[index - 1]
+            const canDeleteMessage =
+              canUseMessageActions && activeConversation.messages.length > 1
+            const canRegenerateMessage =
+              canUseMessageActions &&
+              message.role === 'assistant' &&
+              previousMessage?.role === 'user'
 
             return (
               <MessageCard
@@ -238,6 +269,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 isLoading={isLoading}
                 isStreamingPlaceholder={isStreamingPlaceholder}
                 onCopyMessage={handleCopyMessage}
+                onEditMessage={canUseMessageActions ? onEditMessage : undefined}
+                onDeleteMessage={canDeleteMessage ? onDeleteMessage : undefined}
+                onRegenerateMessage={
+                  canRegenerateMessage ? onRegenerateMessage : undefined
+                }
                 onOpenCitationSource={onOpenCitationSource}
                 copiedMessageId={copiedMessageId}
               />
@@ -355,6 +391,15 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         onConfirm={handleConfirmClearConversation}
         onCancel={() => setShowClearConfirm(false)}
       />
+
+      {onExportConversation && (
+        <ConversationExportDialog
+          conversation={activeConversation}
+          isOpen={showExportDialog}
+          onClose={() => setShowExportDialog(false)}
+          onExport={onExportConversation}
+        />
+      )}
     </main>
   )
 }

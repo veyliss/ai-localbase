@@ -18,7 +18,24 @@
 
 ## 常用命令
 
-### 后端运行
+### 推荐：启动全部开发服务
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up --build
+```
+
+默认开发地址：
+
+- 前端：`http://localhost:4173`
+- 后端：`http://localhost:8080`
+- Qdrant：`http://localhost:6333`
+
+`docker-compose.dev.yml` 会同时启动 Qdrant、后端和前端开发服务器，并挂载本地代码，适合日常开发和 UI 调试。
+
+### 后端运行（可选）
+
+只有在需要单独调试后端进程时使用：
 
 ```bash
 cd backend
@@ -32,7 +49,9 @@ cd backend
 go test ./...
 ```
 
-### 前端开发
+### 前端开发（可选）
+
+只有在已经单独启动后端与 Qdrant，且需要直接运行 Vite 时使用：
 
 ```bash
 cd frontend
@@ -40,7 +59,7 @@ npm install
 npm run dev
 ```
 
-前端开发服务器默认监听 `http://localhost:3000`。Docker Compose 中的前端默认端口是 `http://localhost:4173`。
+单独运行 Vite 时默认监听 `http://localhost:3000`；项目推荐的 Docker 开发编排默认访问地址仍是 `http://localhost:4173`。
 
 ### 前端构建
 
@@ -49,13 +68,13 @@ cd frontend
 npm run build
 ```
 
-### 启动 Qdrant
+### 启动 Qdrant（可选）
 
 ```bash
 docker compose -f docker-compose.qdrant.yml up -d
 ```
 
-### 启动全部服务
+### 启动全部生产形态服务
 
 ```bash
 docker compose up --build

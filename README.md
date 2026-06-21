@@ -101,7 +101,7 @@ Docker 自托管建议设置：
 - Qdrant HTTP API：`http://localhost:6333`
 - Qdrant gRPC：`localhost:6334`
 
-默认数据目录由 `.env` 控制，主要包括上传文件、应用状态、聊天 SQLite 数据库和 Qdrant 持久化目录。升级或迁移前建议先备份这些路径。
+默认数据目录由 `.env` 控制，主要包括上传文件、应用状态、聊天 SQLite 数据库和 Qdrant 持久化目录。升级或迁移前建议先备份这些路径，详见 [`docs/backup-restore.md`](docs/backup-restore.md)。
 
 ### 使用预构建镜像部署
 

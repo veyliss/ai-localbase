@@ -93,7 +93,6 @@ docker compose up --build
 | `ENABLE_QUERY_REWRITE` | `false` | Query Rewrite 启动默认值，可在高级检索中开关 |
 | `ENABLE_SEMANTIC_CACHE` | `false` | 启用语义缓存 |
 | `ENABLE_CONTEXT_COMPRESSION` | `false` | 启用上下文压缩 |
-|
 
 > 注意：`QDRANT_VECTOR_SIZE` 必须与嵌入模型输出维度一致。切换嵌入模型时，如果维度变化，旧 Qdrant 集合不能直接复用；请清理旧集合、使用新的 `QDRANT_COLLECTION_PREFIX`，或重新创建知识库后重建索引。
 
@@ -116,6 +115,8 @@ AUTH_PASSWORD=your-secure-password
 首次启动时，如果设置了 `AUTH_PASSWORD`，后端会自动创建 root 用户并保存密码哈希。如果未设置 `AUTH_PASSWORD`，Web 页面会进入首次初始化向导。公网部署时建议至少设置 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占。
 
 更多认证接口、API Key 和密码重置说明见 [`docs/AUTH.md`](./AUTH.md)。
+
+升级、迁移或服务器故障恢复前，请先阅读 [`docs/backup-restore.md`](./backup-restore.md)，确认 `.env`、应用状态、聊天记录、上传文件和 Qdrant 数据都已备份。
 
 ---
 
@@ -201,6 +202,7 @@ AUTH_PASSWORD=your-secure-password
 
 - [`README.md`](../README.md)
 - [`docs/architecture.md`](./architecture.md)
+- [`docs/backup-restore.md`](./backup-restore.md)
 - [`docs/mcp.md`](./mcp.md)
 - [`docs/retrieval-improvement-plan.md`](./retrieval-improvement-plan.md)
 - [`DOCKER_DEPLOY.md`](../DOCKER_DEPLOY.md)

@@ -1241,32 +1241,7 @@ function AppContent() {
       return
     }
 
-    try {
-      const uploadedDocuments: DocumentItem[] = []
-
-      for (const file of Array.from(files)) {
-        const uploaded = await uploadSingleKnowledgeBaseFile(knowledgeBaseId, file)
-        uploadedDocuments.push(uploaded)
-      }
-
-      setKnowledgeBases((prev) =>
-        prev.map((knowledgeBase) =>
-          knowledgeBase.id === knowledgeBaseId
-            ? {
-                ...knowledgeBase,
-                documents: [...uploadedDocuments, ...knowledgeBase.documents],
-              }
-            : knowledgeBase,
-        ),
-      )
-
-      setSelectedKnowledgeBaseId(knowledgeBaseId)
-      setSelectedDocumentId(uploadedDocuments[0]?.id ?? null)
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : '上传文档失败，请稍后重试。'
-      window.alert(`上传文档失败：${message}`)
-    }
+    await handleUploadDirectory(knowledgeBaseId, files)
   }
 
   const handleUploadDirectory = async (knowledgeBaseId: string, files: FileList | null) => {
@@ -1342,7 +1317,7 @@ function AppContent() {
     setDirectoryUploadTask({
       ...scannedTask,
       summaryMessage:
-        eligibleItems.length === 0 ? '所选目录中没有可上传的 .txt、.md、.pdf、.csv 或 .xlsx 文件。' : '',
+        eligibleItems.length === 0 ? '所选内容中没有可上传的 .txt、.md、.pdf、.csv 或 .xlsx 文件。' : '',
     })
 
     if (eligibleItems.length === 0) {

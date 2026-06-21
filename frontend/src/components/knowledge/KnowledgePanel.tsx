@@ -334,7 +334,9 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
 
   const isTaskVisible = directoryUploadTask.status !== 'idle'
   const canCancelUpload =
-    directoryUploadTask.status === 'uploading' || directoryUploadTask.status === 'canceling'
+    directoryUploadTask.status === 'scanning' ||
+    directoryUploadTask.status === 'uploading' ||
+    directoryUploadTask.status === 'canceling'
   const canContinueUpload =
     (directoryUploadTask.status === 'canceled' || directoryUploadTask.status === 'partial-failed') &&
     directoryUploadTask.pendingFiles > 0
@@ -403,7 +405,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
               />
 
               <main className="kb-workspace">
-                <UploadDropZone onFilesSelected={(files) => onUploadDirectory(activeKnowledgeBaseId!, files)}>
+                <UploadDropZone onFilesSelected={(files) => onUploadFiles(activeKnowledgeBaseId!, files)}>
                 {selectedKnowledgeBase && activeKnowledgeBaseId ? (
                   <>
                     <WorkspaceHero

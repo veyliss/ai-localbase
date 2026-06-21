@@ -511,7 +511,9 @@
 }
 
 .kb-upload-task-pill--scanning,
-.kb-upload-task-pill--uploading {
+.kb-upload-task-pill--uploading,
+.kb-upload-task-pill--indexing,
+.kb-upload-task-pill--polling-index {
   background: #dbeafe;
   color: #1d4ed8;
 }

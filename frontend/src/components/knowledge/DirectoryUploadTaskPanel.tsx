@@ -19,6 +19,8 @@ interface DirectoryUploadTaskPanelProps {
 const taskStatusText = (status: DirectoryUploadTask['status']) => {
   if (status === 'scanning') return '扫描中'
   if (status === 'uploading') return '上传中'
+  if (status === 'indexing') return '索引中'
+  if (status === 'polling-index') return '确认索引'
   if (status === 'canceling') return '取消中'
   if (status === 'canceled') return '已取消'
   if (status === 'done') return '已完成'
@@ -48,7 +50,7 @@ const DirectoryUploadTaskPanel: React.FC<DirectoryUploadTaskPanelProps> = ({
           {taskStatusText(task.status)}
         </span>
         <div className="kb-upload-task-compact-text">
-          <div className="kb-upload-task-compact-title">目录上传任务</div>
+          <div className="kb-upload-task-compact-title">文档导入任务</div>
           <div className="kb-upload-task-compact-summary">
             {task.processedFiles}/{task.eligibleFiles} · 成功 {task.successFiles} · 失败 {task.failedFiles} · 跳过 {task.skippedFiles}
           </div>
@@ -59,7 +61,7 @@ const DirectoryUploadTaskPanel: React.FC<DirectoryUploadTaskPanelProps> = ({
           {showDetails ? '收起' : '详情'}
         </button>
         {canContinueUpload && (
-          <button className="kb-upload-task-btn" onClick={onContinue}>继续上传</button>
+          <button className="kb-upload-task-btn" onClick={onContinue}>继续导入</button>
         )}
         {canCancelUpload && (
           <button
@@ -67,7 +69,7 @@ const DirectoryUploadTaskPanel: React.FC<DirectoryUploadTaskPanelProps> = ({
             onClick={onCancel}
             disabled={task.status === 'canceling'}
           >
-            {task.status === 'canceling' ? '取消中' : '取消上传'}
+            {task.status === 'canceling' ? '取消中' : '取消导入'}
           </button>
         )}
       </div>

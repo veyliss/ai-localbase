@@ -1,6 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import '../styles/Login.css'
+
+const getPasswordStrength = (password: string) => {
+  if (!password) {
+    return { label: '等待输入', tone: 'idle', hint: '建议使用 16 位以上密码' }
+  }
+
+  let score = 0
+  if (password.length >= 8) score += 1
+  if (password.length >= 16) score += 1
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1
+  if (/\d/.test(password)) score += 1
+  if (/[^a-zA-Z0-9]/.test(password)) score += 1
+
+  if (score >= 4) {
+    return { label: '强', tone: 'strong', hint: '适合服务器部署' }
+  }
+  if (score >= 2) {
+    return { label: '可用', tone: 'medium', hint: '生产环境建议再增强' }
+  }
+  return { label: '偏弱', tone: 'weak', hint: '至少 8 位，推荐 16 位以上' }
+}
 
 const Login: React.FC = () => {
   const {
@@ -20,9 +41,11 @@ const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false)
   const [focusedField, setFocusedField] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showResetHelp, setShowResetHelp] = useState(false)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const passwordStrength = useMemo(() => getPasswordStrength(password), [password])
 
   useEffect(() => {
     setUsername(configuredUsername || 'root')
@@ -230,6 +253,13 @@ const Login: React.FC = () => {
           </div>
 
           <form onSubmit={handleSubmit} className="login-form">
+            {!authReady && (
+              <div className="login-status-note">
+                <span className="login-status-dot"></span>
+                <span>正在检查认证状态...</span>
+              </div>
+            )}
+
             <div className={`input-wrapper ${focusedField === 'username' ? 'focused' : ''}`}>
               <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M20 21a8 8 0 0 0-16 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
@@ -293,6 +323,14 @@ const Login: React.FC = () => {
 
             {setupRequired && (
               <>
+                <div className={`login-password-strength ${passwordStrength.tone}`}>
+                  <div>
+                    <span>密码强度</span>
+                    <strong>{passwordStrength.label}</strong>
+                  </div>
+                  <p>{passwordStrength.hint}</p>
+                </div>
+
                 <div className={`input-wrapper ${focusedField === 'confirm' ? 'focused' : ''}`}>
                   <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
@@ -363,6 +401,11 @@ const Login: React.FC = () => {
 
           <div className="login-footer">
             <p>{setupRequired ? '首次创建后，后续登录将使用 root 密码' : '本地部署 · 会话可吊销 · API Key 独立管理'}</p>
+            {!setupRequired && (
+              <button className="login-help-link" type="button" onClick={() => setShowResetHelp(true)}>
+                忘记 root 密码？
+              </button>
+            )}
           </div>
         </div>
 
@@ -370,6 +413,41 @@ const Login: React.FC = () => {
           v1.3.0
         </div>
       </div>
+
+      {showResetHelp && (
+        <div className="login-help-overlay" onClick={() => setShowResetHelp(false)}>
+          <div className="login-help-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="login-reset-title">
+            <div className="login-help-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 3L4 6.5V12C4 16.4 7.4 20.1 12 21C16.6 20.1 20 16.4 20 12V6.5L12 3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
+                <path d="M9.2 12.2L11.1 14.1L15.2 9.9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <h2 id="login-reset-title">重置 root 密码</h2>
+            <p>自部署环境需要在服务器侧重置密码。设置一次性重置变量并重启后端，登录成功后删除变量再重启。</p>
+            <div className="login-reset-steps">
+              <div>
+                <span>1</span>
+                <strong>生成重置 Token</strong>
+                <code>openssl rand -base64 32</code>
+              </div>
+              <div>
+                <span>2</span>
+                <strong>设置环境变量</strong>
+                <code>AUTH_RESET_TOKEN / AUTH_RESET_PASSWORD</code>
+              </div>
+              <div>
+                <span>3</span>
+                <strong>重启并登录</strong>
+                <code>确认成功后移除重置变量</code>
+              </div>
+            </div>
+            <button className="login-help-close" type="button" onClick={() => setShowResetHelp(false)}>
+              我知道了
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

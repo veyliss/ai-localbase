@@ -27,6 +27,32 @@ const formatDateTime = (value?: string | number | null) => {
   }).format(date)
 }
 
+const formatTimeRemaining = (value?: string | number | null) => {
+  if (!value) return '未知'
+  const date = typeof value === 'number' ? new Date(value * 1000) : new Date(value)
+  const diffMs = date.getTime() - Date.now()
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return '已到期'
+  const days = Math.floor(diffMs / 86400000)
+  if (days >= 1) return `约 ${days} 天后`
+  const hours = Math.floor(diffMs / 3600000)
+  if (hours >= 1) return `约 ${hours} 小时后`
+  const minutes = Math.max(1, Math.floor(diffMs / 60000))
+  return `约 ${minutes} 分钟后`
+}
+
+const getPasswordStrength = (password: string) => {
+  if (!password) return { label: '等待输入', tone: 'idle', hint: '建议使用 16 位以上密码' }
+  let score = 0
+  if (password.length >= 8) score += 1
+  if (password.length >= 16) score += 1
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1
+  if (/\d/.test(password)) score += 1
+  if (/[^a-zA-Z0-9]/.test(password)) score += 1
+  if (score >= 4) return { label: '强', tone: 'strong', hint: '适合服务器部署' }
+  if (score >= 2) return { label: '可用', tone: 'medium', hint: '生产环境建议再增强' }
+  return { label: '偏弱', tone: 'weak', hint: '至少 8 位，推荐 16 位以上' }
+}
+
 const eventLabelMap: Record<string, string> = {
   root_bootstrapped_from_env: '环境变量初始化',
   root_setup_completed: '首次初始化',
@@ -85,18 +111,33 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   const [error, setError] = useState('')
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const [showLogoutAllConfirm, setShowLogoutAllConfirm] = useState(false)
+  const [showPasswordForm, setShowPasswordForm] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [keyName, setKeyName] = useState('')
   const [selectedScopes, setSelectedScopes] = useState<string[]>(defaultAPIKeyScopes)
   const [createdToken, setCreatedToken] = useState('')
+  const [createdTokenSaved, setCreatedTokenSaved] = useState(false)
   const [busyAction, setBusyAction] = useState('')
 
   const activeSessions = useMemo(
     () => sessions.filter((session) => !session.revokedAt),
     [sessions],
   )
+  const currentSessions = useMemo(
+    () => activeSessions.filter((session) => session.current),
+    [activeSessions],
+  )
+  const otherSessions = useMemo(
+    () => activeSessions.filter((session) => !session.current),
+    [activeSessions],
+  )
+  const revokedSessions = useMemo(
+    () => sessions.filter((session) => session.revokedAt).slice(0, 4),
+    [sessions],
+  )
+  const passwordStrength = useMemo(() => getPasswordStrength(newPassword), [newPassword])
 
   const loadSecurityData = useCallback(async () => {
     setLoading(true)
@@ -156,6 +197,7 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
+      setShowPasswordForm(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : '修改密码失败')
     } finally {
@@ -167,7 +209,12 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     event.preventDefault()
     setFeedback('')
     setError('')
+    if (createdToken && !createdTokenSaved) {
+      setError('请先确认已经保存当前 API Key')
+      return
+    }
     setCreatedToken('')
+    setCreatedTokenSaved(false)
     if (!keyName.trim()) {
       setError('请输入 API Key 名称')
       return
@@ -181,6 +228,7 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     try {
       const created = await createAuthAPIKey({ name: keyName.trim(), scopes: selectedScopes })
       setCreatedToken(created.token)
+      setCreatedTokenSaved(false)
       setKeyName('')
       setFeedback('API Key 已创建，请立即复制保存')
       await loadSecurityData()
@@ -199,6 +247,12 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     } catch {
       setError('复制失败')
     }
+  }
+
+  const handleConfirmCreatedTokenSaved = () => {
+    setCreatedToken('')
+    setCreatedTokenSaved(true)
+    setFeedback('API Key 已确认保存')
   }
 
   const handleToggleScope = (scope: string) => {
@@ -225,6 +279,19 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     }
   }
 
+  const renderSessionRow = (session: AuthSessionInfo) => (
+    <div className="settings-security-row" key={session.id}>
+      <div>
+        <strong>{session.current ? '当前设备' : session.revokedAt ? '历史会话' : '其它设备'}</strong>
+        <span>{session.ip || '未知 IP'} · {session.userAgent || '未知客户端'}</span>
+      </div>
+      <div className="settings-security-row-meta">
+        <span>{session.revokedAt ? `失效 ${formatDateTime(session.revokedAt)}` : `到期 ${formatDateTime(session.expiresAt)}`}</span>
+        {session.current && <em>当前</em>}
+      </div>
+    </div>
+  )
+
   return (
     <>
       <div className="settings-tab-content settings-security-content">
@@ -232,7 +299,7 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
           <div className="settings-card-header">
             <div className="settings-card-header-copy">
               <h3>Root 账户</h3>
-              <p>查看当前登录身份和会话有效期。</p>
+              <p>查看当前登录身份、会话剩余时间和外部访问凭据。</p>
             </div>
             <span className="settings-status-pill enabled">已认证</span>
           </div>
@@ -244,7 +311,8 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
               </div>
               <div className="settings-readonly-field">
                 <span>会话到期</span>
-                <strong>{formatDateTime(expiresAt)}</strong>
+                <strong>{formatTimeRemaining(expiresAt)}</strong>
+                <small>{formatDateTime(expiresAt)}</small>
               </div>
               <div className="settings-readonly-field">
                 <span>活跃会话</span>
@@ -267,46 +335,67 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
               <h3>修改密码</h3>
               <p>更新 root 密码后，所有已登录会话会立即失效。</p>
             </div>
+            <button
+              className="settings-action-btn"
+              onClick={() => setShowPasswordForm((visible) => !visible)}
+              type="button"
+            >
+              {showPasswordForm ? '收起' : '修改'}
+            </button>
           </div>
           <div className="settings-card-body">
-            <form className="settings-form-grid settings-form-grid-dense" onSubmit={handleChangePassword}>
-              <div className="settings-form-group">
-                <label className="settings-form-label">当前密码</label>
-                <input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(event) => setCurrentPassword(event.target.value)}
-                  autoComplete="current-password"
-                />
+            {!showPasswordForm ? (
+              <div className="settings-action-row settings-password-closed">
+                <div>
+                  <strong>当前密码不会显示</strong>
+                  <span>需要输入当前密码才能完成变更。</span>
+                </div>
+                <span className="settings-status-pill warning">会吊销会话</span>
               </div>
-              <div className="settings-form-group">
-                <label className="settings-form-label">新密码</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="settings-form-group">
-                <label className="settings-form-label">确认新密码</label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="settings-form-group settings-security-action-cell">
-                <button
-                  className="settings-action-btn settings-action-btn-primary"
-                  disabled={busyAction === 'change-password'}
-                  type="submit"
-                >
-                  {busyAction === 'change-password' ? '更新中...' : '更新密码'}
-                </button>
-              </div>
-            </form>
+            ) : (
+              <form className="settings-form-grid settings-form-grid-dense settings-password-form" onSubmit={handleChangePassword}>
+                <div className="settings-form-group">
+                  <label className="settings-form-label">当前密码</label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-form-label">新密码</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <div className={`settings-password-meter ${passwordStrength.tone}`}>
+                    <span>{passwordStrength.label}</span>
+                    <small>{passwordStrength.hint}</small>
+                  </div>
+                </div>
+                <div className="settings-form-group">
+                  <label className="settings-form-label">确认新密码</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div className="settings-form-group settings-security-action-cell">
+                  <button
+                    className="settings-action-btn settings-action-btn-primary"
+                    disabled={busyAction === 'change-password'}
+                    type="submit"
+                  >
+                    {busyAction === 'change-password' ? '更新中...' : '更新密码'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </section>
 
@@ -323,18 +412,12 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
           <div className="settings-card-body">
             <div className="settings-security-list">
               {sessions.length === 0 && <div className="settings-empty-row">暂无会话记录</div>}
-              {sessions.map((session) => (
-                <div className="settings-security-row" key={session.id}>
-                  <div>
-                    <strong>{session.current ? '当前会话' : '浏览器会话'}</strong>
-                    <span>{session.ip || '未知 IP'} · {session.userAgent || '未知客户端'}</span>
-                  </div>
-                  <div className="settings-security-row-meta">
-                    <span>{session.revokedAt ? '已失效' : `到期 ${formatDateTime(session.expiresAt)}`}</span>
-                    {session.current && <em>当前</em>}
-                  </div>
-                </div>
-              ))}
+              {currentSessions.length > 0 && <div className="settings-list-group-label">当前设备</div>}
+              {currentSessions.map(renderSessionRow)}
+              {otherSessions.length > 0 && <div className="settings-list-group-label">其它设备</div>}
+              {otherSessions.map(renderSessionRow)}
+              {revokedSessions.length > 0 && <div className="settings-list-group-label">最近失效</div>}
+              {revokedSessions.map(renderSessionRow)}
             </div>
           </div>
         </section>
@@ -379,11 +462,19 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
 
             {createdToken && (
               <div className="settings-created-token">
-                <span>只显示一次</span>
+                <div className="settings-created-token-copy">
+                  <span>只显示一次</span>
+                  <strong>请现在复制保存，关闭后无法再次查看。</strong>
+                </div>
                 <code>{createdToken}</code>
-                <button className="settings-action-btn" onClick={() => void handleCopyCreatedToken()} type="button">
-                  复制
-                </button>
+                <div className="settings-created-token-actions">
+                  <button className="settings-action-btn" onClick={() => void handleCopyCreatedToken()} type="button">
+                    复制
+                  </button>
+                  <button className="settings-action-btn settings-action-btn-primary" onClick={handleConfirmCreatedTokenSaved} type="button">
+                    我已保存
+                  </button>
+                </div>
               </div>
             )}
 

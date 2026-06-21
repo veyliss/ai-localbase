@@ -39,7 +39,7 @@ const navItems: SettingsNavItem[] = [
   { id: 'ai', label: 'AI 配置', description: '模型、接口与推理参数', icon: 'AI' },
   { id: 'retrieval', label: '检索策略', description: '召回、重排与上下文规模', icon: '检' },
   { id: 'mcp', label: 'MCP 设置', description: '工具调用与访问令牌', icon: 'M' },
-  { id: 'system', label: '系统设置', description: '会话与安全操作', icon: '系' },
+  { id: 'system', label: '账户与安全', description: '会话、密码与访问密钥', icon: '安' },
 ]
 
 const getTabButtonId = (tabId: SettingsTab) => `settings-tab-${tabId}`
@@ -175,7 +175,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <div className="settings-sidebar-header">
             <div>
               <h2 id="settings-dialog-title">设置管理</h2>
-              <p id="settings-dialog-description">调整模型、检索、MCP 与系统偏好</p>
+              <p id="settings-dialog-description">调整模型、检索、MCP 与账户安全</p>
             </div>
             <button className="settings-sidebar-close" onClick={onClose} aria-label="关闭设置">
               <svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">

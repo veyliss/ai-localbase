@@ -101,17 +101,24 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 		v1.POST("/chat/completions/stream", appHandler.ChatCompletionsStream)
 	}
 
+	basePath := strings.TrimSpace(serverConfig.MCPBasePath)
+	if basePath == "" {
+		basePath = "/mcp"
+	}
 	if serverConfig.EnableMCP && mcpServer != nil {
-		basePath := strings.TrimSpace(serverConfig.MCPBasePath)
-		if basePath == "" {
-			basePath = "/mcp"
-		}
 		mcpServer.RegisterRoutes(r.Group(basePath))
+	} else {
+		r.Any(basePath, mcpDisabledHandler)
+		r.Any(basePath+"/*path", mcpDisabledHandler)
 	}
 
 	r.NoRoute(spaHandler(frontendFS))
 
 	return r
+}
+
+func mcpDisabledHandler(c *gin.Context) {
+	c.JSON(http.StatusNotFound, gin.H{"error": "mcp is disabled"})
 }
 
 func spaHandler(frontendFS fs.FS) gin.HandlerFunc {

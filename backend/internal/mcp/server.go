@@ -24,6 +24,7 @@ type TokenProvider interface {
 type Server struct {
 	registry        *ToolRegistry
 	tokenProvider   TokenProvider
+	serverConfig    model.ServerConfig
 	requestTimeout  time.Duration
 	requestsPerMin  int
 	rateMu          sync.Mutex
@@ -43,6 +44,7 @@ func NewServer(registry *ToolRegistry, tokenProvider TokenProvider, serverConfig
 	return &Server{
 		registry:       registry,
 		tokenProvider:  tokenProvider,
+		serverConfig:   serverConfig,
 		requestTimeout: timeout,
 		requestsPerMin: requestsPerMin,
 	}
@@ -297,14 +299,24 @@ func sortedMapKeys(items map[string]any) []string {
 }
 
 func (s *Server) authorize(c *gin.Context) bool {
-	if s == nil || s.tokenProvider == nil {
-		return true
+	if s == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "mcp server is unavailable"})
+		return false
+	}
+	if !s.serverConfig.EnableAuth {
+		c.JSON(http.StatusForbidden, gin.H{"error": "mcp requires ENABLE_AUTH=true and an API key or compatible token"})
+		return false
+	}
+	if s.tokenProvider == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "mcp token provider is unavailable"})
+		return false
 	}
 
 	cfg := s.tokenProvider.GetConfig()
 	expectedToken := strings.TrimSpace(cfg.MCP.Token)
 	if expectedToken == "" {
-		return true
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "mcp token is not configured"})
+		return false
 	}
 
 	authorization := strings.TrimSpace(c.GetHeader("Authorization"))

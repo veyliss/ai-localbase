@@ -10,7 +10,7 @@
 - 提供 HTTP 形式的 MCP 入口
 - 提供工具列表发现能力
 - 提供只读 / 写入 / 危险工具调用能力
-- 提供 Bearer Token 鉴权
+- 提供认证开启后的 Bearer 凭证鉴权
 - 提供调用日志与耗时记录
 - 提供工具权限分级（只读 / 写入 / 危险）
 - 提供 MCP 级限流与超时保护
@@ -23,20 +23,23 @@
 
 后端通过环境变量控制 MCP：
 
-- `ENABLE_MCP`：是否启用 MCP，默认 `true`
+- `ENABLE_MCP`：是否启用 MCP，默认 `false`
 - `MCP_BASE_PATH`：MCP 挂载路径，默认 `/mcp`
 - `MCP_REQUEST_TIMEOUT_SECONDS`：单次 MCP 请求超时时间，默认 `15`
 - `MCP_REQUESTS_PER_MINUTE`：MCP 每分钟最大请求数，默认 `120`
-- MCP Token 会在首次启动时自动生成并持久化到应用配置中
+- MCP Token 会在首次启动时自动生成并持久化到应用配置中，仅作为旧客户端兼容凭证
 
 示例：
 
 ```bash
+ENABLE_AUTH=true
 ENABLE_MCP=true
 MCP_BASE_PATH=/mcp
 MCP_REQUEST_TIMEOUT_SECONDS=15
 MCP_REQUESTS_PER_MINUTE=120
 ```
+
+MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_AUTH=true`，并优先使用 API Key Scope 模式接入。旧版 MCP Token 为空时不会放行请求。
 
 启动后可访问：
 
@@ -45,7 +48,7 @@ MCP_REQUESTS_PER_MINUTE=120
 - `POST /mcp`：通过 JSON-RPC 调用 MCP 方法
 - `POST /api/config/mcp/reset-token`：重置 MCP Token
 
-> 所有 MCP 接口均需携带请求头 `Authorization: Bearer <token>`。
+> 所有 MCP 接口均需携带请求头 `Authorization: Bearer <token>`。当前旧版 MCP Token 仅用于兼容；新客户端建议使用带 MCP scope 的 API Key。
 
 ---
 
@@ -493,7 +496,7 @@ MCP_REQUESTS_PER_MINUTE=120
 
 当前 MCP 接口已具备：
 
-- Bearer Token 鉴权
+- 认证开启后的 Bearer 凭证鉴权
 - 工具调用日志
 - 调用耗时日志
 - 方法不存在日志
@@ -507,7 +510,7 @@ MCP_REQUESTS_PER_MINUTE=120
 
 ### 危险工具二次确认
 
-当调用 `danger` 工具时，除 `Authorization` 外，还需要提供二次确认：
+当调用 `danger` 工具时，除 `Authorization` 外，还需要提供二次确认。当前版本仍兼容旧 Token 确认，后续推荐切换到一次性确认 nonce。
 
 优先方式：
 
@@ -549,7 +552,7 @@ MCP 工具调用统一包裹请求超时：
 
 ```bash
 curl -X GET http://localhost:8080/mcp/tools \
-  -H "Authorization: Bearer <MCP_TOKEN>"
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>"
 ```
 
 ### 2. 创建知识库
@@ -557,7 +560,7 @@ curl -X GET http://localhost:8080/mcp/tools \
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
@@ -577,7 +580,7 @@ curl -X POST http://localhost:8080/mcp \
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 2,
@@ -607,7 +610,7 @@ curl -X POST http://localhost:8080/api/uploads \
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 3,
@@ -636,7 +639,7 @@ base64 -i ./example.pdf
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 4,
@@ -659,7 +662,7 @@ curl -X POST http://localhost:8080/mcp \
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 4,
@@ -679,7 +682,7 @@ curl -X POST http://localhost:8080/mcp \
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -H "X-MCP-Confirm: <MCP_TOKEN>" \
   -d '{
     "jsonrpc": "2.0",
@@ -700,7 +703,7 @@ curl -X POST http://localhost:8080/mcp \
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <MCP_TOKEN>" \
+  -H "Authorization: Bearer <MCP_TOKEN_OR_API_KEY>" \
   -d '{
     "jsonrpc": "2.0",
     "id": 6,
@@ -733,7 +736,7 @@ curl -X POST http://localhost:8080/mcp \
 - **URL**：`http://127.0.0.1:8080/mcp`
 - **请求头**：
   - `Content-Type: application/json`
-  - `Authorization: Bearer <你的 MCP Token>`
+  - `Authorization: Bearer <你的 MCP Token 或 MCP API Key>`
 
 
 ![Cherry Studio MCP 设置页面](../assets/mcp_setting.png)
@@ -785,11 +788,11 @@ backend/internal/mcp/
 
 - 查看 MCP 是否启用
 - 查看 MCP Base Path
-- 查看当前 Token
+- 查看当前兼容 Token
 - 一键复制 Token
 - 一键重置 Token
 
-这部分主要用于方便你管理对外服务的接入凭证，而不是作为 MCP 消费端展示工具轨迹。
+这部分主要用于兼容既有 MCP 客户端。新接入建议在系统授权中创建带 MCP scope 的 API Key。
 
 ---
 

@@ -112,6 +112,10 @@ docker compose up --build
 | `ENABLE_QUERY_REWRITE` | `false` | Query Rewrite 启动默认值，可在高级检索中开关 |
 | `ENABLE_SEMANTIC_CACHE` | `false` | 启用语义缓存 |
 | `ENABLE_CONTEXT_COMPRESSION` | `false` | 启用上下文压缩 |
+| `ENABLE_MCP` | `false` | 启用内置 MCP Server；服务器部署需同时开启认证 |
+| `MCP_BASE_PATH` | `/mcp` | MCP HTTP 挂载路径 |
+| `MCP_REQUEST_TIMEOUT_SECONDS` | `15` | MCP 单次请求超时 |
+| `MCP_REQUESTS_PER_MINUTE` | `120` | MCP 每分钟限流 |
 
 > 注意：`QDRANT_VECTOR_SIZE` 必须与嵌入模型输出维度一致。切换嵌入模型时，如果维度变化，旧 Qdrant 集合不能直接复用；请清理旧集合、使用新的 `QDRANT_COLLECTION_PREFIX`，或重新创建知识库后重建索引。
 

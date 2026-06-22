@@ -103,7 +103,7 @@ func TestRouterConfigEndpoints(t *testing.T) {
 }
 
 func TestMCPRequiresAuthorizationHeader(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+	engine, _, _, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
 
 	resp := performRequest(t, engine, http.MethodGet, "/mcp", nil, "")
@@ -115,8 +115,26 @@ func TestMCPRequiresAuthorizationHeader(t *testing.T) {
 	}
 }
 
-func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+func TestMCPDisabledReturnsExplicitStatus(t *testing.T) {
+	engine, _, cleanup := newTestRouterWithServerConfig(t, func(serverConfig *model.ServerConfig) {
+		serverConfig.EnableMCP = false
+	})
+	defer cleanup()
+
+	resp := performRequest(t, engine, http.MethodGet, "/mcp", nil, "")
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), "mcp is disabled") {
+		t.Fatalf("expected disabled mcp error, got %s", resp.Body.String())
+	}
+}
+
+func TestMCPRejectsWhenAuthDisabled(t *testing.T) {
+	engine, _, cleanup := newTestRouterWithServerConfig(t, func(serverConfig *model.ServerConfig) {
+		serverConfig.EnableMCP = true
+		serverConfig.EnableAuth = false
+	})
 	defer cleanup()
 
 	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
@@ -125,6 +143,23 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 	}
 	var cfg model.AppConfig
 	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+
+	resp := performRequestWithHeaders(t, engine, http.MethodGet, "/mcp", nil, "", map[string]string{
+		"Authorization": "Bearer " + cfg.MCP.Token,
+	})
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), "ENABLE_AUTH=true") {
+		t.Fatalf("expected auth required error, got %s", resp.Body.String())
+	}
+}
+
+func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
+	defer cleanup()
+
+	cfg := getTestConfig(t, engine, sessionHeaders)
 	if strings.TrimSpace(cfg.MCP.Token) == "" {
 		t.Fatal("expected mcp token to be populated")
 	}
@@ -287,7 +322,7 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 		t.Fatalf("expected created knowledge base name, got %+v", rpcResp.Result.Data.KnowledgeBase)
 	}
 
-	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	kbListResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "", sessionHeaders)
 	if kbListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
 	}
@@ -301,18 +336,13 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 }
 
 func TestMCPUploadTextDocument(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
 
-	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
-	if configResp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
-	}
-	var cfg model.AppConfig
-	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	cfg := getTestConfig(t, engine, sessionHeaders)
 	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
 
-	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	kbListResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "", sessionHeaders)
 	if kbListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
 	}
@@ -364,18 +394,13 @@ func TestMCPUploadTextDocument(t *testing.T) {
 }
 
 func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
 
-	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
-	if configResp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
-	}
-	var cfg model.AppConfig
-	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	cfg := getTestConfig(t, engine, sessionHeaders)
 	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
 
-	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	kbListResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "", sessionHeaders)
 	if kbListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
 	}
@@ -571,18 +596,13 @@ func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
 }
 
 func TestHTTPStageUploadAndMCPRegisterStagedUpload(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
 
-	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
-	if configResp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
-	}
-	var cfg model.AppConfig
-	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	cfg := getTestConfig(t, engine, sessionHeaders)
 	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
 
-	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	kbListResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "", sessionHeaders)
 	if kbListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
 	}
@@ -595,7 +615,7 @@ func TestHTTPStageUploadAndMCPRegisterStagedUpload(t *testing.T) {
 	}
 	knowledgeBaseID := kbList.Items[0].ID
 
-	stageResp := performMultipartUpload(t, engine, http.MethodPost, "/api/uploads", "sample-stage.md", "# Sample Stage\n\n这是通过 staging + MCP register 导入的示例文档。")
+	stageResp := performMultipartUploadWithHeaders(t, engine, http.MethodPost, "/api/uploads", "sample-stage.md", "# Sample Stage\n\n这是通过 staging + MCP register 导入的示例文档。", sessionHeaders)
 	if stageResp.Code != http.StatusOK {
 		t.Fatalf("expected stage upload status 200, got %d, body=%s", stageResp.Code, stageResp.Body.String())
 	}
@@ -646,18 +666,13 @@ func TestHTTPStageUploadAndMCPRegisterStagedUpload(t *testing.T) {
 }
 
 func TestMCPInlineUploadTooLargeReturnsGuidance(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
 
-	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
-	if configResp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
-	}
-	var cfg model.AppConfig
-	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	cfg := getTestConfig(t, engine, sessionHeaders)
 	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
 
-	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	kbListResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "", sessionHeaders)
 	if kbListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
 	}
@@ -847,15 +862,10 @@ func TestOpenAICompatibleAPIAuthRejectsMissingTokenAndAllowsAPIKey(t *testing.T)
 }
 
 func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
-	engine, _, cleanup := newTestRouter(t)
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
 
-	configResp := performRequest(t, engine, http.MethodGet, "/api/config", nil, "")
-	if configResp.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
-	}
-	var cfg model.AppConfig
-	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	cfg := getTestConfig(t, engine, sessionHeaders)
 	headers := map[string]string{"Authorization": "Bearer " + cfg.MCP.Token}
 	dangerHeaders := map[string]string{
 		"Authorization": "Bearer " + cfg.MCP.Token,
@@ -899,13 +909,14 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 		t.Fatal("expected created knowledge base id")
 	}
 
-	uploadResp := performMultipartUpload(
+	uploadResp := performMultipartUploadWithHeaders(
 		t,
 		engine,
 		http.MethodPost,
 		fmt.Sprintf("/api/knowledge-bases/%s/documents", knowledgeBaseID),
 		"delete-tool-sample.md",
 		"# 通用删除测试\n\n用于验证 MCP 删除文档工具。",
+		sessionHeaders,
 	)
 	if uploadResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", uploadResp.Code, uploadResp.Body.String())
@@ -937,7 +948,7 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 		t.Fatalf("expected status 200, got %d, body=%s", delDocResp.Code, delDocResp.Body.String())
 	}
 
-	docListResp := performRequest(t, engine, http.MethodGet, fmt.Sprintf("/api/knowledge-bases/%s/documents", knowledgeBaseID), nil, "")
+	docListResp := performRequestWithHeaders(t, engine, http.MethodGet, fmt.Sprintf("/api/knowledge-bases/%s/documents", knowledgeBaseID), nil, "", sessionHeaders)
 	if docListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", docListResp.Code, docListResp.Body.String())
 	}
@@ -972,7 +983,7 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 		t.Fatalf("expected status 200, got %d, body=%s", delKBResp.Code, delKBResp.Body.String())
 	}
 
-	kbListResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	kbListResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "", sessionHeaders)
 	if kbListResp.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d, body=%s", kbListResp.Code, kbListResp.Body.String())
 	}
@@ -1232,6 +1243,16 @@ func newTestRouter(t *testing.T) (*http.ServeMux, string, func()) {
 	return newTestRouterWithServerConfig(t, nil)
 }
 
+func newAuthenticatedTestRouter(t *testing.T) (*http.ServeMux, string, map[string]string, func()) {
+	t.Helper()
+	engine, modelBaseURL, cleanup := newTestRouterWithServerConfig(t, func(serverConfig *model.ServerConfig) {
+		serverConfig.EnableAuth = true
+		serverConfig.AuthUsername = "root"
+		serverConfig.AuthPassword = "correct-password"
+	})
+	return engine, modelBaseURL, loginTestSessionHeaders(t, engine), cleanup
+}
+
 func newTestRouterWithServerConfig(t *testing.T, configure func(*model.ServerConfig)) (*http.ServeMux, string, func()) {
 	t.Helper()
 
@@ -1264,6 +1285,7 @@ func newTestRouterWithServerConfig(t *testing.T, configure func(*model.ServerCon
 
 	qdrantService := service.NewQdrantService(serverConfig)
 	appService := service.NewAppService(qdrantService, service.NewAppStateStore(serverConfig.StateFile), chatHistoryStore, serverConfig)
+	initialConfig := appService.GetConfig()
 	_, err = appService.UpdateConfig(model.ConfigUpdateRequest{
 		Chat: model.ChatConfig{
 			Provider:    "ollama",
@@ -1277,6 +1299,11 @@ func newTestRouterWithServerConfig(t *testing.T, configure func(*model.ServerCon
 			BaseURL:  modelHTTP.URL,
 			Model:    "embedding-test-model",
 			APIKey:   "",
+		},
+		MCP: model.MCPConfig{
+			Enabled:  serverConfig.EnableMCP,
+			BasePath: serverConfig.MCPBasePath,
+			Token:    initialConfig.MCP.Token,
 		},
 	})
 	if err != nil {
@@ -1307,6 +1334,33 @@ func newTestRouterWithServerConfig(t *testing.T, configure func(*model.ServerCon
 		_ = os.RemoveAll(uploadDir)
 	}
 	return mux, modelHTTP.URL, cleanup
+}
+
+func loginTestSessionHeaders(t *testing.T, handler http.Handler) map[string]string {
+	t.Helper()
+	loginResp := performJSONRequest(t, handler, http.MethodPost, "/api/auth/login", map[string]string{
+		"username": "root",
+		"password": "correct-password",
+	})
+	if loginResp.Code != http.StatusOK {
+		t.Fatalf("expected login status 200, got %d, body=%s", loginResp.Code, loginResp.Body.String())
+	}
+	sessionCookie := findResponseCookie(loginResp.Result().Cookies(), auth.SessionCookieName)
+	if sessionCookie == nil || sessionCookie.Value == "" {
+		t.Fatalf("expected %s cookie after login", auth.SessionCookieName)
+	}
+	return map[string]string{"Cookie": auth.SessionCookieName + "=" + sessionCookie.Value}
+}
+
+func getTestConfig(t *testing.T, handler http.Handler, headers map[string]string) model.AppConfig {
+	t.Helper()
+	configResp := performRequestWithHeaders(t, handler, http.MethodGet, "/api/config", nil, "", headers)
+	if configResp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", configResp.Code, configResp.Body.String())
+	}
+	var cfg model.AppConfig
+	decodeJSONResponse(t, configResp.Body.Bytes(), &cfg)
+	return cfg
 }
 
 func (s *qdrantTestServer) handle(w http.ResponseWriter, r *http.Request) {
@@ -1527,6 +1581,11 @@ func performJSONRequest(t *testing.T, handler http.Handler, method, target strin
 
 func performMultipartUpload(t *testing.T, handler http.Handler, method, target, filename, content string) *httptest.ResponseRecorder {
 	t.Helper()
+	return performMultipartUploadWithHeaders(t, handler, method, target, filename, content, nil)
+}
+
+func performMultipartUploadWithHeaders(t *testing.T, handler http.Handler, method, target, filename, content string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	fileWriter, err := writer.CreateFormFile("file", filepath.Base(filename))
@@ -1539,7 +1598,7 @@ func performMultipartUpload(t *testing.T, handler http.Handler, method, target, 
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close multipart writer: %v", err)
 	}
-	return performRequest(t, handler, method, target, body, writer.FormDataContentType())
+	return performRequestWithHeaders(t, handler, method, target, body, writer.FormDataContentType(), headers)
 }
 
 func performRequest(t *testing.T, handler http.Handler, method, target string, body io.Reader, contentType string) *httptest.ResponseRecorder {

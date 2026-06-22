@@ -64,6 +64,10 @@ const eventLabelMap: Record<string, string> = {
   password_change_failed: '改密失败',
   api_key_created: '创建 API Key',
   api_key_revoked: '撤销 API Key',
+  mcp_call_succeeded: 'MCP 调用成功',
+  mcp_call_failed: 'MCP 调用失败',
+  mcp_danger_succeeded: 'MCP 危险成功',
+  mcp_danger_failed: 'MCP 危险失败',
   root_password_reset_from_env: '环境变量重置密码',
   weak_env_password: '弱密码提醒',
   weak_env_reset_password: '弱重置密码提醒',
@@ -131,6 +135,10 @@ const formatAPIKeyScopes = (scopes: string[] = []) => {
   )).join(' / ')
 }
 
+const isMCPEvent = (event: SecurityEventInfo) => event.type.startsWith('mcp_')
+const isMCPFailureEvent = (event: SecurityEventInfo) => event.type.includes('_failed')
+const isMCPDangerEvent = (event: SecurityEventInfo) => event.type.includes('_danger_')
+
 const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   const { username, expiresAt, logoutAll, changePassword } = useAuth()
   const [sessions, setSessions] = useState<AuthSessionInfo[]>([])
@@ -166,6 +174,18 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   const revokedSessions = useMemo(
     () => sessions.filter((session) => session.revokedAt).slice(0, 4),
     [sessions],
+  )
+  const mcpEvents = useMemo(
+    () => events.filter(isMCPEvent),
+    [events],
+  )
+  const mcpFailureEvents = useMemo(
+    () => mcpEvents.filter(isMCPFailureEvent),
+    [mcpEvents],
+  )
+  const mcpDangerEvents = useMemo(
+    () => mcpEvents.filter(isMCPDangerEvent),
+    [mcpEvents],
   )
   const passwordStrength = useMemo(() => getPasswordStrength(newPassword), [newPassword])
 
@@ -360,6 +380,46 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
               {error && <div className="settings-inline-note error">{error}</div>}
             </div>
           )}
+        </section>
+
+        <section className="settings-setting-section">
+          <div className="settings-setting-section-header">
+            <div>
+              <h3>MCP 审计</h3>
+              <p>最近 MCP 工具访问、失败和危险调用记录。</p>
+            </div>
+          </div>
+          <div className="settings-security-metrics settings-security-metrics-compact">
+            <div>
+              <span>最近访问</span>
+              <strong>{mcpEvents.length > 0 ? formatDateTime(mcpEvents[0].createdAt) : '暂无'}</strong>
+              <small>{mcpEvents.length} 条记录</small>
+            </div>
+            <div>
+              <span>最近失败</span>
+              <strong>{mcpFailureEvents.length}</strong>
+              <small>{mcpFailureEvents[0] ? formatDateTime(mcpFailureEvents[0].createdAt) : '暂无'}</small>
+            </div>
+            <div>
+              <span>危险调用</span>
+              <strong>{mcpDangerEvents.length}</strong>
+              <small>{mcpDangerEvents[0] ? formatDateTime(mcpDangerEvents[0].createdAt) : '暂无'}</small>
+            </div>
+          </div>
+          <div className="settings-security-list">
+            {mcpEvents.length === 0 && <div className="settings-empty-row">暂无 MCP 调用记录</div>}
+            {mcpEvents.slice(0, 6).map((event) => (
+              <div className="settings-security-row" key={event.id}>
+                <div>
+                  <strong>{eventLabelMap[event.type] || event.type}</strong>
+                  <span>{event.message || '无详情'}</span>
+                </div>
+                <div className="settings-security-row-meta">
+                  <span>{formatDateTime(event.createdAt)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="settings-setting-section">

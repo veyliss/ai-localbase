@@ -744,6 +744,10 @@ func (s *AuthService) ListSecurityEvents(limit int) []model.SecurityEvent {
 	return events
 }
 
+func (s *AuthService) RecordSecurityEvent(eventType, username, ip, userAgent, message string) {
+	s.recordSecurityEvent(eventType, username, ip, userAgent, message)
+}
+
 func (s *AuthService) recordSecurityEvent(eventType, username, ip, userAgent, message string) {
 	if s == nil || s.app == nil || s.app.state == nil {
 		return

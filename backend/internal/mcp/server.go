@@ -30,11 +30,16 @@ type DangerConfirmationValidator interface {
 	ConsumeMCPDangerConfirmation(toolName string, args map[string]any, nonce string) error
 }
 
+type SecurityEventRecorder interface {
+	RecordSecurityEvent(eventType, username, ip, userAgent, message string)
+}
+
 type Server struct {
 	registry                    *ToolRegistry
 	tokenProvider               TokenProvider
 	apiKeyValidator             APIKeyValidator
 	dangerConfirmationValidator DangerConfirmationValidator
+	auditRecorder               SecurityEventRecorder
 	serverConfig                model.ServerConfig
 	requestTimeout              time.Duration
 	requestsPerMin              int
@@ -70,11 +75,13 @@ func NewServer(registry *ToolRegistry, tokenProvider TokenProvider, apiKeyValida
 		requestsPerMin = 120
 	}
 	dangerConfirmationValidator, _ := tokenProvider.(DangerConfirmationValidator)
+	auditRecorder, _ := apiKeyValidator.(SecurityEventRecorder)
 	return &Server{
 		registry:                    registry,
 		tokenProvider:               tokenProvider,
 		apiKeyValidator:             apiKeyValidator,
 		dangerConfirmationValidator: dangerConfirmationValidator,
+		auditRecorder:               auditRecorder,
 		serverConfig:                serverConfig,
 		requestTimeout:              timeout,
 		requestsPerMin:              requestsPerMin,
@@ -197,13 +204,17 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 				break
 			}
 		}
+		isDanger := hasDefinition && definition.PermissionLevel == ToolPermissionDanger
 		if hasDefinition && !s.authorizeScopes(c, authCtx, requiredScopesForTool(definition)...) {
+			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, "missing required mcp scope")
 			return
 		}
 		if !hasDefinition && !s.authorizeScopes(c, authCtx, scopeMCPRead) {
+			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, false, "missing required mcp scope")
 			return
 		}
 		if !s.authorizeDangerousTool(c, toolName, arguments, authCtx) {
+			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, "danger confirmation failed")
 			return
 		}
 		if hasDefinition && definition.PermissionLevel == ToolPermissionDanger {
@@ -214,19 +225,23 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		if err != nil {
 			if ctx.Err() != nil {
 				log.Printf("mcp tool call timeout tool=%s permission=%s remote=%s duration_ms=%d error=%v", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), ctx.Err())
+				s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, ctx.Err().Error())
 				c.JSON(http.StatusGatewayTimeout, errorResponse(request.ID, -32001, "mcp request timed out"))
 				return
 			}
 			log.Printf("mcp tool call failed tool=%s permission=%s remote=%s duration_ms=%d error=%v", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), err)
+			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, err.Error())
 			c.JSON(http.StatusOK, errorResponse(request.ID, -32000, err.Error()))
 			return
 		}
 		if ctx.Err() != nil {
 			log.Printf("mcp tool call timeout tool=%s permission=%s remote=%s duration_ms=%d error=%v", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), ctx.Err())
+			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, ctx.Err().Error())
 			c.JSON(http.StatusGatewayTimeout, errorResponse(request.ID, -32001, "mcp request timed out"))
 			return
 		}
 		log.Printf("mcp tool call tool=%s permission=%s remote=%s duration_ms=%d is_error=%t", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), result.IsError)
+		s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, !result.IsError, isDanger, "")
 		c.JSON(http.StatusOK, JSONRPCResponse{
 			JSONRPC: jsonRPCVersion,
 			ID:      request.ID,
@@ -524,6 +539,44 @@ func withoutConfirmNonce(args map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func (s *Server) recordMCPAudit(c *gin.Context, authCtx authContext, toolName, permissionLevel string, startedAt time.Time, success bool, isDanger bool, errorSummary string) {
+	if s == nil || s.auditRecorder == nil {
+		return
+	}
+	eventType := "mcp_call_succeeded"
+	if isDanger {
+		eventType = "mcp_danger_succeeded"
+	}
+	if !success {
+		eventType = "mcp_call_failed"
+		if isDanger {
+			eventType = "mcp_danger_failed"
+		}
+	}
+	username := strings.TrimSpace(authCtx.Principal.Username)
+	if username == "" {
+		username = "mcp-compatible-token"
+	}
+	apiKeyID := strings.TrimSpace(authCtx.Principal.APIKeyID)
+	if apiKeyID == "" {
+		apiKeyID = "-"
+	}
+	message := fmt.Sprintf(
+		"tool=%s permission=%s auth=%s apiKeyId=%s success=%t danger=%t durationMs=%d",
+		toolName,
+		permissionLevel,
+		authCtx.Mode,
+		apiKeyID,
+		success,
+		isDanger,
+		time.Since(startedAt).Milliseconds(),
+	)
+	if trimmedError := strings.TrimSpace(errorSummary); trimmedError != "" {
+		message += " error=" + previewLogString(trimmedError, 140)
+	}
+	s.auditRecorder.RecordSecurityEvent(eventType, username, c.ClientIP(), c.Request.UserAgent(), message)
 }
 
 func requiredScopesForTool(tool ToolDefinition) []string {

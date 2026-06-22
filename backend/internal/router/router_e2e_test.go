@@ -1044,6 +1044,50 @@ func TestMCPDangerConfirmationNonceFlow(t *testing.T) {
 	}
 }
 
+func TestMCPAuditEventsRecorded(t *testing.T) {
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
+	defer cleanup()
+
+	adminHeaders := createTestAPIKeyHeaders(t, engine, sessionHeaders, "mcp-audit-admin", []string{"mcp:admin"})
+	successResp := performMCPToolCall(t, engine, adminHeaders, 401, "list_knowledge_bases", map[string]any{})
+	if successResp.Code != http.StatusOK {
+		t.Fatalf("expected success status 200, got %d, body=%s", successResp.Code, successResp.Body.String())
+	}
+
+	readHeaders := createTestAPIKeyHeaders(t, engine, sessionHeaders, "mcp-audit-read", []string{"mcp:read"})
+	failedResp := performMCPToolCall(t, engine, readHeaders, 402, "create_knowledge_base", map[string]any{"name": "forbidden"})
+	if failedResp.Code != http.StatusForbidden {
+		t.Fatalf("expected scope failure status 403, got %d, body=%s", failedResp.Code, failedResp.Body.String())
+	}
+
+	dangerHeaders := createTestAPIKeyHeaders(t, engine, sessionHeaders, "mcp-audit-danger", []string{"mcp:danger"})
+	dangerArgs := map[string]any{"id": "conv-audit-missing"}
+	dangerConfirmation := createMCPDangerConfirmation(t, engine, sessionHeaders, "delete_conversation", dangerArgs, 0)
+	dangerArgs["confirmNonce"] = dangerConfirmation.ConfirmNonce
+	dangerResp := performMCPToolCall(t, engine, dangerHeaders, 403, "delete_conversation", dangerArgs)
+	if dangerResp.Code != http.StatusOK {
+		t.Fatalf("expected danger call to reach handler, got %d, body=%s", dangerResp.Code, dangerResp.Body.String())
+	}
+
+	eventsResp := performRequestWithHeaders(t, engine, http.MethodGet, "/api/auth/security-events?limit=20", nil, "", sessionHeaders)
+	if eventsResp.Code != http.StatusOK {
+		t.Fatalf("expected events status 200, got %d, body=%s", eventsResp.Code, eventsResp.Body.String())
+	}
+	var eventsPayload struct {
+		Items []model.SecurityEvent `json:"items"`
+	}
+	decodeJSONResponse(t, eventsResp.Body.Bytes(), &eventsPayload)
+	if !hasSecurityEvent(eventsPayload.Items, "mcp_call_succeeded", "tool=list_knowledge_bases") {
+		t.Fatalf("expected mcp success audit event, got %+v", eventsPayload.Items)
+	}
+	if !hasSecurityEvent(eventsPayload.Items, "mcp_call_failed", "tool=create_knowledge_base") {
+		t.Fatalf("expected mcp failed audit event, got %+v", eventsPayload.Items)
+	}
+	if !hasSecurityEvent(eventsPayload.Items, "mcp_danger_succeeded", "tool=delete_conversation") {
+		t.Fatalf("expected mcp danger audit event, got %+v", eventsPayload.Items)
+	}
+}
+
 func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
@@ -1621,6 +1665,15 @@ func performMCPToolCall(t *testing.T, handler http.Handler, headers map[string]s
 		"application/json",
 		headers,
 	)
+}
+
+func hasSecurityEvent(items []model.SecurityEvent, eventType, messagePart string) bool {
+	for _, item := range items {
+		if item.Type == eventType && strings.Contains(item.Message, messagePart) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *qdrantTestServer) handle(w http.ResponseWriter, r *http.Request) {

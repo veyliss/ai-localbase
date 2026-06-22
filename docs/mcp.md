@@ -14,7 +14,7 @@
 - 提供调用日志与耗时记录
 - 提供工具权限分级（只读 / 写入 / 危险）
 - 提供 MCP 级限流与超时保护
-- 为危险工具提供二次确认机制
+- 为危险工具提供一次性确认机制
 - 复用现有知识库、会话、配置与检索服务
 
 ---
@@ -46,6 +46,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 - `GET /mcp`：查看 MCP 服务基础信息
 - `GET /mcp/tools`：查看当前可用工具列表
 - `POST /mcp`：通过 JSON-RPC 调用 MCP 方法
+- `POST /api/config/mcp/danger-confirmations`：创建危险工具一次性确认 nonce
 - `POST /api/config/mcp/reset-token`：重置 MCP Token
 
 > 所有 MCP 接口均需携带请求头 `Authorization: Bearer <API_KEY>`。旧版 MCP Token 仍短期兼容；新客户端必须使用带 MCP scope 的 API Key。
@@ -152,7 +153,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 - 按 `read-only` / `write` / `danger` 统计的权限分布
 - 当前工具清单
 - 鉴权类型与 Token 是否已配置
-- 危险工具确认头名称
+- 危险工具确认 nonce 端点与兼容头信息
 
 #### `get_config_summary`
 
@@ -521,27 +522,45 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 - 工具权限级别日志（read-only / write / danger）
 - 每分钟请求数限制
 - 单次请求超时保护
-- 危险工具二次确认机制
+- 危险工具一次性确认机制
 
 日志输出位置在 [`backend/internal/mcp/server.go`](../backend/internal/mcp/server.go:1)。
 
-### 危险工具二次确认
+### 危险工具一次性确认
 
-当调用 `danger` 工具时，除 `Authorization` 外，还需要提供二次确认。当前版本仍兼容旧 Token 确认，后续推荐切换到一次性确认 nonce。
+当调用 `danger` 工具时，除 API Key 必须具备 `mcp:danger` 或 `mcp:admin` 外，还需要先创建一次性确认 nonce。
 
-优先方式：
+创建确认：
 
-```http
-X-MCP-Confirm: <token>
+```bash
+curl -X POST http://localhost:8080/api/config/mcp/danger-confirmations \
+  -H "Content-Type: application/json" \
+  -b "ai_localbase_session=<WEB_SESSION_COOKIE>" \
+  -d '{
+    "toolName": "delete_document",
+    "arguments": {
+      "knowledgeBaseId": "kb-1",
+      "documentId": "doc-1"
+    }
+  }'
 ```
 
-兼容方式：
+返回：
 
-```text
-?confirm_token=<token>
+```json
+{
+  "confirmNonce": "mcp_confirm_xxx",
+  "expiresAt": "2026-06-22T12:00:00Z",
+  "toolName": "delete_document",
+  "paramHash": "..."
+}
 ```
 
-如果未提供确认头或确认值错误，服务将返回 `403`。
+调用危险工具时，把 `confirmNonce` 放入工具 `arguments`。nonce 会绑定工具名和参数 hash，过期或使用后立即失效。
+
+旧版 `X-MCP-Confirm` 和 `?confirm_token=` 仍短期兼容旧客户端，但不再推荐；新示例不再使用 query token。
+
+如果未提供 nonce、nonce 错误、重复使用或已过期，服务将返回 `403`。
 
 ---
 
@@ -698,6 +717,23 @@ curl -X POST http://localhost:8080/mcp \
 
 该示例需要 API Key 具备 `mcp:danger` 或 `mcp:admin` scope。
 
+先创建一次性确认：
+
+```bash
+curl -X POST http://localhost:8080/api/config/mcp/danger-confirmations \
+  -H "Content-Type: application/json" \
+  -b "ai_localbase_session=<WEB_SESSION_COOKIE>" \
+  -d '{
+    "toolName": "delete_document",
+    "arguments": {
+      "knowledgeBaseId": "kb-1",
+      "documentId": "doc-1"
+    }
+  }'
+```
+
+再调用工具：
+
 ```bash
 curl -X POST http://localhost:8080/mcp \
   -H "Content-Type: application/json" \
@@ -710,7 +746,8 @@ curl -X POST http://localhost:8080/mcp \
       "name": "delete_document",
       "arguments": {
         "knowledgeBaseId": "kb-1",
-        "documentId": "doc-1"
+        "documentId": "doc-1",
+        "confirmNonce": "mcp_confirm_xxx"
       }
     }
   }'

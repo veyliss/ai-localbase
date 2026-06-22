@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"ai-localbase/internal/auth"
 	"ai-localbase/internal/handler"
@@ -981,6 +982,68 @@ func TestOpenAICompatibleAPIAuthRejectsMissingTokenAndAllowsAPIKey(t *testing.T)
 	}
 }
 
+func TestMCPDangerConfirmationNonceFlow(t *testing.T) {
+	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
+	defer cleanup()
+
+	headers := createTestAPIKeyHeaders(t, engine, sessionHeaders, "mcp-danger-nonce", []string{"mcp:danger"})
+	dangerArgs := map[string]any{"id": "conv-danger-nonce"}
+
+	missingNonceResp := performMCPToolCall(t, engine, headers, 301, "delete_conversation", dangerArgs)
+	if missingNonceResp.Code != http.StatusForbidden {
+		t.Fatalf("expected missing nonce status 403, got %d, body=%s", missingNonceResp.Code, missingNonceResp.Body.String())
+	}
+	if !strings.Contains(missingNonceResp.Body.String(), "confirmNonce") {
+		t.Fatalf("expected confirmNonce error, got %s", missingNonceResp.Body.String())
+	}
+
+	wrongNonceArgs := map[string]any{"id": "conv-danger-nonce", "confirmNonce": "mcp_confirm_wrong"}
+	wrongNonceResp := performMCPToolCall(t, engine, headers, 302, "delete_conversation", wrongNonceArgs)
+	if wrongNonceResp.Code != http.StatusForbidden {
+		t.Fatalf("expected wrong nonce status 403, got %d, body=%s", wrongNonceResp.Code, wrongNonceResp.Body.String())
+	}
+
+	confirmation := createMCPDangerConfirmation(t, engine, sessionHeaders, "delete_conversation", dangerArgs, 0)
+	mismatchResp := performMCPToolCall(t, engine, headers, 303, "delete_conversation", map[string]any{
+		"id":           "conv-other",
+		"confirmNonce": confirmation.ConfirmNonce,
+	})
+	if mismatchResp.Code != http.StatusForbidden {
+		t.Fatalf("expected mismatched nonce status 403, got %d, body=%s", mismatchResp.Code, mismatchResp.Body.String())
+	}
+	if !strings.Contains(mismatchResp.Body.String(), "invalid danger confirmation nonce") {
+		t.Fatalf("expected mismatch error, got %s", mismatchResp.Body.String())
+	}
+
+	validConfirmation := createMCPDangerConfirmation(t, engine, sessionHeaders, "delete_conversation", dangerArgs, 0)
+	validArgs := map[string]any{"id": "conv-danger-nonce", "confirmNonce": validConfirmation.ConfirmNonce}
+	validResp := performMCPToolCall(t, engine, headers, 304, "delete_conversation", validArgs)
+	if validResp.Code != http.StatusOK {
+		t.Fatalf("expected valid nonce to reach tool handler, got %d, body=%s", validResp.Code, validResp.Body.String())
+	}
+
+	reusedResp := performMCPToolCall(t, engine, headers, 305, "delete_conversation", validArgs)
+	if reusedResp.Code != http.StatusForbidden {
+		t.Fatalf("expected reused nonce status 403, got %d, body=%s", reusedResp.Code, reusedResp.Body.String())
+	}
+	if !strings.Contains(reusedResp.Body.String(), "invalid or used") {
+		t.Fatalf("expected reused nonce error, got %s", reusedResp.Body.String())
+	}
+
+	expiredConfirmation := createMCPDangerConfirmation(t, engine, sessionHeaders, "delete_conversation", dangerArgs, 1)
+	time.Sleep(1100 * time.Millisecond)
+	expiredResp := performMCPToolCall(t, engine, headers, 306, "delete_conversation", map[string]any{
+		"id":           "conv-danger-nonce",
+		"confirmNonce": expiredConfirmation.ConfirmNonce,
+	})
+	if expiredResp.Code != http.StatusForbidden {
+		t.Fatalf("expected expired nonce status 403, got %d, body=%s", expiredResp.Code, expiredResp.Body.String())
+	}
+	if !strings.Contains(expiredResp.Body.String(), "expired danger confirmation nonce") {
+		t.Fatalf("expected expired nonce error, got %s", expiredResp.Body.String())
+	}
+}
+
 func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 	engine, _, sessionHeaders, cleanup := newAuthenticatedTestRouter(t)
 	defer cleanup()
@@ -1040,6 +1103,12 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 	var uploadResult model.UploadResponse
 	decodeJSONResponse(t, uploadResp.Body.Bytes(), &uploadResult)
 
+	deleteDocArgs := map[string]any{
+		"knowledgeBaseId": knowledgeBaseID,
+		"documentId":      uploadResult.Uploaded.ID,
+	}
+	deleteDocConfirmation := createMCPDangerConfirmation(t, engine, sessionHeaders, "delete_document", deleteDocArgs, 0)
+	deleteDocArgs["confirmNonce"] = deleteDocConfirmation.ConfirmNonce
 	delDocResp := performRequestWithHeaders(
 		t,
 		engine,
@@ -1050,11 +1119,8 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 			"id":      3,
 			"method":  "tools/call",
 			"params": map[string]any{
-				"name": "delete_document",
-				"arguments": map[string]any{
-					"knowledgeBaseId": knowledgeBaseID,
-					"documentId":      uploadResult.Uploaded.ID,
-				},
+				"name":      "delete_document",
+				"arguments": deleteDocArgs,
 			},
 		})),
 		"application/json",
@@ -1076,6 +1142,11 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 		t.Fatalf("expected 0 documents after delete, got %d", len(docList.Items))
 	}
 
+	deleteKBArgs := map[string]any{
+		"knowledgeBaseId": knowledgeBaseID,
+	}
+	deleteKBConfirmation := createMCPDangerConfirmation(t, engine, sessionHeaders, "delete_knowledge_base", deleteKBArgs, 0)
+	deleteKBArgs["confirmNonce"] = deleteKBConfirmation.ConfirmNonce
 	delKBResp := performRequestWithHeaders(
 		t,
 		engine,
@@ -1086,10 +1157,8 @@ func TestMCPDangerToolsDeleteKnowledgeBaseAndDocument(t *testing.T) {
 			"id":      4,
 			"method":  "tools/call",
 			"params": map[string]any{
-				"name": "delete_knowledge_base",
-				"arguments": map[string]any{
-					"knowledgeBaseId": knowledgeBaseID,
-				},
+				"name":      "delete_knowledge_base",
+				"arguments": deleteKBArgs,
 			},
 		})),
 		"application/json",
@@ -1502,6 +1571,56 @@ func createTestAPIKeyHeaders(t *testing.T, handler http.Handler, sessionHeaders 
 		t.Fatalf("expected api key token, got %+v", created)
 	}
 	return map[string]string{"Authorization": "Bearer " + created.Token}
+}
+
+func createMCPDangerConfirmation(t *testing.T, handler http.Handler, sessionHeaders map[string]string, toolName string, args map[string]any, ttlSeconds int) model.MCPDangerConfirmationResponse {
+	t.Helper()
+	payload := map[string]any{
+		"toolName":  toolName,
+		"arguments": args,
+	}
+	if ttlSeconds > 0 {
+		payload["ttlSeconds"] = ttlSeconds
+	}
+	resp := performRequestWithHeaders(
+		t,
+		handler,
+		http.MethodPost,
+		"/api/config/mcp/danger-confirmations",
+		bytes.NewReader(mustMarshalJSON(t, payload)),
+		"application/json",
+		sessionHeaders,
+	)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected danger confirmation status 201, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+	var confirmation model.MCPDangerConfirmationResponse
+	decodeJSONResponse(t, resp.Body.Bytes(), &confirmation)
+	if strings.TrimSpace(confirmation.ConfirmNonce) == "" {
+		t.Fatalf("expected confirmNonce, got %+v", confirmation)
+	}
+	return confirmation
+}
+
+func performMCPToolCall(t *testing.T, handler http.Handler, headers map[string]string, id int, toolName string, args map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	return performRequestWithHeaders(
+		t,
+		handler,
+		http.MethodPost,
+		"/mcp",
+		bytes.NewReader(mustMarshalJSON(t, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name":      toolName,
+				"arguments": args,
+			},
+		})),
+		"application/json",
+		headers,
+	)
 }
 
 func (s *qdrantTestServer) handle(w http.ResponseWriter, r *http.Request) {

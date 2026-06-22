@@ -26,16 +26,21 @@ type APIKeyValidator interface {
 	ValidateAPIKey(token string) (service.AuthPrincipal, error)
 }
 
+type DangerConfirmationValidator interface {
+	ConsumeMCPDangerConfirmation(toolName string, args map[string]any, nonce string) error
+}
+
 type Server struct {
-	registry        *ToolRegistry
-	tokenProvider   TokenProvider
-	apiKeyValidator APIKeyValidator
-	serverConfig    model.ServerConfig
-	requestTimeout  time.Duration
-	requestsPerMin  int
-	rateMu          sync.Mutex
-	rateWindowStart time.Time
-	rateCount       int
+	registry                    *ToolRegistry
+	tokenProvider               TokenProvider
+	apiKeyValidator             APIKeyValidator
+	dangerConfirmationValidator DangerConfirmationValidator
+	serverConfig                model.ServerConfig
+	requestTimeout              time.Duration
+	requestsPerMin              int
+	rateMu                      sync.Mutex
+	rateWindowStart             time.Time
+	rateCount                   int
 }
 
 type authContext struct {
@@ -64,13 +69,15 @@ func NewServer(registry *ToolRegistry, tokenProvider TokenProvider, apiKeyValida
 	if requestsPerMin <= 0 {
 		requestsPerMin = 120
 	}
+	dangerConfirmationValidator, _ := tokenProvider.(DangerConfirmationValidator)
 	return &Server{
-		registry:        registry,
-		tokenProvider:   tokenProvider,
-		apiKeyValidator: apiKeyValidator,
-		serverConfig:    serverConfig,
-		requestTimeout:  timeout,
-		requestsPerMin:  requestsPerMin,
+		registry:                    registry,
+		tokenProvider:               tokenProvider,
+		apiKeyValidator:             apiKeyValidator,
+		dangerConfirmationValidator: dangerConfirmationValidator,
+		serverConfig:                serverConfig,
+		requestTimeout:              timeout,
+		requestsPerMin:              requestsPerMin,
 	}
 }
 
@@ -196,8 +203,11 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		if !hasDefinition && !s.authorizeScopes(c, authCtx, scopeMCPRead) {
 			return
 		}
-		if !s.authorizeDangerousTool(c, toolName, authCtx) {
+		if !s.authorizeDangerousTool(c, toolName, arguments, authCtx) {
 			return
+		}
+		if hasDefinition && definition.PermissionLevel == ToolPermissionDanger {
+			arguments = withoutConfirmNonce(arguments)
 		}
 		log.Printf("mcp tool call start tool=%s permission=%s remote=%s args=%s", toolName, permissionLevel, c.ClientIP(), summarizeToolArguments(arguments))
 		result, err := s.registry.Call(ctx, toolName, arguments)
@@ -239,7 +249,7 @@ func (s *Server) toolDescriptors() []map[string]any {
 		items = append(items, map[string]any{
 			"name":        tool.Name,
 			"description": tool.Description,
-			"inputSchema": tool.InputSchema,
+			"inputSchema": inputSchemaForTool(tool),
 			"annotations": map[string]any{
 				"readOnlyHint":    tool.ReadOnly,
 				"permissionLevel": tool.PermissionLevel,
@@ -248,6 +258,32 @@ func (s *Server) toolDescriptors() []map[string]any {
 		})
 	}
 	return items
+}
+
+func inputSchemaForTool(tool ToolDefinition) map[string]any {
+	if tool.PermissionLevel != ToolPermissionDanger {
+		return tool.InputSchema
+	}
+	schema := cloneSchemaMap(tool.InputSchema)
+	sourceProperties, _ := schema["properties"].(map[string]any)
+	properties := cloneSchemaMap(sourceProperties)
+	properties["confirmNonce"] = map[string]any{
+		"type":        "string",
+		"description": "一次性危险工具确认 nonce，可通过 POST /api/config/mcp/danger-confirmations 获取。",
+	}
+	schema["properties"] = properties
+	return schema
+}
+
+func cloneSchemaMap(source map[string]any) map[string]any {
+	if source == nil {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func errorResponse(id any, code int, message string) JSONRPCResponse {
@@ -421,7 +457,7 @@ func (s *Server) authorizeScopes(c *gin.Context, authCtx authContext, requiredSc
 	return false
 }
 
-func (s *Server) authorizeDangerousTool(c *gin.Context, toolName string, authCtx authContext) bool {
+func (s *Server) authorizeDangerousTool(c *gin.Context, toolName string, args map[string]any, authCtx authContext) bool {
 	toolName = strings.TrimSpace(toolName)
 	if toolName == "" || s == nil || s.registry == nil {
 		return true
@@ -431,7 +467,16 @@ func (s *Server) authorizeDangerousTool(c *gin.Context, toolName string, authCtx
 	if !ok || definition.PermissionLevel != ToolPermissionDanger {
 		return true
 	}
-	if authCtx.Mode == authModeAPIKey {
+	confirmNonce := optionalMCPConfirmNonce(args)
+	if confirmNonce != "" {
+		if s.dangerConfirmationValidator == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "mcp danger confirmation validator is unavailable"})
+			return false
+		}
+		if err := s.dangerConfirmationValidator.ConsumeMCPDangerConfirmation(toolName, args, confirmNonce); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return false
+		}
 		return true
 	}
 
@@ -440,7 +485,7 @@ func (s *Server) authorizeDangerousTool(c *gin.Context, toolName string, authCtx
 		confirmToken = strings.TrimSpace(c.Query("confirm_token"))
 	}
 	if confirmToken == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "dangerous tool requires X-MCP-Confirm header"})
+		c.JSON(http.StatusForbidden, gin.H{"error": "dangerous tool requires confirmNonce"})
 		return false
 	}
 
@@ -457,6 +502,28 @@ func (s *Server) authorizeDangerousTool(c *gin.Context, toolName string, authCtx
 	}
 
 	return true
+}
+
+func optionalMCPConfirmNonce(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	value, _ := args["confirmNonce"].(string)
+	return strings.TrimSpace(value)
+}
+
+func withoutConfirmNonce(args map[string]any) map[string]any {
+	if args == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(args))
+	for key, value := range args {
+		if key == "confirmNonce" {
+			continue
+		}
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func requiredScopesForTool(tool ToolDefinition) []string {

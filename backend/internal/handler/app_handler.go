@@ -67,6 +67,21 @@ func (h *AppHandler) ResetMCPToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"mcp": mcpConfig})
 }
 
+func (h *AppHandler) CreateMCPDangerConfirmation(c *gin.Context) {
+	var req model.MCPDangerConfirmationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid mcp danger confirmation request body")
+		return
+	}
+
+	confirmation, err := h.appService.CreateMCPDangerConfirmation(req)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	c.JSON(http.StatusCreated, confirmation)
+}
+
 func (h *AppHandler) ListConversations(c *gin.Context) {
 	items, err := h.appService.ListConversations()
 	if err != nil {

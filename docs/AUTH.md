@@ -172,7 +172,7 @@ Cookie: ai_localbase_session=<web-session-cookie>
 - `mcp:write`：允许 MCP 普通写入工具，例如创建知识库、保存会话、重建索引。
 - `mcp:upload`：允许 MCP 上传类工具，例如上传文档、注册暂存文件。
 - `mcp:eval`：允许 MCP 评估类工具，例如生成评估数据集。
-- `mcp:danger`：允许 MCP 危险工具，例如删除知识库、文档或会话。
+- `mcp:danger`：允许 MCP 危险工具，例如删除知识库、文档或会话；调用时仍需要一次性 `confirmNonce`。
 - `mcp:admin`：允许调用全部 MCP 工具。
 
 MCP API Key 使用方式：

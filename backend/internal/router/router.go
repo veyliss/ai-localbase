@@ -50,6 +50,7 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 		api.GET("/config", appHandler.GetConfig)
 		api.PUT("/config", appHandler.UpdateConfig)
 		api.POST("/config/mcp/reset-token", appHandler.ResetMCPToken)
+		api.POST("/config/mcp/danger-confirmations", appHandler.CreateMCPDangerConfirmation)
 		api.POST("/config/test-chat-model", configHandler.TestChatModel)
 		api.POST("/config/test-embedding-model", configHandler.TestEmbeddingModel)
 		api.GET("/config/health-summary", configHandler.HealthSummary)

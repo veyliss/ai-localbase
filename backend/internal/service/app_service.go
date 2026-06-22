@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -14,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -56,7 +59,18 @@ type AppService struct {
 	queryRewriter     QueryRewriter
 	semanticCache     *SemanticCache
 	contextCompressor ContextCompressor
+	mcpDangerMu       sync.Mutex
+	mcpDangerConfirms map[string]mcpDangerConfirmationRecord
 }
+
+type mcpDangerConfirmationRecord struct {
+	Nonce     string
+	ToolName  string
+	ParamHash string
+	ExpiresAt time.Time
+}
+
+const mcpDangerConfirmationDefaultTTL = 5 * time.Minute
 
 // ContextCompressor 上下文压缩器接口
 // Compress 将多个 chunks 压缩为简洁的上下文文本
@@ -122,13 +136,14 @@ func (c *LLMContextCompressor) Compress(ctx context.Context, query string, chunk
 
 func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory ChatHistoryStore, serverConfig model.ServerConfig) *AppService {
 	service := &AppService{
-		state:        defaultAppState(serverConfig),
-		store:        store,
-		chatHistory:  chatHistory,
-		qdrant:       qdrant,
-		rag:          NewRagService(),
-		serverConfig: serverConfig,
-		staging:      NewUploadStagingService(filepath.Join("data", "staging"), 30*time.Minute),
+		state:             defaultAppState(serverConfig),
+		store:             store,
+		chatHistory:       chatHistory,
+		qdrant:            qdrant,
+		rag:               NewRagService(),
+		serverConfig:      serverConfig,
+		staging:           NewUploadStagingService(filepath.Join("data", "staging"), 30*time.Minute),
+		mcpDangerConfirms: map[string]mcpDangerConfirmationRecord{},
 	}
 	service.rag.SetQdrantService(qdrant)
 
@@ -609,6 +624,138 @@ func generateMCPToken() string {
 		return util.NextID("mcp")
 	}
 	return "mcp_" + hex.EncodeToString(buffer)
+}
+
+func (s *AppService) CreateMCPDangerConfirmation(req model.MCPDangerConfirmationRequest) (model.MCPDangerConfirmationResponse, error) {
+	if s == nil {
+		return model.MCPDangerConfirmationResponse{}, fmt.Errorf("app service is nil")
+	}
+	toolName := strings.TrimSpace(req.ToolName)
+	if toolName == "" {
+		return model.MCPDangerConfirmationResponse{}, fmt.Errorf("toolName is required")
+	}
+	paramHash := strings.ToLower(strings.TrimSpace(req.ParamHash))
+	if paramHash == "" {
+		var err error
+		paramHash, err = hashMCPDangerArguments(req.Arguments)
+		if err != nil {
+			return model.MCPDangerConfirmationResponse{}, err
+		}
+	}
+	ttl := mcpDangerConfirmationDefaultTTL
+	if req.TTLSeconds > 0 {
+		ttl = time.Duration(req.TTLSeconds) * time.Second
+		if ttl > mcpDangerConfirmationDefaultTTL {
+			ttl = mcpDangerConfirmationDefaultTTL
+		}
+	}
+	nonce := generateMCPConfirmNonce()
+	expiresAt := time.Now().UTC().Add(ttl)
+
+	s.mcpDangerMu.Lock()
+	if s.mcpDangerConfirms == nil {
+		s.mcpDangerConfirms = map[string]mcpDangerConfirmationRecord{}
+	}
+	s.pruneExpiredMCPDangerConfirmationsLocked(time.Now().UTC())
+	s.mcpDangerConfirms[nonce] = mcpDangerConfirmationRecord{
+		Nonce:     nonce,
+		ToolName:  toolName,
+		ParamHash: paramHash,
+		ExpiresAt: expiresAt,
+	}
+	s.mcpDangerMu.Unlock()
+
+	return model.MCPDangerConfirmationResponse{
+		ConfirmNonce: nonce,
+		ExpiresAt:    expiresAt.Format(time.RFC3339),
+		ToolName:     toolName,
+		ParamHash:    paramHash,
+	}, nil
+}
+
+func (s *AppService) ConsumeMCPDangerConfirmation(toolName string, args map[string]any, nonce string) error {
+	if s == nil {
+		return fmt.Errorf("app service is nil")
+	}
+	toolName = strings.TrimSpace(toolName)
+	nonce = strings.TrimSpace(nonce)
+	if nonce == "" {
+		return fmt.Errorf("dangerous tool requires confirmNonce")
+	}
+	paramHash, err := hashMCPDangerArguments(args)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	s.mcpDangerMu.Lock()
+	defer s.mcpDangerMu.Unlock()
+	if s.mcpDangerConfirms == nil {
+		s.mcpDangerConfirms = map[string]mcpDangerConfirmationRecord{}
+	}
+	record, ok := s.mcpDangerConfirms[nonce]
+	if !ok {
+		return fmt.Errorf("invalid or used danger confirmation nonce")
+	}
+	delete(s.mcpDangerConfirms, nonce)
+	if !record.ExpiresAt.After(now) {
+		s.pruneExpiredMCPDangerConfirmationsLocked(now)
+		return fmt.Errorf("expired danger confirmation nonce")
+	}
+	if record.ToolName != toolName || record.ParamHash != paramHash {
+		s.pruneExpiredMCPDangerConfirmationsLocked(now)
+		return fmt.Errorf("invalid danger confirmation nonce")
+	}
+	s.pruneExpiredMCPDangerConfirmationsLocked(now)
+	return nil
+}
+
+func (s *AppService) pruneExpiredMCPDangerConfirmationsLocked(now time.Time) {
+	for nonce, record := range s.mcpDangerConfirms {
+		if !record.ExpiresAt.After(now) {
+			delete(s.mcpDangerConfirms, nonce)
+		}
+	}
+}
+
+func generateMCPConfirmNonce() string {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		return util.NextID("mcp_confirm")
+	}
+	return "mcp_confirm_" + hex.EncodeToString(buffer)
+}
+
+func hashMCPDangerArguments(args map[string]any) (string, error) {
+	sanitized := sanitizeMCPDangerValue(args)
+	encoded, err := json.Marshal(sanitized)
+	if err != nil {
+		return "", fmt.Errorf("hash danger confirmation arguments: %w", err)
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func sanitizeMCPDangerValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		cloned := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if key == "confirmNonce" {
+				continue
+			}
+			cloned[key] = sanitizeMCPDangerValue(item)
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = sanitizeMCPDangerValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
 }
 
 func IsSensitiveStructuredFileExtension(ext string) bool {

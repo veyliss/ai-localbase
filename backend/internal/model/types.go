@@ -128,6 +128,20 @@ type MCPConfig struct {
 	Token    string `json:"token"`
 }
 
+type MCPDangerConfirmationRequest struct {
+	ToolName   string         `json:"toolName"`
+	Arguments  map[string]any `json:"arguments,omitempty"`
+	ParamHash  string         `json:"paramHash,omitempty"`
+	TTLSeconds int            `json:"ttlSeconds,omitempty"`
+}
+
+type MCPDangerConfirmationResponse struct {
+	ConfirmNonce string `json:"confirmNonce"`
+	ExpiresAt    string `json:"expiresAt"`
+	ToolName     string `json:"toolName"`
+	ParamHash    string `json:"paramHash"`
+}
+
 type RetrievalConfig struct {
 	DefaultSearchMode        string `json:"defaultSearchMode"`
 	HybridSearchEnabled      bool   `json:"hybridSearchEnabled"`

@@ -771,7 +771,11 @@ func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[strin
 			"legacyTokenConfigured": strings.TrimSpace(cfg.MCP.Token) != "",
 			"adminScope":            scopeMCPAdmin,
 		},
-		"dangerousToolGate": "X-MCP-Confirm",
+		"dangerousToolGate": map[string]any{
+			"type":         "confirmNonce",
+			"endpoint":     "/api/config/mcp/danger-confirmations",
+			"legacyHeader": "X-MCP-Confirm",
+		},
 	}
 }
 

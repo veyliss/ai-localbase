@@ -194,7 +194,7 @@ docker compose -f docker-compose.dev.yml up --build
 - 只读 / 写入 / 危险工具权限分级
 - API Key Scope 鉴权，旧 MCP Token 兼容
 - 限流、超时与审计日志
-- 危险工具二次确认机制
+- 危险工具一次性确认机制
 - 复用现有知识库、会话、配置与检索服务
 - MCP 能力自检工具：`get_mcp_capabilities`
 - 文档详情、检索调试、结构化查询、评估集生成和重建索引工具

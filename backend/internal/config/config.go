@@ -12,6 +12,7 @@ func LoadServerConfig() model.ServerConfig {
 	return model.ServerConfig{
 		Port:                           getEnv("PORT", "8080"),
 		UploadDir:                      getEnv("UPLOAD_DIR", "data/uploads"),
+		MaxUploadBytes:                 getEnvAsInt64("MAX_UPLOAD_BYTES", 25*1024*1024),
 		StateFile:                      getEnv("STATE_FILE", "data/app-state.json"),
 		ChatHistoryFile:                getEnv("CHAT_HISTORY_FILE", "data/chat-history.db"),
 		QdrantURL:                      getEnv("QDRANT_URL", "http://localhost:6333"),
@@ -63,6 +64,20 @@ func getEnvAsInt(key string, fallback int) int {
 	}
 
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
+}
+
+func getEnvAsInt64(key string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return fallback
 	}

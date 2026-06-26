@@ -68,6 +68,8 @@ docker compose -f docker-compose.prod.yml up -d
 - `QDRANT_COLLECTION_PREFIX`：Qdrant 集合名前缀，切换向量维度时可改前缀避免复用旧集合
 - `ENABLE_HYBRID_SEARCH`：开启 dense + sparse 混合检索。开启前建议切换新的 `QDRANT_COLLECTION_PREFIX` 并重建索引，让 Qdrant collection 使用 named dense/sparse vectors。
 - `QDRANT_API_KEY`：Qdrant API 密钥，可选
+- `QDRANT_BIND_ADDRESS`：Qdrant 暴露端口绑定地址，默认 `127.0.0.1`，服务器部署不建议改成公网地址
+- `MAX_UPLOAD_BYTES`：单文件上传大小上限，默认 `26214400`，即 25 MiB
 
 ### 验证连接
 

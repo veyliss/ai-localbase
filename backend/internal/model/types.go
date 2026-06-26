@@ -5,6 +5,7 @@ import "sync"
 type ServerConfig struct {
 	Port                           string
 	UploadDir                      string
+	MaxUploadBytes                 int64
 	StateFile                      string
 	ChatHistoryFile                string
 	QdrantURL                      string

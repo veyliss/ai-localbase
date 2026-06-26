@@ -1836,7 +1836,7 @@ const MermaidDiagram: React.FC<MermaidDiagramProps> = ({ chart }) => {
         const { default: mermaid } = await import('mermaid')
         mermaid.initialize({
           startOnLoad: false,
-          securityLevel: 'loose',
+          securityLevel: 'strict',
           theme: 'default',
         })
         const id = `mermaid-${Math.random().toString(36).slice(2, 10)}`
@@ -1844,7 +1844,8 @@ const MermaidDiagram: React.FC<MermaidDiagramProps> = ({ chart }) => {
 
         const hasSvgContent = Boolean(renderedSvg && renderedSvg.includes('<svg'))
         const hasSyntaxError = /Syntax error in text|Parse error|Lexical error/i.test(renderedSvg)
-        if (!hasSvgContent || hasSyntaxError) {
+        const hasUnsafeSvg = /<script|on[a-z]+\s*=|javascript:/i.test(renderedSvg)
+        if (!hasSvgContent || hasSyntaxError || hasUnsafeSvg) {
           throw new Error('invalid mermaid svg')
         }
 

@@ -92,6 +92,7 @@ docker compose up --build
 |------|--------|------|
 | `PORT` | `8080` | 后端服务监听端口 |
 | `UPLOAD_DIR` | `data/uploads` | 上传文件目录 |
+| `MAX_UPLOAD_BYTES` | `26214400` | 单文件上传大小上限，默认 25 MiB |
 | `STATE_FILE` | `data/app-state.json` | 应用状态文件 |
 | `CHAT_HISTORY_FILE` | `data/chat-history.db` | 聊天记录 SQLite 文件 |
 | `ENABLE_AUTH` | `false` | 是否启用 Web 登录和 API Key 鉴权 |
@@ -103,6 +104,7 @@ docker compose up --build
 | `JWT_SECRET` | 空 | 旧版兼容项，当前 session 认证不再要求 |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant 地址 |
 | `QDRANT_API_KEY` | 空 | Qdrant API Key |
+| `QDRANT_BIND_ADDRESS` | `127.0.0.1` | Docker 暴露 Qdrant 端口时绑定的宿主机地址 |
 | `QDRANT_COLLECTION_PREFIX` | `kb_` | 知识库集合名前缀 |
 | `QDRANT_VECTOR_SIZE` | `768` | 向量维度 |
 | `QDRANT_DISTANCE` | `Cosine` | 距离算法 |
@@ -118,6 +120,8 @@ docker compose up --build
 | `MCP_REQUESTS_PER_MINUTE` | `120` | MCP 每分钟限流 |
 
 > 注意：`QDRANT_VECTOR_SIZE` 必须与嵌入模型输出维度一致。切换嵌入模型时，如果维度变化，旧 Qdrant 集合不能直接复用；请清理旧集合、使用新的 `QDRANT_COLLECTION_PREFIX`，或重新创建知识库后重建索引。
+
+Docker Compose 默认只把 Qdrant 端口绑定到 `127.0.0.1`。服务器部署时不要直接开放 `6333/6334` 到公网；如确需开放，请设置 `QDRANT_API_KEY` 并配合防火墙白名单。
 
 ### 认证初始化
 

@@ -21,3 +21,6 @@
 - 不要将真实 API Key 提交到仓库
 - 默认忽略 `backend/data/**` 与本地上传文件
 - 发布日志和截图前请先脱敏
+- 服务器部署建议开启 `ENABLE_AUTH=true`，并设置强 `AUTH_PASSWORD` 或 `AUTH_SETUP_TOKEN`
+- Qdrant 端口默认应只绑定 `127.0.0.1`；如需开放到网络，必须配置 `QDRANT_API_KEY` 和防火墙白名单
+- 根据服务器资源设置 `MAX_UPLOAD_BYTES`，避免大文件上传导致磁盘或内存压力

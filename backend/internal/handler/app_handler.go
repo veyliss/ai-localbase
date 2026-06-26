@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -520,17 +521,16 @@ func (h *AppHandler) UploadToKnowledgeBase(c *gin.Context) {
 }
 
 func (h *AppHandler) Upload(c *gin.Context) {
-	h.handleUpload(c, c.PostForm("knowledgeBaseId"))
+	h.handleUpload(c, "")
 }
 
 func (h *AppHandler) StageUpload(c *gin.Context) {
-	file, err := c.FormFile("file")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "missing file field 'file'")
+	file, ok := h.uploadFileFromRequest(c)
+	if !ok {
 		return
 	}
-	if err := validateUploadFile(file, h.appService.GetConfig()); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
+	if err := validateUploadFile(file, h.appService.GetConfig(), h.serverConfig.MaxUploadBytes); err != nil {
+		writeUploadValidationError(c, err)
 		return
 	}
 	staged, err := h.appService.StageUpload(file, "http")
@@ -1095,18 +1095,22 @@ func buildTableAnswerRules(questionType string) []string {
 }
 
 func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID string) {
-	file, err := c.FormFile("file")
-	if err != nil {
-		writeError(c, http.StatusBadRequest, "missing file field 'file'")
+	file, ok := h.uploadFileFromRequest(c)
+	if !ok {
 		return
 	}
 
-	if err := validateUploadFile(file, h.appService.GetConfig()); err != nil {
-		writeError(c, http.StatusBadRequest, err.Error())
+	if err := validateUploadFile(file, h.appService.GetConfig(), h.serverConfig.MaxUploadBytes); err != nil {
+		writeUploadValidationError(c, err)
 		return
 	}
 
-	knowledgeBaseID, err := h.appService.ResolveKnowledgeBaseID(candidateKnowledgeBaseID)
+	resolvedCandidateID := strings.TrimSpace(candidateKnowledgeBaseID)
+	if resolvedCandidateID == "" {
+		resolvedCandidateID = c.PostForm("knowledgeBaseId")
+	}
+
+	knowledgeBaseID, err := h.appService.ResolveKnowledgeBaseID(resolvedCandidateID)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
@@ -1405,7 +1409,38 @@ func minInt(a, b int) int {
 	return b
 }
 
-func validateUploadFile(file *multipart.FileHeader, cfg model.AppConfig) error {
+const uploadRequestOverheadBytes int64 = 1024 * 1024
+
+func (h *AppHandler) uploadFileFromRequest(c *gin.Context) (*multipart.FileHeader, bool) {
+	if h.serverConfig.MaxUploadBytes > 0 {
+		c.Request.Body = http.MaxBytesReader(
+			c.Writer,
+			c.Request.Body,
+			h.serverConfig.MaxUploadBytes+uploadRequestOverheadBytes,
+		)
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		if strings.Contains(err.Error(), "request body too large") {
+			writeError(c, http.StatusRequestEntityTooLarge, maxUploadSizeMessage(h.serverConfig.MaxUploadBytes))
+			return nil, false
+		}
+		writeError(c, http.StatusBadRequest, "missing file field 'file'")
+		return nil, false
+	}
+
+	return file, true
+}
+
+func validateUploadFile(file *multipart.FileHeader, cfg model.AppConfig, maxUploadBytes int64) error {
+	if maxUploadBytes > 0 && file.Size > maxUploadBytes {
+		return &uploadSizeError{
+			Size:     file.Size,
+			MaxBytes: maxUploadBytes,
+		}
+	}
+
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 	allowed := map[string]struct{}{
 		".txt": {},
@@ -1424,6 +1459,35 @@ func validateUploadFile(file *multipart.FileHeader, cfg model.AppConfig) error {
 	}
 
 	return nil
+}
+
+func writeUploadValidationError(c *gin.Context, err error) {
+	var sizeErr *uploadSizeError
+	if errors.As(err, &sizeErr) {
+		writeError(c, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
+	writeError(c, http.StatusBadRequest, err.Error())
+}
+
+func maxUploadSizeMessage(maxUploadBytes int64) string {
+	if maxUploadBytes <= 0 {
+		return "uploaded file is too large"
+	}
+	return fmt.Sprintf("uploaded file is too large, max size is %s", util.FormatFileSize(maxUploadBytes))
+}
+
+type uploadSizeError struct {
+	Size     int64
+	MaxBytes int64
+}
+
+func (e *uploadSizeError) Error() string {
+	return fmt.Sprintf(
+		"uploaded file is too large: %s, max size is %s",
+		util.FormatFileSize(e.Size),
+		util.FormatFileSize(e.MaxBytes),
+	)
 }
 
 func errUnsupportedFileType(ext string) error {

@@ -172,7 +172,6 @@ export interface ChatModeSettings {
   thinkModel: string
 }
 
-const AI_CONFIG_STORAGE_KEY = 'ai-localbase-config'
 const THINK_MODEL_STORAGE_KEY = 'ai-localbase-think-model'
 const FALLBACK_REQUEST_TIMEOUT_MS = 90_000
 const STREAM_FIRST_CHUNK_TIMEOUT_MS = 30_000
@@ -524,17 +523,7 @@ function AppContent() {
       return defaultConfig
     }
 
-    try {
-      const cachedConfig = window.localStorage.getItem(AI_CONFIG_STORAGE_KEY)
-
-      if (!cachedConfig) {
-        return defaultConfig
-      }
-
-      return normalizeAppConfig(JSON.parse(cachedConfig) as Partial<AppConfig>, defaultConfig)
-    } catch {
-      return defaultConfig
-    }
+    return defaultConfig
   })
 
   const [chatMode, setChatMode] = useState<ChatMode>('fast')
@@ -677,8 +666,8 @@ function AppContent() {
       return
     }
 
-    window.localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(config))
-  }, [config])
+    window.localStorage.removeItem('ai-localbase-config')
+  }, [])
 
   const isOllamaSingleFlightMode =
     config.chat.provider === 'ollama' || config.embedding.provider === 'ollama'

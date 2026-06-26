@@ -3,8 +3,10 @@ services:
     image: qdrant/qdrant:v1.13.4
     restart: unless-stopped
     ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
+      - "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_GRPC_PORT:-6334}:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
     volumes:
       - ${QDRANT_STORAGE_PATH:-./qdrant_storage}:/qdrant/storage
 
@@ -20,6 +22,7 @@ services:
     environment:
       PORT: ${PORT:-8080}
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/data/uploads}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
       STATE_FILE: ${STATE_FILE:-/app/data/app-state.json}
       CHAT_HISTORY_FILE: ${CHAT_HISTORY_FILE:-/app/data/chat-history.db}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}

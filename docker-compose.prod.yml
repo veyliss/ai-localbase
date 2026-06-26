@@ -3,14 +3,14 @@ services:
     image: qdrant/qdrant:v1.13.4
     container_name: qdrant
     ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
+      - "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
     environment:
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD-SHELL", "if [ -n \"$${QDRANT__SERVICE__API_KEY}\" ]; then curl -f -H \"api-key: $${QDRANT__SERVICE__API_KEY}\" http://localhost:6333/health; else curl -f http://localhost:6333/health; fi"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -26,6 +26,7 @@ services:
     environment:
       - PORT=${PORT:-8080}
       - UPLOAD_DIR=${UPLOAD_DIR:-/app/data/uploads}
+      - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-26214400}
       - STATE_FILE=${STATE_FILE:-/app/data/app-state.json}
       - CHAT_HISTORY_FILE=${CHAT_HISTORY_FILE:-/app/data/chat-history.db}
       - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}

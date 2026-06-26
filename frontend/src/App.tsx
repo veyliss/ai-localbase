@@ -127,6 +127,7 @@ export interface ChatConfig {
   model: string
   apiKey: string
   apiKeyConfigured?: boolean
+  clearApiKey?: boolean
   temperature: number
   contextMessageLimit: number
 }
@@ -137,6 +138,7 @@ export interface EmbeddingConfig {
   model: string
   apiKey: string
   apiKeyConfigured?: boolean
+  clearApiKey?: boolean
 }
 
 export interface MCPConfig {
@@ -377,12 +379,14 @@ const normalizeAppConfig = (config: Partial<AppConfig>, fallback: AppConfig): Ap
       ...chatConfig,
       apiKey: chatApiKey,
       apiKeyConfigured: Boolean(chatConfig.apiKeyConfigured || chatApiKey),
+      clearApiKey: false,
     },
     embedding: {
       ...fallback.embedding,
       ...embeddingConfig,
       apiKey: embeddingApiKey,
       apiKeyConfigured: Boolean(embeddingConfig.apiKeyConfigured || embeddingApiKey),
+      clearApiKey: false,
     },
     mcp: {
       ...fallback.mcp,
@@ -2025,15 +2029,19 @@ function AppContent() {
     value: ChatConfig[K],
   ) => {
     setConfig((prev) => {
+      const nextChat = {
+        ...prev.chat,
+        [key]:
+          key === 'contextMessageLimit'
+            ? Math.max(1, Math.min(100, Number(value) || 1))
+            : value,
+      }
+      if (key === 'apiKey') {
+        nextChat.clearApiKey = false
+      }
       const nextConfig = {
         ...prev,
-        chat: {
-          ...prev.chat,
-          [key]:
-            key === 'contextMessageLimit'
-              ? Math.max(1, Math.min(100, Number(value) || 1))
-              : value,
-        },
+        chat: nextChat,
       }
       void persistConfigToBackend(nextConfig)
       return nextConfig
@@ -2045,12 +2053,16 @@ function AppContent() {
     value: EmbeddingConfig[K],
   ) => {
     setConfig((prev) => {
+      const nextEmbedding = {
+        ...prev.embedding,
+        [key]: value,
+      }
+      if (key === 'apiKey') {
+        nextEmbedding.clearApiKey = false
+      }
       const nextConfig = {
         ...prev,
-        embedding: {
-          ...prev.embedding,
-          [key]: value,
-        },
+        embedding: nextEmbedding,
       }
       void persistConfigToBackend(nextConfig)
       return nextConfig

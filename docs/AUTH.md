@@ -8,7 +8,7 @@
 - Web session 通过 **HttpOnly + SameSite=Lax Cookie** 下发，前端不再把 session token 存在 `localStorage`。
 - root 密码只保存 bcrypt 哈希，不再把明文环境变量作为运行态密码。
 - OpenAI-compatible `/v1` 接口支持独立 API Key，不需要复用网页登录 token。
-- MCP 默认关闭；服务器启用 MCP 时必须同时开启认证。旧 MCP Token 等价 MCP 全权限，默认不允许鉴权；仅迁移旧客户端时临时开启，新接入使用 API Key Scope。
+- MCP 默认关闭；服务器启用 MCP 时必须同时开启认证。旧 MCP Token 等价 MCP 全权限，已废弃且默认不允许鉴权；仅迁移旧客户端时临时开启，新接入使用 API Key Scope。
 - 暂不包含多用户、OIDC 和复杂 RBAC。
 
 ---
@@ -38,7 +38,7 @@ AUTH_RESET_PASSWORD=your-new-secure-password
 # 旧版 JWT 配置兼容项。当前服务端 session 不再要求设置。
 JWT_SECRET=
 
-# 可选。允许旧版 MCP Token 鉴权，默认 false，仅迁移旧客户端时临时开启。
+# 可选。允许已废弃的旧版 MCP Token 鉴权，默认 false，仅迁移旧客户端时临时开启。
 ENABLE_MCP_LEGACY_TOKEN=false
 ```
 

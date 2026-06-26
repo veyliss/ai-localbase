@@ -62,12 +62,23 @@ const AISettings: React.FC<AISettingsProps> = ({
             </div>
             <div className="settings-form-group">
               <label className="settings-form-label">API Key</label>
-              <input
-                type="password"
-                value={config.chat.apiKey}
-                onChange={(event) => onChatConfigChange('apiKey', event.target.value)}
-                placeholder={config.chat.apiKeyConfigured ? '已配置，输入新密钥覆盖' : '选填'}
-              />
+              <div className="settings-secret-input-row">
+                <input
+                  type="password"
+                  value={config.chat.apiKey}
+                  onChange={(event) => onChatConfigChange('apiKey', event.target.value)}
+                  placeholder={config.chat.apiKeyConfigured ? '已配置，输入新密钥覆盖' : '选填'}
+                />
+                {(config.chat.apiKeyConfigured || config.chat.apiKey) && (
+                  <button
+                    type="button"
+                    className="settings-action-btn"
+                    onClick={() => onChatConfigChange('clearApiKey', true)}
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
               {config.chat.apiKeyConfigured && !config.chat.apiKey && (
                 <small>密钥已保存在后端，页面不会显示明文。</small>
               )}
@@ -164,12 +175,23 @@ const AISettings: React.FC<AISettingsProps> = ({
             </div>
             <div className="settings-form-group">
               <label className="settings-form-label">API Key</label>
-              <input
-                type="password"
-                value={config.embedding.apiKey}
-                onChange={(event) => onEmbeddingConfigChange('apiKey', event.target.value)}
-                placeholder={config.embedding.apiKeyConfigured ? '已配置，输入新密钥覆盖' : '选填'}
-              />
+              <div className="settings-secret-input-row">
+                <input
+                  type="password"
+                  value={config.embedding.apiKey}
+                  onChange={(event) => onEmbeddingConfigChange('apiKey', event.target.value)}
+                  placeholder={config.embedding.apiKeyConfigured ? '已配置，输入新密钥覆盖' : '选填'}
+                />
+                {(config.embedding.apiKeyConfigured || config.embedding.apiKey) && (
+                  <button
+                    type="button"
+                    className="settings-action-btn"
+                    onClick={() => onEmbeddingConfigChange('clearApiKey', true)}
+                  >
+                    清除
+                  </button>
+                )}
+              </div>
               {config.embedding.apiKeyConfigured && !config.embedding.apiKey && (
                 <small>密钥已保存在后端，页面不会显示明文。</small>
               )}

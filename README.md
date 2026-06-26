@@ -196,7 +196,7 @@ docker compose -f docker-compose.dev.yml up --build
 - HTTP 形式 MCP 入口
 - 工具列表发现能力
 - 只读 / 写入 / 危险工具权限分级
-- API Key Scope 鉴权，可显式开启旧 MCP Token 迁移兼容
+- API Key Scope 鉴权，旧 MCP Token 已废弃，仅保留迁移兼容开关
 - 限流、超时与审计日志
 - 危险工具一次性确认机制
 - 复用现有知识库、会话、配置与检索服务
@@ -215,12 +215,12 @@ docker compose -f docker-compose.dev.yml up --build
 常用环境变量：
 
 - `ENABLE_MCP`：是否启用 MCP，默认 `false`
-- `ENABLE_MCP_LEGACY_TOKEN`：是否允许旧 MCP Token 鉴权，默认 `false`
+- `ENABLE_MCP_LEGACY_TOKEN`：是否允许已废弃的旧 MCP Token 鉴权，默认 `false`
 - `MCP_BASE_PATH`：MCP 挂载路径，默认 `/mcp`
 - `MCP_REQUEST_TIMEOUT_SECONDS`：请求超时，默认 `15`
 - `MCP_REQUESTS_PER_MINUTE`：每分钟限流，默认 `120`
 
-MCP 面向外部 Agent 暴露本地知识库和会话能力，服务器部署时请只在 `ENABLE_AUTH=true` 后再开启。新接入推荐使用带 `mcp:*` scope 的 API Key。旧 MCP Token 等价 MCP 全权限，默认不再允许鉴权；仅迁移旧客户端时临时设置 `ENABLE_MCP_LEGACY_TOKEN=true`。
+MCP 面向外部 Agent 暴露本地知识库和会话能力，服务器部署时请只在 `ENABLE_AUTH=true` 后再开启。新接入推荐使用带 `mcp:*` scope 的 API Key。旧 MCP Token 等价 MCP 全权限，已废弃且默认不允许鉴权；仅迁移旧客户端时临时设置 `ENABLE_MCP_LEGACY_TOKEN=true`。
 
 Docker 前端同源代理支持默认 `/mcp`，也支持以 `/mcp` 结尾的嵌套路径，例如 `/agent/mcp`。如果使用其他自定义路径，需要自行配置外部反向代理，或让 MCP 客户端直接访问后端端口。
 

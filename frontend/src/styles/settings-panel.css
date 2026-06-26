@@ -290,6 +290,17 @@
   line-height: 1.4;
 }
 
+.settings-secret-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-secret-input-row input {
+  min-width: 0;
+  flex: 1;
+}
+
 /* ==========================================================================
    5. 信息行 (Info Row)
    ========================================================================== */
@@ -2198,6 +2209,15 @@
   .settings-token-input {
     width: 100%;
     flex-basis: 100%;
+  }
+
+  .settings-secret-input-row {
+    flex-wrap: wrap;
+  }
+
+  .settings-secret-input-row .settings-action-btn {
+    justify-content: center;
+    width: 100%;
   }
 
   .model-config-test {

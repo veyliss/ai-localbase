@@ -10,7 +10,7 @@
 - 提供 HTTP 形式的 MCP 入口
 - 提供工具列表发现能力
 - 提供只读 / 写入 / 危险工具调用能力
-- 提供 API Key Scope 鉴权，可显式开启旧 MCP 全权限 Token 迁移兼容
+- 提供 API Key Scope 鉴权；旧 MCP 全权限 Token 已废弃，仅保留迁移兼容开关
 - 提供调用日志与耗时记录
 - 提供工具权限分级（只读 / 写入 / 危险）
 - 提供 MCP 级限流与超时保护
@@ -24,11 +24,11 @@
 后端通过环境变量控制 MCP：
 
 - `ENABLE_MCP`：是否启用 MCP，默认 `false`
-- `ENABLE_MCP_LEGACY_TOKEN`：是否允许旧版 MCP Token 鉴权，默认 `false`，仅迁移旧客户端时临时开启
+- `ENABLE_MCP_LEGACY_TOKEN`：是否允许已废弃的旧版 MCP Token 鉴权，默认 `false`，仅迁移旧客户端时临时开启
 - `MCP_BASE_PATH`：MCP 挂载路径，默认 `/mcp`。Docker 前端同源代理支持 `/mcp` 或以 `/mcp` 结尾的嵌套路径，例如 `/agent/mcp`
 - `MCP_REQUEST_TIMEOUT_SECONDS`：单次 MCP 请求超时时间，默认 `15`
 - `MCP_REQUESTS_PER_MINUTE`：MCP 每分钟最大请求数，默认 `120`
-- MCP Token 会在首次启动时自动生成并持久化到应用配置中，等价 MCP 全权限；默认不允许鉴权，仅作为旧客户端迁移凭证
+- MCP Token 会在首次启动时自动生成并持久化到应用配置中，等价 MCP 全权限；该方式已废弃，默认不允许鉴权，仅作为旧客户端迁移凭证
 
 示例：
 
@@ -41,7 +41,7 @@ MCP_REQUEST_TIMEOUT_SECONDS=15
 MCP_REQUESTS_PER_MINUTE=120
 ```
 
-MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_AUTH=true`，并使用 API Key Scope 模式接入。旧版 MCP Token 等价 MCP 全权限，默认不允许鉴权；仅迁移旧客户端时临时设置 `ENABLE_MCP_LEGACY_TOKEN=true`，且 Token 为空时不会放行旧 Token 请求。
+MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_AUTH=true`，并使用 API Key Scope 模式接入。旧版 MCP Token 等价 MCP 全权限，已废弃且默认不允许鉴权；仅迁移旧客户端时临时设置 `ENABLE_MCP_LEGACY_TOKEN=true`，且 Token 为空时不会放行旧 Token 请求。
 
 如果将 `MCP_BASE_PATH` 改成不以 `/mcp` 结尾的路径，需要自行配置外部反向代理，或让 MCP 客户端直接访问后端端口。
 
@@ -53,7 +53,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 - `POST /api/config/mcp/danger-confirmations`：创建危险工具一次性确认 nonce
 - `POST /api/config/mcp/reset-token`：重置 MCP Token
 
-> MCP 新接入均应携带请求头 `Authorization: Bearer <API_KEY>`。旧版 MCP Token 只有在 `ENABLE_MCP_LEGACY_TOKEN=true` 时才可用且等价全权限；新客户端必须使用带 MCP scope 的 API Key。
+> MCP 新接入均应携带请求头 `Authorization: Bearer <API_KEY>`。旧版 MCP Token 已废弃，只有在 `ENABLE_MCP_LEGACY_TOKEN=true` 时才可用且等价全权限；新客户端必须使用带 MCP scope 的 API Key。
 
 ---
 
@@ -729,7 +729,7 @@ curl -X POST http://localhost:8080/api/config/mcp/danger-confirmations \
 
 调用危险工具时，把 `confirmNonce` 放入工具 `arguments`。nonce 会绑定工具名和参数 hash，过期或使用后立即失效。
 
-旧版 `X-MCP-Confirm` 和 `?confirm_token=` 只有在 `ENABLE_MCP_LEGACY_TOKEN=true` 时才兼容旧客户端，不再推荐；新示例不再使用 query token。
+旧版 `X-MCP-Confirm` 和 `?confirm_token=` 已废弃，只有在 `ENABLE_MCP_LEGACY_TOKEN=true` 时才兼容旧客户端，不再推荐；新示例不再使用 query token。
 
 如果未提供 nonce、nonce 错误、重复使用或已过期，服务将返回 `403`。
 
@@ -1063,9 +1063,9 @@ backend/internal/mcp/
 
 - 查看 MCP 是否启用
 - 查看 MCP Base Path
-- 查看旧 Token 兼容状态
-- 一键复制 Token
-- 一键重置 Token
+- 查看旧 Token 迁移状态
+- 在旧 Token 迁移模式开启时复制迁移 Token
+- 在旧 Token 迁移模式开启时重置迁移 Token
 
 这部分主要用于兼容既有 MCP 客户端。新接入请在系统授权中创建带 MCP scope 的 API Key。
 

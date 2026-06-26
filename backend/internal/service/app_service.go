@@ -1124,7 +1124,9 @@ func (s *AppService) UpdateConfig(req model.ConfigUpdateRequest) (model.AppConfi
 	chatBaseURL := strings.TrimSpace(req.Chat.BaseURL)
 	chatModel := strings.TrimSpace(req.Chat.Model)
 	chatAPIKey := strings.TrimSpace(req.Chat.APIKey)
-	if chatAPIKey == "" && req.Chat.APIKeyConfigured {
+	if req.Chat.ClearAPIKey {
+		chatAPIKey = ""
+	} else if chatAPIKey == "" && req.Chat.APIKeyConfigured {
 		chatAPIKey = strings.TrimSpace(previousConfig.Chat.APIKey)
 	}
 
@@ -1142,7 +1144,9 @@ func (s *AppService) UpdateConfig(req model.ConfigUpdateRequest) (model.AppConfi
 	embedBaseURL := strings.TrimSpace(req.Embedding.BaseURL)
 	embedModel := strings.TrimSpace(req.Embedding.Model)
 	embedAPIKey := strings.TrimSpace(req.Embedding.APIKey)
-	if embedAPIKey == "" && req.Embedding.APIKeyConfigured {
+	if req.Embedding.ClearAPIKey {
+		embedAPIKey = ""
+	} else if embedAPIKey == "" && req.Embedding.APIKeyConfigured {
 		embedAPIKey = strings.TrimSpace(previousConfig.Embedding.APIKey)
 	}
 

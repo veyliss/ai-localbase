@@ -122,7 +122,7 @@ const MCPSettings: React.FC<MCPSettingsProps> = ({ config, onCopyMcpToken, onRes
         <div className="settings-card-header">
           <div className="settings-card-header-copy">
             <h3>MCP 配置</h3>
-            <p>MCP 默认关闭；服务器启用时必须同时开启认证。旧 Token 兼容模式默认关闭。</p>
+            <p>MCP 默认关闭；服务器启用时必须同时开启认证。旧 Token 已废弃，仅用于迁移。</p>
           </div>
           <span className={`settings-status-pill ${config.enabled ? 'enabled' : 'disabled'}`}>
             {config.enabled ? '已启用' : '未启用'}
@@ -139,14 +139,14 @@ const MCPSettings: React.FC<MCPSettingsProps> = ({ config, onCopyMcpToken, onRes
               <strong>{config.basePath || '未配置'}</strong>
             </div>
             <div className="settings-readonly-field">
-              <span>旧 Token 兼容</span>
+              <span>旧 Token 迁移</span>
               <strong>{config.legacyTokenEnabled ? '已启用' : '已关闭'}</strong>
             </div>
           </div>
 
           <div className="settings-form-grid settings-form-grid-dense">
             <div className="settings-form-group settings-form-group-full">
-              <label className="settings-form-label">兼容 Token</label>
+              <label className="settings-form-label">迁移 Token</label>
               <div className="settings-token-wrapper">
                 <input
                   type={isMcpTokenVisible ? 'text' : 'password'}
@@ -176,7 +176,7 @@ const MCPSettings: React.FC<MCPSettingsProps> = ({ config, onCopyMcpToken, onRes
                   </button>
                 </div>
               </div>
-              <small>旧版 MCP Bearer Token 等价 MCP 全权限，仅用于迁移既有客户端；默认关闭，新接入请使用带 MCP scope 的 API Key。</small>
+              <small>旧版 MCP Bearer Token 等价 MCP 全权限，已废弃且默认关闭；新接入请使用带 MCP scope 的 API Key。</small>
               {tokenFeedback && <small className="settings-feedback">{tokenFeedback}</small>}
             </div>
           </div>

@@ -52,7 +52,7 @@ const GeneralSettings: React.FC<GeneralSettingsProps> = ({ config }) => {
       title: 'MCP 服务',
       description: config.mcp.basePath || '未配置 MCP 路径',
       value: config.mcp.enabled ? '已启用' : '未启用',
-      meta: config.mcp.tokenConfigured ? '兼容 Token 已生成' : '兼容 Token 未生成',
+      meta: config.mcp.tokenConfigured ? '迁移 Token 已生成' : '迁移 Token 未生成',
       status: config.mcp.enabled ? 'enabled' : 'disabled',
     },
   ]

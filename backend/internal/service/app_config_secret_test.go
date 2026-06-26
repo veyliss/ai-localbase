@@ -65,3 +65,32 @@ func TestUpdateConfigPreservesConfiguredSecretsWhenPublicConfigIsSaved(t *testin
 		t.Fatalf("expected non-secret config fields to update, got %+v", internal)
 	}
 }
+
+func TestUpdateConfigClearsConfiguredSecretsWhenExplicitlyRequested(t *testing.T) {
+	service := NewAppService(nil, NewAppStateStore(""), nil, model.ServerConfig{
+		EnableMCP:            true,
+		EnableMCPLegacyToken: true,
+	})
+
+	cfg := service.GetConfig()
+	cfg.Chat.APIKey = "chat-secret"
+	cfg.Embedding.APIKey = "embedding-secret"
+	if _, err := service.UpdateConfig(model.ConfigUpdateRequest(cfg)); err != nil {
+		t.Fatalf("update config with secrets: %v", err)
+	}
+
+	public := service.GetPublicConfig()
+	public.Chat.ClearAPIKey = true
+	public.Embedding.ClearAPIKey = true
+	if _, err := service.UpdateConfig(model.ConfigUpdateRequest(public)); err != nil {
+		t.Fatalf("clear configured secrets: %v", err)
+	}
+
+	internal := service.GetConfig()
+	if internal.Chat.APIKey != "" || internal.Chat.APIKeyConfigured {
+		t.Fatalf("expected chat secret to be cleared, got %+v", internal.Chat)
+	}
+	if internal.Embedding.APIKey != "" || internal.Embedding.APIKeyConfigured {
+		t.Fatalf("expected embedding secret to be cleared, got %+v", internal.Embedding)
+	}
+}

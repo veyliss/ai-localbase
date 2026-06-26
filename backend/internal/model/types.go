@@ -114,6 +114,7 @@ type ChatConfig struct {
 	Model               string  `json:"model"`
 	APIKey              string  `json:"apiKey"`
 	APIKeyConfigured    bool    `json:"apiKeyConfigured,omitempty"`
+	ClearAPIKey         bool    `json:"clearApiKey,omitempty"`
 	Temperature         float64 `json:"temperature"`
 	ContextMessageLimit int     `json:"contextMessageLimit"`
 }
@@ -124,6 +125,7 @@ type EmbeddingConfig struct {
 	Model            string `json:"model"`
 	APIKey           string `json:"apiKey"`
 	APIKeyConfigured bool   `json:"apiKeyConfigured,omitempty"`
+	ClearAPIKey      bool   `json:"clearApiKey,omitempty"`
 }
 
 type MCPConfig struct {

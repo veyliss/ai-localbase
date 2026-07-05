@@ -9,6 +9,7 @@ import type {
 
 export const API_BASE_PATH = ''
 export const AUTH_UNAUTHORIZED_EVENT = 'ai-localbase:auth-unauthorized'
+export const CSRF_HEADER_NAME = 'X-CSRF-Token'
 
 export interface ApiErrorResponse {
   error?: string | {
@@ -119,6 +120,21 @@ export interface TestModelResponse {
   error_message?: string
   vector_size?: number
   model_info?: string
+}
+
+export interface ComponentHealthResponse {
+  status: 'ok' | 'error' | 'not_configured' | 'warning' | string
+  message?: string
+  latency_ms?: number
+  error_message?: string
+}
+
+export interface HealthSummaryResponse {
+  qdrant: ComponentHealthResponse
+  chat_model: ComponentHealthResponse
+  embedding_model: ComponentHealthResponse
+  storage: ComponentHealthResponse
+  auth: ComponentHealthResponse
 }
 
 export interface BackendConversationListItem {
@@ -495,8 +511,27 @@ export const extractErrorMessage = async (response: Response) => {
   }
 }
 
+const readCookie = (name: string) => {
+  if (typeof document === 'undefined') return ''
+  const match = document.cookie
+    .split('; ')
+    .find((part) => part.startsWith(`${name}=`))
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : ''
+}
+
+export const applyCSRFHeader = (headers: Headers, init?: RequestInit) => {
+  const method = (init?.method || 'GET').toUpperCase()
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return
+  if (headers.has('Authorization')) return
+  const csrfToken = readCookie('ai_localbase_csrf')
+  if (csrfToken) {
+    headers.set(CSRF_HEADER_NAME, csrfToken)
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
+  applyCSRFHeader(headers, init)
 
   const response = await fetch(`${API_BASE_PATH}${path}`, {
     ...init,
@@ -523,6 +558,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function requestOk(path: string, init?: RequestInit): Promise<void> {
   const headers = new Headers(init?.headers)
+  applyCSRFHeader(headers, init)
 
   const response = await fetch(`${API_BASE_PATH}${path}`, {
     ...init,
@@ -604,10 +640,12 @@ export const setupAuth = async (payload: {
   password: string
   setupToken?: string
 }): Promise<AuthLoginResponse> => {
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  applyCSRFHeader(headers, { method: 'POST' })
   const response = await fetch(`${API_BASE_PATH}/api/auth/setup`, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
   })
   if (!response.ok) {
@@ -625,10 +663,12 @@ export const loginAuth = async (payload: {
   username: string
   password: string
 }): Promise<AuthLoginResponse> => {
+  const headers = new Headers({ 'Content-Type': 'application/json' })
+  applyCSRFHeader(headers, { method: 'POST' })
   const response = await fetch(`${API_BASE_PATH}/api/auth/login`, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
   })
   if (!response.ok) {
@@ -686,6 +726,10 @@ export const fetchSecurityEvents = async (limit = 50): Promise<SecurityEventInfo
   const data = await requestJson<{ items: SecurityEventInfo[] }>(`/api/auth/security-events?limit=${limit}`)
   return data.items ?? []
 }
+
+export const fetchHealthSummary = async (): Promise<HealthSummaryResponse> => (
+  requestJson<HealthSummaryResponse>('/api/config/health-summary')
+)
 
 export const fetchInitialAppData = async () => {
   const [knowledgeBaseData, configData, conversationsData] = await Promise.all([

@@ -197,7 +197,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           />
         )
       case 'system':
-        return <SystemSettings onLogout={onLogout} />
+        return <SystemSettings config={config} onLogout={onLogout} />
       case 'about':
         return <AboutSettings />
       default:

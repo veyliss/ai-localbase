@@ -50,7 +50,8 @@ ENABLE_MCP_LEGACY_TOKEN=false
 2. 如果设置了 `AUTH_PASSWORD`，首次启动会自动创建 root 用户。
 3. 如果没有设置 `AUTH_PASSWORD`，访问 Web 页面会进入初始化向导。
 4. 如果设置了 `AUTH_SETUP_TOKEN`，初始化向导会要求输入该 Token。
-5. 初始化完成后，后续登录使用 root 用户名和密码。
+5. 如果 **未设置 `AUTH_SETUP_TOKEN`**，首次初始化默认只允许来自本机回环地址（`127.0.0.1` / `::1` / `localhost`）的请求完成；非本机初始化会被后端拒绝。
+6. 初始化完成后，后续登录使用 root 用户名和密码。
 
 ---
 
@@ -135,6 +136,11 @@ Content-Type: application/json
 - HTTPS 请求或反向代理传入 `X-Forwarded-Proto: https` 时会自动设置 `Secure`。
 
 ### 会话与密码
+
+登录成功后，后端会额外下发一个 `ai_localbase_csrf` Cookie。前端会把它作为 `X-CSRF-Token` 自动附加到基于 session 的写请求中，用于保护配置修改、会话删除、知识库写入等 Web 管理操作。
+
+- MCP 和 OpenAI-compatible API 的 Bearer/API Key 鉴权路径不依赖该 CSRF 机制。
+- 自定义 Web 客户端如果直接复用 session Cookie 调用写接口，需要同时回传 `X-CSRF-Token`。
 
 ```bash
 GET  /api/auth/status
@@ -232,7 +238,8 @@ curl http://localhost:8080/v1/chat/completions \
 6. API Key 泄露后应立即在设置页撤销。
 7. 修改 root 密码会吊销所有已登录 Web 会话。
 8. 反向代理部署 HTTPS 时，需要转发 `X-Forwarded-Proto: https`，这样 Cookie 会带上 `Secure`。
-9. Web 管理接口依赖同源 Cookie；如果将前后端拆到不同域名，需要额外设计 CSRF Token 与明确的 CORS 白名单。
+9. Web 管理接口依赖同源 Cookie；当前已对基于 session 的写请求启用 CSRF Token 校验。
+10. 如果将前后端拆到不同域名，仍需要额外设计明确的 CORS 白名单，并验证你的客户端能正确携带 CSRF header。
 
 ---
 

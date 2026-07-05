@@ -253,6 +253,8 @@ func (h *AuthHandler) writeAuthServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": "authentication setup is already completed"})
 	case errors.Is(err, service.ErrInvalidSetupToken):
 		c.JSON(http.StatusForbidden, gin.H{"error": "invalid setup token"})
+	case errors.Is(err, service.ErrSetupTokenRequired):
+		c.JSON(http.StatusForbidden, gin.H{"error": "setup token required for non-local initialization", "setup_token_required": true})
 	case errors.Is(err, service.ErrInvalidCredentials):
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
 	case errors.Is(err, service.ErrInvalidAuthToken):
@@ -270,6 +272,7 @@ func (h *AuthHandler) writeAuthServiceError(c *gin.Context, err error) {
 
 func writeLoginResponse(c *gin.Context, result service.AuthLoginResult) {
 	setSessionCookie(c, result.Token, result.ExpiresAt)
+	ensureCSRFCookie(c, result.ExpiresAt)
 	c.JSON(http.StatusOK, LoginResponse{
 		ExpiresAt: result.ExpiresAt.Unix(),
 		Username:  result.User.Username,
@@ -288,6 +291,27 @@ func setSessionCookie(c *gin.Context, token string, expiresAt time.Time) {
 func clearSessionCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(auth.SessionCookieName, "", -1, "/", "", requestIsHTTPS(c), true)
+	c.SetCookie(auth.CSRFCookieName, "", -1, "/", "", requestIsHTTPS(c), false)
+}
+
+func ensureCSRFCookie(c *gin.Context, expiresAt time.Time) {
+	if c == nil {
+		return
+	}
+	if token, err := c.Cookie(auth.CSRFCookieName); err == nil && strings.TrimSpace(token) != "" {
+		return
+	}
+
+	csrfToken, err := service.GenerateCSRFToken()
+	if err != nil {
+		return
+	}
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(auth.CSRFCookieName, csrfToken, maxAge, "/", "", requestIsHTTPS(c), false)
 }
 
 func requestIsHTTPS(c *gin.Context) bool {

@@ -57,6 +57,7 @@ type HealthSummaryResponse struct {
 	ChatModel      ComponentHealth `json:"chat_model"`
 	EmbeddingModel ComponentHealth `json:"embedding_model"`
 	Storage        ComponentHealth `json:"storage"`
+	Auth           ComponentHealth `json:"auth"`
 }
 
 type ComponentHealth struct {
@@ -223,6 +224,9 @@ func (h *ConfigHandler) HealthSummary(c *gin.Context) {
 	// 4. 检查存储
 	summary.Storage = h.checkStorageHealth()
 
+	// 5. 检查认证部署建议
+	summary.Auth = h.checkAuthHealth()
+
 	c.JSON(http.StatusOK, summary)
 }
 
@@ -362,6 +366,25 @@ func (h *ConfigHandler) checkStorageHealth() ComponentHealth {
 	return ComponentHealth{
 		Status:  "ok",
 		Message: "Storage is accessible (no config yet)",
+	}
+}
+
+func (h *ConfigHandler) checkAuthHealth() ComponentHealth {
+	if h == nil || h.appService == nil {
+		return ComponentHealth{Status: "not_configured", Message: "Authentication health unavailable"}
+	}
+
+	warnings := h.appService.AuthDeploymentWarnings()
+	if len(warnings) > 0 {
+		return ComponentHealth{
+			Status:  "warning",
+			Message: strings.Join(warnings, "；"),
+		}
+	}
+
+	return ComponentHealth{
+		Status:  "ok",
+		Message: "Authentication deployment safeguards look good",
 	}
 }
 

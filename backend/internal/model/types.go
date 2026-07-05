@@ -129,11 +129,14 @@ type EmbeddingConfig struct {
 }
 
 type MCPConfig struct {
-	Enabled            bool   `json:"enabled"`
-	BasePath           string `json:"basePath"`
-	Token              string `json:"token"`
-	TokenConfigured    bool   `json:"tokenConfigured,omitempty"`
-	LegacyTokenEnabled bool   `json:"legacyTokenEnabled,omitempty"`
+	Enabled                 bool     `json:"enabled"`
+	BasePath                string   `json:"basePath"`
+	Token                   string   `json:"token"`
+	TokenConfigured         bool     `json:"tokenConfigured,omitempty"`
+	LegacyTokenEnabled      bool     `json:"legacyTokenEnabled,omitempty"`
+	DeploymentWarnings      []string `json:"deploymentWarnings,omitempty"`
+	RecommendedAuthMode     string   `json:"recommendedAuthMode,omitempty"`
+	DangerConfirmationMode  string   `json:"dangerConfirmationMode,omitempty"`
 }
 
 type MCPDangerConfirmationRequest struct {

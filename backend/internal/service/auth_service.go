@@ -48,6 +48,7 @@ var (
 	ErrSetupRequired       = errors.New("authentication setup is required")
 	ErrSetupNotRequired    = errors.New("authentication setup is not required")
 	ErrInvalidSetupToken   = errors.New("invalid setup token")
+	ErrSetupTokenRequired  = errors.New("setup token required for non-local initialization")
 	ErrInvalidCredentials  = errors.New("invalid username or password")
 	ErrInvalidAuthToken    = errors.New("invalid or expired token")
 	ErrInvalidPassword     = errors.New("invalid password")
@@ -300,6 +301,9 @@ func (s *AuthService) SetupRoot(username, password, setupToken, ip, userAgent st
 	}
 	if configuredToken := strings.TrimSpace(s.serverConfig.AuthSetupToken); configuredToken != "" && !constantCompareString(configuredToken, setupToken) {
 		return AuthLoginResult{}, ErrInvalidSetupToken
+	}
+	if strings.TrimSpace(s.serverConfig.AuthSetupToken) == "" && !isTrustedSetupRequest(ip) {
+		return AuthLoginResult{}, ErrSetupTokenRequired
 	}
 	if err := validateInteractivePassword(password); err != nil {
 		return AuthLoginResult{}, err
@@ -974,4 +978,22 @@ func truncateForAudit(value string, maxLength int) string {
 		return value
 	}
 	return string(runes[:maxLength])
+}
+
+func isTrustedSetupRequest(ip string) bool {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return false
+	}
+	host := ip
+	if strings.HasPrefix(host, "[") {
+		if end := strings.Index(host, "]"); end > 0 {
+			host = host[1:end]
+		}
+	} else if strings.Count(host, ":") == 1 {
+		parts := strings.SplitN(host, ":", 2)
+		host = parts[0]
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }

@@ -443,7 +443,11 @@ func (s *AppService) GetConfig() model.AppConfig {
 }
 
 func (s *AppService) GetPublicConfig() model.AppConfig {
-	return redactAppConfigSecrets(s.GetConfig())
+	cfg := redactAppConfigSecrets(s.GetConfig())
+	cfg.MCP.DeploymentWarnings = s.AuthDeploymentWarnings()
+	cfg.MCP.RecommendedAuthMode = "api_key_scopes"
+	cfg.MCP.DangerConfirmationMode = "confirm_nonce"
+	return cfg
 }
 
 func redactAppConfigSecrets(cfg model.AppConfig) model.AppConfig {
@@ -454,6 +458,30 @@ func redactAppConfigSecrets(cfg model.AppConfig) model.AppConfig {
 	cfg.MCP.TokenConfigured = strings.TrimSpace(cfg.MCP.Token) != ""
 	cfg.MCP.Token = ""
 	return cfg
+}
+
+func (s *AppService) AuthDeploymentWarnings() []string {
+	if s == nil {
+		return nil
+	}
+	warnings := []string{}
+	setupRequired := false
+	if s.serverConfig.EnableAuth {
+		if s.state == nil {
+			setupRequired = true
+		} else {
+			s.state.Mu.RLock()
+			setupRequired = !hasAuthUser(s.state.Auth)
+			s.state.Mu.RUnlock()
+		}
+	}
+	if setupRequired && strings.TrimSpace(s.serverConfig.AuthPassword) == "" && strings.TrimSpace(s.serverConfig.AuthSetupToken) == "" {
+		warnings = append(warnings, "未配置 AUTH_PASSWORD 或 AUTH_SETUP_TOKEN，首次初始化仅允许本机回环地址完成")
+	}
+	if s.serverConfig.EnableMCPLegacyToken {
+		warnings = append(warnings, "ENABLE_MCP_LEGACY_TOKEN 已开启，仅建议迁移旧客户端时临时使用")
+	}
+	return warnings
 }
 
 func (s *AppService) StageUpload(file *multipart.FileHeader, source string) (model.StagedUpload, error) {
@@ -654,6 +682,14 @@ func generateMCPToken() string {
 		return util.NextID("mcp")
 	}
 	return "mcp_" + hex.EncodeToString(buffer)
+}
+
+func GenerateCSRFToken() (string, error) {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return "csrf_" + hex.EncodeToString(buffer), nil
 }
 
 func (s *AppService) CreateMCPDangerConfirmation(req model.MCPDangerConfirmationRequest) (model.MCPDangerConfirmationResponse, error) {

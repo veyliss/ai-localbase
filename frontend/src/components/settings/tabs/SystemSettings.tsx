@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import type { AppConfig } from '../../../App'
 import { useAuth } from '../../../contexts/AuthContext'
 import {
   createAuthAPIKey,
@@ -12,6 +13,7 @@ import {
 } from '../../../services/api'
 
 interface SystemSettingsProps {
+  config: AppConfig
   onLogout: () => void | Promise<void>
 }
 
@@ -139,7 +141,7 @@ const isMCPEvent = (event: SecurityEventInfo) => event.type.startsWith('mcp_')
 const isMCPFailureEvent = (event: SecurityEventInfo) => event.type.includes('_failed')
 const isMCPDangerEvent = (event: SecurityEventInfo) => event.type.includes('_danger_')
 
-const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
+const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => {
   const { username, expiresAt, logoutAll, changePassword } = useAuth()
   const [sessions, setSessions] = useState<AuthSessionInfo[]>([])
   const [apiKeys, setApiKeys] = useState<AuthAPIKeyInfo[]>([])
@@ -188,6 +190,7 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     [mcpEvents],
   )
   const passwordStrength = useMemo(() => getPasswordStrength(newPassword), [newPassword])
+  const deploymentWarnings = config.mcp.deploymentWarnings ?? []
 
   const loadSecurityData = useCallback(async () => {
     setLoading(true)
@@ -354,6 +357,19 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
             </div>
             <span className="settings-status-pill enabled">已认证</span>
           </div>
+
+          {deploymentWarnings.length > 0 && (
+            <div className="settings-security-warning-panel" role="status" aria-live="polite">
+              <div className="settings-security-warning-copy">
+                <strong>部署提醒</strong>
+                <span>{deploymentWarnings.join('；')}</span>
+              </div>
+              <div className="settings-security-warning-meta">
+                <span className="settings-status-pill warning">需处理</span>
+                <small>{config.mcp.recommendedAuthMode === 'api_key_scopes' ? 'MCP 建议使用 API Key Scope，危险工具使用 confirmNonce' : '请检查认证配置'}</small>
+              </div>
+            </div>
+          )}
 
           <div className="settings-security-metrics">
             <div>

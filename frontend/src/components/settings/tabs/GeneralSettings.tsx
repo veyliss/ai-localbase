@@ -20,6 +20,7 @@ const GeneralSettings: React.FC<GeneralSettingsProps> = ({ config }) => {
   const rerankLabel = config.retrieval.rerankStrategy === 'semantic' ? '语义重排' : '关键词融合'
   const queryRewriteLabel = config.retrieval.enableQueryRewrite ? '已启用' : '未启用'
   const lowConfidenceBoostLabel = config.retrieval.enableLowConfidenceBoost ? '已启用' : '未启用'
+  const mcpWarnings = config.mcp.deploymentWarnings ?? []
 
   const preferenceRows: PreferenceRow[] = [
     {
@@ -59,6 +60,18 @@ const GeneralSettings: React.FC<GeneralSettingsProps> = ({ config }) => {
 
   return (
     <div className="settings-tab-content settings-preferences-page">
+      {mcpWarnings.length > 0 && (
+        <section className="settings-preference-row settings-preference-warning" aria-label="部署提醒">
+          <div className="settings-preference-copy">
+            <h3>部署提醒</h3>
+            <p>{mcpWarnings.join('；')}</p>
+          </div>
+          <div className="settings-preference-control">
+            <span className="settings-select-like settings-status-like disabled">需处理</span>
+            <small>{config.mcp.recommendedAuthMode === 'api_key_scopes' ? 'MCP 建议继续使用 API Key Scope' : '检查鉴权配置'}</small>
+          </div>
+        </section>
+      )}
       {preferenceRows.map((row) => (
         <section className="settings-preference-row" key={row.title}>
           <div className="settings-preference-copy">

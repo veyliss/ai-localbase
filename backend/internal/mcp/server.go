@@ -539,24 +539,8 @@ func (s *Server) authorizeDangerousTool(c *gin.Context, toolName string, args ma
 		c.JSON(http.StatusForbidden, gin.H{"error": "dangerous tool requires confirmNonce"})
 		return false
 	}
-	if !s.serverConfig.EnableMCPLegacyToken {
-		c.JSON(http.StatusForbidden, gin.H{"error": "legacy dangerous tool confirmation is disabled; use confirmNonce"})
-		return false
-	}
-
-	cfg := s.tokenProvider.GetConfig()
-	expected := strings.TrimSpace(cfg.MCP.Token)
-	if expected == "" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "dangerous tool confirmation is unavailable"})
-		return false
-	}
-
-	if subtle.ConstantTimeCompare([]byte(confirmToken), []byte(expected)) != 1 {
-		c.JSON(http.StatusForbidden, gin.H{"error": "invalid dangerous tool confirmation token"})
-		return false
-	}
-
-	return true
+	c.JSON(http.StatusForbidden, gin.H{"error": "legacy dangerous tool confirmation is disabled; use confirmNonce"})
+	return false
 }
 
 func optionalMCPConfirmNonce(args map[string]any) string {

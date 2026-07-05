@@ -80,7 +80,7 @@ docker compose -f docker-compose.qdrant.yml up -d
 docker compose up --build
 ```
 
-如果开启认证，推荐在启动前复制 `.env.example` 为 `.env`，并设置 `ENABLE_AUTH=true` 与 `AUTH_PASSWORD`。
+如果开启认证，推荐在启动前复制 `.env.example` 为 `.env`，并设置 `ENABLE_AUTH=true` 与 `AUTH_PASSWORD`。如果不预置 `AUTH_PASSWORD`，至少应设置 `AUTH_SETUP_TOKEN`；否则首次初始化只允许本机回环地址完成。
 
 ---
 
@@ -140,7 +140,7 @@ AUTH_USERNAME=root
 AUTH_PASSWORD=your-secure-password
 ```
 
-首次启动时，如果设置了 `AUTH_PASSWORD`，后端会自动创建 root 用户并保存密码哈希。如果未设置 `AUTH_PASSWORD`，Web 页面会进入首次初始化向导。公网部署时建议至少设置 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占。
+首次启动时，如果设置了 `AUTH_PASSWORD`，后端会自动创建 root 用户并保存密码哈希。如果未设置 `AUTH_PASSWORD`，Web 页面会进入首次初始化向导。公网部署时建议至少设置 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占；如果两者都未设置，当前版本默认只允许本机回环地址完成首次初始化。
 
 更多认证接口、API Key 和密码重置说明见 [`docs/AUTH.md`](./AUTH.md)。
 

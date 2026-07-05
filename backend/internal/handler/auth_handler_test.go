@@ -32,6 +32,25 @@ func newAuthSetupTestRouter(authHandler *AuthHandler) *gin.Engine {
 	return router
 }
 
+func TestAuthSetupRejectsRemoteInitializationWithoutSetupToken(t *testing.T) {
+	authHandler, _ := newAuthHandlerAndServiceWithConfigForTest(t, model.ServerConfig{
+		AuthUsername: "root",
+		EnableMCP:    false,
+	})
+	router := newAuthSetupTestRouter(authHandler)
+
+	setupResp := performAuthJSONRequestWithRemoteAddr(t, router, http.MethodPost, "/api/auth/setup", map[string]string{
+		"username": "root",
+		"password": "setup-password",
+	}, "198.51.100.8:4567")
+	if setupResp.Code != http.StatusForbidden {
+		t.Fatalf("expected remote setup status 403, got %d, body=%s", setupResp.Code, setupResp.Body.String())
+	}
+	if !strings.Contains(setupResp.Body.String(), "setup token required") {
+		t.Fatalf("expected setup token required error, got %s", setupResp.Body.String())
+	}
+}
+
 func newAuthTestRouterWithSession(authHandler *AuthHandler, authService *service.AuthService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -316,6 +335,11 @@ func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
 
 func performAuthJSONRequest(t *testing.T, router *gin.Engine, method, target string, payload any) *httptest.ResponseRecorder {
 	t.Helper()
+	return performAuthJSONRequestWithRemoteAddr(t, router, method, target, payload, "203.0.113.11:4567")
+}
+
+func performAuthJSONRequestWithRemoteAddr(t *testing.T, router *gin.Engine, method, target string, payload any, remoteAddr string) *httptest.ResponseRecorder {
+	t.Helper()
 
 	var body *bytes.Reader
 	if payload == nil {
@@ -331,7 +355,7 @@ func performAuthJSONRequest(t *testing.T, router *gin.Engine, method, target str
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.RemoteAddr = "203.0.113.11:4567"
+	req.RemoteAddr = remoteAddr
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)

@@ -10,6 +10,7 @@ import (
 )
 
 const SessionCookieName = "ai_localbase_session"
+const CSRFCookieName = "ai_localbase_csrf"
 
 // Middleware JWT 认证中间件
 func Middleware() gin.HandlerFunc {

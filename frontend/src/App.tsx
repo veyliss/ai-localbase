@@ -2,13 +2,14 @@ import './App.css'
 import ChatArea from './components/ChatArea'
 import Sidebar from './components/Sidebar'
 import Login from './components/Login'
-import { ToastProvider } from './components/common/Toast'
+import { ToastProvider, useToast } from './components/common/Toast'
 import LoadingBar from './components/common/LoadingBar'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE_PATH,
   addEvalDatasetCandidate,
+  applyCSRFHeader,
   batchIndexDocuments,
   createKnowledgeBase,
   debugKnowledgeBaseRetrieval,
@@ -147,6 +148,9 @@ export interface MCPConfig {
   token: string
   tokenConfigured?: boolean
   legacyTokenEnabled?: boolean
+  deploymentWarnings?: string[]
+  recommendedAuthMode?: string
+  dangerConfirmationMode?: string
 }
 
 export interface RetrievalConfig {
@@ -500,6 +504,7 @@ const sleep = (delayMs: number) =>
 
 function AppContent() {
   const { isAuthenticated, logout } = useAuth()
+  const { showToast } = useToast()
   const [authCheckDone, setAuthCheckDone] = useState(false)
   const [authRequired, setAuthRequired] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -507,6 +512,7 @@ function AppContent() {
   const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
   const [backendReady, setBackendReady] = useState(false)
   const [backendWarmupRequired, setBackendWarmupRequired] = useState(true)
+  const [authWarningsShown, setAuthWarningsShown] = useState(false)
   const [globalLoading] = useState(false)
   const [conversations, setConversations] = useState<Conversation[]>(() => {
     const initialConversation = createWelcomeConversation()
@@ -596,6 +602,15 @@ function AppContent() {
     setBackendReady(true)
   }
 
+  useEffect(() => {
+    const warnings = config.mcp.deploymentWarnings ?? []
+    if (!isAuthenticated || warnings.length === 0 || authWarningsShown) {
+      return
+    }
+    showToast('warning', warnings.join('；'), 5000)
+    setAuthWarningsShown(true)
+  }, [authWarningsShown, config.mcp.deploymentWarnings, isAuthenticated, showToast])
+
   const handleCopyMcpToken = async () => {
     if (!config.mcp.token || typeof navigator === 'undefined' || !navigator.clipboard) {
       throw new Error('mcp token is not available')
@@ -611,6 +626,7 @@ function AppContent() {
       mcp,
     }))
     setBackendReady(true)
+    setAuthWarningsShown(false)
   }
 
   const activeConversation = useMemo(
@@ -1798,13 +1814,16 @@ function AppContent() {
     }
 
     const requestFallbackCompletion = async (controller: AbortController) => {
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+      })
+      applyCSRFHeader(headers, { method: 'POST' })
+
       const fallbackResponse = await withTimeout(
         fetch(`${API_BASE_PATH}/v1/chat/completions`, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify(requestBody),
           signal: controller.signal,
         }),
@@ -1841,13 +1860,16 @@ function AppContent() {
 
       let streamResponse: Response
       try {
+        const headers = new Headers({
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        })
+        applyCSRFHeader(headers, { method: 'POST' })
+
         streamResponse = await fetch(`${API_BASE_PATH}/v1/chat/completions/stream`, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'text/event-stream',
-          },
+          headers,
           body: JSON.stringify(requestBody),
           signal: streamAbortController.signal,
         })
@@ -2194,7 +2216,7 @@ function AppContent() {
   }
 
   return (
-    <ToastProvider>
+    <>
       <LoadingBar loading={globalLoading} />
       <div className="chat-page">
         <Sidebar
@@ -2270,14 +2292,16 @@ function AppContent() {
         onOpenCitationSource={handleOpenCitationSource}
       />
       </div>
-    </ToastProvider>
+    </>
   )
 }
 
 function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <ToastProvider>
+        <AppContent />
+      </ToastProvider>
     </AuthProvider>
   )
 }

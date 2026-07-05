@@ -43,6 +43,8 @@ MCP_REQUESTS_PER_MINUTE=120
 
 MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_AUTH=true`，并使用 API Key Scope 模式接入。旧版 MCP Token 等价 MCP 全权限，已废弃且默认不允许鉴权；仅迁移旧客户端时临时设置 `ENABLE_MCP_LEGACY_TOKEN=true`，且 Token 为空时不会放行旧 Token 请求。
 
+当前危险工具确认 **只接受 `confirmNonce`**。即使启用了 `ENABLE_MCP_LEGACY_TOKEN=true`，服务端也不会再接受 `X-MCP-Confirm` 或 `?confirm_token=` 作为危险操作确认方式。
+
 如果将 `MCP_BASE_PATH` 改成不以 `/mcp` 结尾的路径，需要自行配置外部反向代理，或让 MCP 客户端直接访问后端端口。
 
 启动后可访问：
@@ -51,7 +53,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 - `GET /mcp/tools`：查看当前可用工具列表
 - `POST /mcp`：通过 JSON-RPC 调用 MCP 方法
 - `POST /api/config/mcp/danger-confirmations`：创建危险工具一次性确认 nonce
-- `POST /api/config/mcp/reset-token`：重置 MCP Token
+- `POST /api/config/mcp/reset-token`：重置 MCP Token（仅在 `ENABLE_MCP_LEGACY_TOKEN=true` 时用于旧客户端迁移）
 
 > MCP 新接入均应携带请求头 `Authorization: Bearer <API_KEY>`。旧版 MCP Token 已废弃，只有在 `ENABLE_MCP_LEGACY_TOKEN=true` 时才可用且等价全权限；新客户端必须使用带 MCP scope 的 API Key。
 
@@ -729,7 +731,7 @@ curl -X POST http://localhost:8080/api/config/mcp/danger-confirmations \
 
 调用危险工具时，把 `confirmNonce` 放入工具 `arguments`。nonce 会绑定工具名和参数 hash，过期或使用后立即失效。
 
-旧版 `X-MCP-Confirm` 和 `?confirm_token=` 已废弃，只有在 `ENABLE_MCP_LEGACY_TOKEN=true` 时才兼容旧客户端，不再推荐；新示例不再使用 query token。
+旧版 `X-MCP-Confirm` 和 `?confirm_token=` 已完全停用；即使 `ENABLE_MCP_LEGACY_TOKEN=true` 也不能再作为危险操作确认方式。新客户端必须先通过 `POST /api/config/mcp/danger-confirmations` 获取 nonce，再把 `confirmNonce` 放进危险工具 `arguments`。
 
 如果未提供 nonce、nonce 错误、重复使用或已过期，服务将返回 `403`。
 

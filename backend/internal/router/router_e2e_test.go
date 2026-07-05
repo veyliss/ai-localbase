@@ -1304,6 +1304,14 @@ func TestOpenAICompatibleAPIAuthRejectsMissingTokenAndAllowsAPIKey(t *testing.T)
 	if sessionCookie == nil || sessionCookie.Value == "" {
 		t.Fatalf("expected %s cookie after login", auth.SessionCookieName)
 	}
+	csrfCookie := findResponseCookie(loginResp.Result().Cookies(), auth.CSRFCookieName)
+	if csrfCookie == nil || csrfCookie.Value == "" {
+		t.Fatalf("expected %s cookie after login", auth.CSRFCookieName)
+	}
+	sessionHeaders := map[string]string{
+		"Cookie":       auth.SessionCookieName + "=" + sessionCookie.Value + "; " + auth.CSRFCookieName + "=" + csrfCookie.Value,
+		"X-CSRF-Token": csrfCookie.Value,
+	}
 
 	apiKeyResp := performRequestWithHeaders(
 		t,
@@ -1315,7 +1323,7 @@ func TestOpenAICompatibleAPIAuthRejectsMissingTokenAndAllowsAPIKey(t *testing.T)
 			"scopes": []string{"openai:chat"},
 		})),
 		"application/json",
-		map[string]string{"Cookie": auth.SessionCookieName + "=" + sessionCookie.Value},
+		sessionHeaders,
 	)
 	if apiKeyResp.Code != http.StatusCreated {
 		t.Fatalf("expected api key status 201, got %d, body=%s", apiKeyResp.Code, apiKeyResp.Body.String())
@@ -1936,7 +1944,14 @@ func loginTestSessionHeaders(t *testing.T, handler http.Handler) map[string]stri
 	if sessionCookie == nil || sessionCookie.Value == "" {
 		t.Fatalf("expected %s cookie after login", auth.SessionCookieName)
 	}
-	return map[string]string{"Cookie": auth.SessionCookieName + "=" + sessionCookie.Value}
+	csrfCookie := findResponseCookie(loginResp.Result().Cookies(), auth.CSRFCookieName)
+	if csrfCookie == nil || csrfCookie.Value == "" {
+		t.Fatalf("expected %s cookie after login", auth.CSRFCookieName)
+	}
+	return map[string]string{
+		"Cookie":       auth.SessionCookieName + "=" + sessionCookie.Value + "; " + auth.CSRFCookieName + "=" + csrfCookie.Value,
+		"X-CSRF-Token": csrfCookie.Value,
+	}
 }
 
 func getTestConfig(t *testing.T, handler http.Handler, headers map[string]string) model.AppConfig {

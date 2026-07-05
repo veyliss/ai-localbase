@@ -21,6 +21,9 @@ import (
 func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHandler, authHandler *handler.AuthHandler, authService *service.AuthService, serverConfig model.ServerConfig, mcpServer *mcp.Server, frontendFS fs.FS) *gin.Engine {
 	r := gin.New()
 	r.Use(requestIDMiddleware(), accessLogMiddleware(), gin.Recovery(), corsMiddleware(serverConfig.EnableAuth))
+	if serverConfig.EnableAuth {
+		r.Use(csrfMiddleware())
+	}
 
 	r.GET("/health", appHandler.Health)
 

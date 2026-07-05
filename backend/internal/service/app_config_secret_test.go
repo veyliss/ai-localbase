@@ -31,6 +31,28 @@ func TestGetPublicConfigRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestAuthDeploymentWarningsOnlyIncludeSetupWarningBeforeRootExists(t *testing.T) {
+	service := NewAppService(nil, NewAppStateStore(""), nil, model.ServerConfig{
+		EnableAuth: true,
+	})
+
+	if warnings := service.AuthDeploymentWarnings(); len(warnings) != 1 {
+		t.Fatalf("expected setup warning before root exists, got %v", warnings)
+	}
+
+	service.state.Mu.Lock()
+	service.state.Auth.Users["usr_root"] = model.AuthUser{
+		ID:       "usr_root",
+		Username: "root",
+		Role:     "root",
+	}
+	service.state.Mu.Unlock()
+
+	if warnings := service.AuthDeploymentWarnings(); len(warnings) != 0 {
+		t.Fatalf("expected no setup warning after root exists, got %v", warnings)
+	}
+}
+
 func TestUpdateConfigPreservesConfiguredSecretsWhenPublicConfigIsSaved(t *testing.T) {
 	service := NewAppService(nil, NewAppStateStore(""), nil, model.ServerConfig{
 		EnableMCP:            true,

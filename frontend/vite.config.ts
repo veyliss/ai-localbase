@@ -2,6 +2,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const proxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
+const backendProxy = {
+  target: proxyTarget,
+  changeOrigin: true,
+  xfwd: true,
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -19,26 +24,11 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': {
-        target: proxyTarget,
-        changeOrigin: true,
-      },
-      '/v1': {
-        target: proxyTarget,
-        changeOrigin: true,
-      },
-      '^/(?:.+/)?mcp(?:/.*)?$': {
-        target: proxyTarget,
-        changeOrigin: true,
-      },
-      '/upload': {
-        target: proxyTarget,
-        changeOrigin: true,
-      },
-      '/health': {
-        target: proxyTarget,
-        changeOrigin: true,
-      },
+      '/api': backendProxy,
+      '/v1': backendProxy,
+      '^/(?:.+/)?mcp(?:/.*)?$': backendProxy,
+      '/upload': backendProxy,
+      '/health': backendProxy,
     }
   }
 })

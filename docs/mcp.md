@@ -120,7 +120,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 
 ## 当前内置工具
 
-当前共提供 **30 个 MCP 工具**，分为 **18 个只读工具**、**9 个写工具**、**3 个危险工具**。
+当前共提供 **31 个 MCP 工具**，分为 **19 个只读工具**、**9 个写工具**、**3 个危险工具**。
 
 ### 权限级别说明
 
@@ -141,6 +141,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 | `get_conversation` | `read-only` | 获取单个会话详情 |
 | `search_knowledge_base` | `read-only` | 按知识库执行检索 |
 | `search_document` | `read-only` | 按单个文档执行检索 |
+| `search_web` | `read-only` | 基于 You.com Search API 执行互联网检索 |
 | `query_structured_data` | `read-only` | 对 CSV / XLSX 执行确定性结构化查询 |
 | `debug_retrieval` | `read-only` | 调试检索命中、低置信和确定性补全 |
 | `answer_with_sources` | `read-only` | 基于知识库或文档生成带来源的答案草稿 |
@@ -299,6 +300,30 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 - 单文档范围内检索命中的上下文文本
 - `sources` 来源列表
 - 请求使用的文档 ID 与查询词
+
+#### `search_web`
+
+权限级别：`read-only`
+
+输入参数：
+
+- `query`（必填）
+- `count`（选填，返回结果数量，最大 20）
+- `freshness`（选填，day/week/month/year）
+- `language`（选填，BCP 47 格式，例如 zh-CN）
+- `country`（选填，ISO 3166-1 alpha-2 格式，例如 CN）
+
+说明：
+
+- 基于 You.com Search API（`GET https://ydc-index.io/v1/search`）执行互联网检索
+- 需要配置环境变量 `YDC_API_KEY`；未配置时返回提示信息而非报错，`data.configured` 为 `false`
+- 检索失败（鉴权、限流、服务端错误等）时以工具错误形式返回，错误信息不包含 API Key
+
+返回内容：
+
+- 编号列出的网页 / 新闻结果，含标题、链接、描述和首条摘录
+- `web`、`news` 结构化结果列表
+- 请求使用的查询词
 
 #### `query_structured_data`
 

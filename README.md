@@ -204,6 +204,7 @@ docker compose -f docker-compose.dev.yml up --build
 - 文档详情、检索调试、结构化查询、评估集生成和重建索引工具
 - MCP Job 工作流：异步导入、状态查询、取消和最近任务列表
 - Agent 友好组合工具：带来源回答、知识库质量检查、检索模式对比、评测样本创建和文档摘要
+- 网络检索工具：`search_web`，基于 You.com Search API 返回带来源链接的网页与新闻结果，需要配置 `YDC_API_KEY`
 - Settings 内置 Cherry Studio、Claude Desktop、Cursor / 通用 HTTP MCP 复制模板
 
 默认入口：

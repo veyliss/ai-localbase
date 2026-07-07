@@ -25,6 +25,9 @@ type ServerConfig struct {
 	MCPBasePath                    string
 	MCPRequestTimeoutSeconds       int
 	MCPRequestsPerMinute           int
+	YouComAPIKey                   string
+	YouComSearchMaxResults         int
+	YouComTimeoutSeconds           int
 	RetrievalTopKDocument          int
 	RetrievalCandidateTopKDocument int
 	RetrievalTopKKnowledgeBase     int

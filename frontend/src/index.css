@@ -1,5 +1,7 @@
 /* Reset and base styles */
-* {
+*,
+*::before,
+*::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -24,52 +26,79 @@ body {
 .container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 var(--space-5);
 }
 
+/* .btn 基础样式：与 button-system.css 保持视觉一致 */
 .btn {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   min-height: var(--control-height-md);
-  padding: 0 var(--space-4);
-  border: none;
+  padding: var(--padding-button-inner);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: var(--text-md);
-  font-weight: 700;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-family: var(--font-sans);
   text-decoration: none;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
 .btn-primary {
-  background-color: var(--color-primary);
-  color: white;
+  background: var(--color-primary);
+  color: var(--text-inverse);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-xs);
 }
 
-.btn-primary:hover {
-  background-color: var(--color-primary-hover);
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-secondary {
-  background-color: var(--surface-primary);
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
+  background: var(--surface-primary);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
 }
 
-.btn-secondary:hover {
-  background-color: var(--surface-secondary);
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-secondary);
   border-color: var(--border-color-hover);
   color: var(--text-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
-/* Form styles */
+/* Form styles (基础兜底样式，由 form-system.css 接管精细化) */
 .form-group {
-  margin-bottom: 15px;
+  margin-bottom: var(--space-4);
 }
 
 .form-group label {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: var(--space-2);
   font-weight: 500;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 .form-group input,
@@ -83,7 +112,15 @@ body {
   background: var(--surface-primary);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-fast);
+}
+
+.form-group input:hover,
+.form-group textarea:hover,
+.form-group select:hover {
+  border-color: var(--border-color-hover);
 }
 
 .form-group input:focus,
@@ -92,6 +129,7 @@ body {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: var(--shadow-focus);
+  background: var(--surface-primary);
 }
 
 /* Loading spinner */
@@ -99,10 +137,10 @@ body {
   display: inline-block;
   width: 20px;
   height: 20px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid var(--color-primary);
+  border: 3px solid var(--border-color);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -114,7 +152,7 @@ body {
 .error {
   color: var(--color-error);
   background-color: var(--color-error-light);
-  border: 1px solid rgba(239, 68, 68, 0.24);
+  border: 1px solid color-mix(in srgb, var(--color-error) 24%, transparent);
   padding: 10px;
   border-radius: var(--radius-md);
   margin: 10px 0;
@@ -124,7 +162,7 @@ body {
 .success {
   color: var(--color-success);
   background-color: var(--color-success-light);
-  border: 1px solid rgba(16, 185, 129, 0.24);
+  border: 1px solid color-mix(in srgb, var(--color-success) 24%, transparent);
   padding: 10px;
   border-radius: var(--radius-md);
   margin: 10px 0;

@@ -28,6 +28,7 @@ import type {
 } from '../services/api'
 import KnowledgePanelWrapper from './knowledge/KnowledgePanelWrapper'
 import SettingsPanel from './settings/SettingsPanel'
+import ThemeToggle from './common/ThemeToggle'
 
 interface SidebarProps {
   isOpen: boolean
@@ -118,6 +119,57 @@ const formatDateTime = (value: string) =>
     minute: '2-digit',
   })
 
+const SidebarIcon: React.FC<{
+  name: 'settings' | 'knowledge' | 'chevronLeft' | 'chevronRight' | 'more' | 'plus'
+}> = ({ name }) => {
+  if (name === 'settings') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 8.25A3.75 3.75 0 1 0 12 15.75A3.75 3.75 0 0 0 12 8.25Z" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M19.05 13.6C19.16 13.08 19.22 12.55 19.22 12C19.22 11.45 19.16 10.92 19.05 10.4L20.95 8.92L18.95 5.48L16.64 6.4C15.8 5.75 14.83 5.25 13.78 4.97L13.45 2.5H10.55L10.22 4.97C9.17 5.25 8.2 5.75 7.36 6.4L5.05 5.48L3.05 8.92L4.95 10.4C4.84 10.92 4.78 11.45 4.78 12C4.78 12.55 4.84 13.08 4.95 13.6L3.05 15.08L5.05 18.52L7.36 17.6C8.2 18.25 9.17 18.75 10.22 19.03L10.55 21.5H13.45L13.78 19.03C14.83 18.75 15.8 18.25 16.64 17.6L18.95 18.52L20.95 15.08L19.05 13.6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'knowledge') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5.5 4.75H10C11.1 4.75 12 5.65 12 6.75V19.25C12 18.15 11.1 17.25 10 17.25H5.5C4.67 17.25 4 16.58 4 15.75V6.25C4 5.42 4.67 4.75 5.5 4.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M18.5 4.75H14C12.9 4.75 12 5.65 12 6.75V19.25C12 18.15 12.9 17.25 14 17.25H18.5C19.33 17.25 20 16.58 20 15.75V6.25C20 5.42 19.33 4.75 18.5 4.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M7 8.25H9.25M14.75 8.25H17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'plus') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'more') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6.75 12H6.76M12 12H12.01M17.25 12H17.26" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d={name === 'chevronLeft' ? 'M15 6L9 12L15 18' : 'M9 6L15 12L9 18'}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   onToggle,
@@ -195,10 +247,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      <aside className={`sidebar ${isOpen ? 'open' : 'closed'}`}>
+      <aside className={`sidebar ${isOpen ? 'open' : 'closed'}`} aria-hidden={!isOpen}>
         <div className="sidebar-header">
-          <button onClick={onToggle} className="toggle-btn" type="button">
-            {isOpen ? '◁' : '▷'}
+          <button
+            onClick={onToggle}
+            className="toggle-btn"
+            type="button"
+            aria-label={isOpen ? '收起侧边栏' : '展开侧边栏'}
+            title={isOpen ? '收起侧边栏' : '展开侧边栏'}
+          >
+            <SidebarIcon name={isOpen ? 'chevronLeft' : 'chevronRight'} />
           </button>
           <h2>AI LocalBase</h2>
         </div>
@@ -207,8 +265,15 @@ const Sidebar: React.FC<SidebarProps> = ({
           <section className="section section-conversations">
             <div className="section-title-row">
               <h3>会话</h3>
-              <button type="button" className="ghost-btn" onClick={onCreateConversation}>
-                ＋ 新建
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={onCreateConversation}
+                aria-label="新建会话"
+                title="新建会话"
+              >
+                <SidebarIcon name="plus" />
+                <span>新建</span>
               </button>
             </div>
 
@@ -326,7 +391,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                           )
                         }}
                       >
-                        ⋯
+                        <SidebarIcon name="more" />
                       </button>
 
                       {isMenuOpen && (
@@ -374,18 +439,25 @@ const Sidebar: React.FC<SidebarProps> = ({
               type="button"
               className={`sidebar-icon-btn ${isSettingsOpen ? 'active' : ''}`}
               onClick={onToggleSettings}
+              aria-label="打开设置"
               title="设置"
             >
-              <span className="sidebar-icon-glyph">⚙️</span>
+              <span className="sidebar-icon-glyph">
+                <SidebarIcon name="settings" />
+              </span>
               <span>设置</span>
             </button>
+            <ThemeToggle />
             <button
               type="button"
               className={`sidebar-icon-btn ${isKnowledgePanelOpen ? 'active' : ''}`}
               onClick={onToggleKnowledgePanel}
+              aria-label="打开知识库"
               title="知识库"
             >
-              <span className="sidebar-icon-glyph">📘</span>
+              <span className="sidebar-icon-glyph">
+                <SidebarIcon name="knowledge" />
+              </span>
               <span>知识库</span>
             </button>
           </div>

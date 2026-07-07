@@ -24,6 +24,26 @@ const getPasswordStrength = (password: string) => {
   return { label: '偏弱', tone: 'weak', hint: '至少 8 位，推荐 16 位以上' }
 }
 
+const colorWithAlpha = (color: string, alpha: number) => {
+  const normalized = color.trim()
+  const hexMatch = normalized.match(/^#([0-9a-f]{6})$/i)
+
+  if (hexMatch) {
+    const value = hexMatch[1]
+    const red = Number.parseInt(value.slice(0, 2), 16)
+    const green = Number.parseInt(value.slice(2, 4), 16)
+    const blue = Number.parseInt(value.slice(4, 6), 16)
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`
+  }
+
+  const rgbMatch = normalized.match(/^rgb\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)$/i)
+  if (rgbMatch) {
+    return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`
+  }
+
+  return `rgba(0, 92, 230, ${alpha})`
+}
+
 const Login: React.FC = () => {
   const {
     login,
@@ -70,6 +90,8 @@ const Login: React.FC = () => {
     let animationFrameId: number
     const particles: Particle[] = []
     const mouse: { x: number; y: number } = { x: -1000, y: -1000 }
+    const primaryColor = getComputedStyle(document.documentElement)
+      .getPropertyValue('--color-primary') || 'rgb(0, 92, 230)'
 
     const resize = () => {
       canvas.width = window.innerWidth
@@ -134,7 +156,7 @@ const Login: React.FC = () => {
       draw(nextCtx: CanvasRenderingContext2D) {
         nextCtx.beginPath()
         nextCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2)
-        nextCtx.fillStyle = `rgba(37, 99, 235, ${this.opacity})`
+        nextCtx.fillStyle = colorWithAlpha(primaryColor, this.opacity)
         nextCtx.fill()
       }
     }
@@ -156,7 +178,7 @@ const Login: React.FC = () => {
             ctx.beginPath()
             ctx.moveTo(particles[i].x, particles[i].y)
             ctx.lineTo(particles[j].x, particles[j].y)
-            ctx.strokeStyle = `rgba(37, 99, 235, ${opacity})`
+            ctx.strokeStyle = colorWithAlpha(primaryColor, opacity)
             ctx.lineWidth = 0.5
             ctx.stroke()
           }

@@ -21,6 +21,68 @@ const formatTime = (value: string) =>
     minute: '2-digit',
   })
 
+type MessageActionIconName = 'alert' | 'check' | 'copy' | 'edit' | 'refresh' | 'spinner' | 'x'
+
+const MessageActionIcon: React.FC<{ name: MessageActionIconName }> = ({ name }) => {
+  const commonProps = {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    'aria-hidden': true,
+  }
+
+  if (name === 'copy') {
+    return (
+      <svg {...commonProps}>
+        <path d="M8.5 8H6.75C5.78 8 5 8.78 5 9.75V18.25C5 19.22 5.78 20 6.75 20H15.25C16.22 20 17 19.22 17 18.25V16.5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M10.75 4H17.25C18.22 4 19 4.78 19 5.75V12.25C19 13.22 18.22 14 17.25 14H10.75C9.78 14 9 13.22 9 12.25V5.75C9 4.78 9.78 4 10.75 4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'check') {
+    return (
+      <svg {...commonProps}>
+        <path d="M5 12.5L9.25 16.75L19 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'edit') {
+    return (
+      <svg {...commonProps}>
+        <path d="M5 19H9.25L18.5 9.75C19.33 8.92 19.33 7.58 18.5 6.75L17.25 5.5C16.42 4.67 15.08 4.67 14.25 5.5L5 14.75V19Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M13 6.75L17.25 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'refresh' || name === 'spinner') {
+    return (
+      <svg {...commonProps} className={name === 'spinner' ? 'message-action-spin' : undefined}>
+        <path d="M19 12A7 7 0 0 1 7.1 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M5 12A7 7 0 0 1 16.9 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="M16.75 3.75V7.25H20.25" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M7.25 20.25V16.75H3.75" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+
+  if (name === 'alert') {
+    return (
+      <svg {...commonProps}>
+        <path d="M12 4.25L21 19.75H3L12 4.25Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M12 9.5V13.25M12 16.5H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg {...commonProps}>
+      <path d="M6.5 6.5L17.5 17.5M17.5 6.5L6.5 17.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 const MessageCard: React.FC<MessageCardProps> = ({
   message,
   isLoading,
@@ -40,6 +102,13 @@ const MessageCard: React.FC<MessageCardProps> = ({
     message.role === 'assistant' && message.metadata?.degraded
       ? message.metadata
       : null
+  const hasMessageContent = message.content.trim().length > 0
+  const hasRenderableContent =
+    hasMessageContent || Boolean(degradedMetadata) || isStreamingPlaceholder
+
+  if (!hasRenderableContent) {
+    return null
+  }
 
   const handleSaveEdit = async () => {
     const trimmedContent = editedContent.trim()
@@ -80,7 +149,7 @@ const MessageCard: React.FC<MessageCardProps> = ({
 
   return (
     <div className={`message ${message.role}`}>
-      {!isStreamingPlaceholder && message.content.trim() && !isEditing && (
+      {!isStreamingPlaceholder && hasMessageContent && !isEditing && (
         <div className="message-actions">
           <button
             type="button"
@@ -91,7 +160,7 @@ const MessageCard: React.FC<MessageCardProps> = ({
             aria-label="复制消息"
             title={copiedMessageId === message.id ? '已复制' : '复制消息'}
           >
-            {copiedMessageId === message.id ? '✓' : '⧉'}
+            <MessageActionIcon name={copiedMessageId === message.id ? 'check' : 'copy'} />
           </button>
           {message.role === 'user' && onEditMessage && (
             <button
@@ -101,10 +170,10 @@ const MessageCard: React.FC<MessageCardProps> = ({
                 setIsEditing(true)
                 setEditedContent(message.content)
               }}
-              aria-label="编辑消息"
-              title="编辑消息"
-            >
-              ✎
+            aria-label="编辑消息"
+            title="编辑消息"
+          >
+              <MessageActionIcon name="edit" />
             </button>
           )}
           {message.role === 'assistant' && onRegenerateMessage && !isLoading && (
@@ -115,10 +184,10 @@ const MessageCard: React.FC<MessageCardProps> = ({
                 void handleRegenerateClick()
               }}
               aria-label="重新生成"
-              title="重新生成"
-              disabled={isRegenerating}
-            >
-              {isRegenerating ? '⟳' : '↻'}
+            title="重新生成"
+            disabled={isRegenerating}
+          >
+              <MessageActionIcon name={isRegenerating ? 'spinner' : 'refresh'} />
             </button>
           )}
           {onDeleteMessage && (
@@ -128,10 +197,10 @@ const MessageCard: React.FC<MessageCardProps> = ({
               onClick={() => {
                 void handleDeleteClick()
               }}
-              aria-label="删除消息"
-              title="删除消息"
-            >
-              ✕
+            aria-label="删除消息"
+            title="删除消息"
+          >
+              <MessageActionIcon name="x" />
             </button>
           )}
         </div>
@@ -174,7 +243,10 @@ const MessageCard: React.FC<MessageCardProps> = ({
           {degradedMetadata && (
             <div className="message-degraded-banner" role="status" aria-live="polite">
               <div className="message-degraded-title">
-                ⚠ 当前回答为降级回复，模型或检索链路出现异常
+                <span className="message-degraded-title-icon">
+                  <MessageActionIcon name="alert" />
+                </span>
+                <span>当前回答为降级回复，模型或检索链路出现异常</span>
               </div>
               {degradedMetadata.fallbackStrategy && (
                 <div className="message-degraded-detail">

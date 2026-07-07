@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import type { Conversation } from '../../App'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 
 interface ConversationExportDialogProps {
   conversation: Conversation
@@ -69,6 +70,14 @@ const ConversationExportDialog: React.FC<ConversationExportDialogProps> = ({
   const [format, setFormat] = useState<'markdown'>('markdown')
   const [isExporting, setIsExporting] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useModalFocusTrap(backdropRef, {
+    enabled: isOpen,
+    initialFocusRef: closeButtonRef,
+    onClose,
+  })
 
   const previewContent = useMemo(() => {
     return generateMarkdown(conversation)
@@ -101,15 +110,22 @@ const ConversationExportDialog: React.FC<ConversationExportDialogProps> = ({
   }
 
   return (
-    <div className="export-dialog-overlay" onClick={onClose}>
-      <div className="export-dialog" onClick={(e) => e.stopPropagation()}>
+    <div className="export-dialog-overlay" onClick={onClose} ref={backdropRef}>
+      <div
+        aria-labelledby="export-dialog-title"
+        aria-modal="true"
+        className="export-dialog"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+      >
         <div className="export-dialog-header">
-          <h3>导出对话</h3>
+          <h3 id="export-dialog-title">导出对话</h3>
           <button
             type="button"
             className="export-dialog-close"
             onClick={onClose}
             aria-label="关闭"
+            ref={closeButtonRef}
           >
             ✕
           </button>

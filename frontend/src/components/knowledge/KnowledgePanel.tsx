@@ -15,9 +15,11 @@ import type {
   UpdateEvalDatasetItemResponse,
   DeleteEvalDatasetItemResponse,
 } from '../../services/api'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 import CreateKnowledgeBaseDialog from './CreateKnowledgeBaseDialog'
 import DocumentDetailDialog from './DocumentDetailDialog'
 import EvalDatasetDialog from './EvalDatasetDialog'
+import KnowledgeIcon from './KnowledgeIcon'
 import KnowledgeBaseRail from './KnowledgeBaseRail'
 import WorkspaceHero from './WorkspaceHero'
 import MainWorkspace from './MainWorkspace'
@@ -139,6 +141,14 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     onConfirm: () => {},
   })
   const directoryInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useModalFocusTrap(backdropRef, {
+    enabled: open,
+    initialFocusRef: closeButtonRef,
+    onClose,
+  })
 
   const selectedKnowledgeBase = useMemo(
     () => knowledgeBases.find((item) => item.id === selectedKnowledgeBaseId) ?? knowledgeBases[0] ?? null,
@@ -368,22 +378,45 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   return (
     <>
       {open && (
-        <div className="kb-modal-backdrop" onClick={onClose}>
-          <aside className="kb-slide-in" onClick={(e) => e.stopPropagation()}>
+        <div className="kb-modal-backdrop" onClick={onClose} ref={backdropRef}>
+          <aside
+            aria-describedby="knowledge-panel-description"
+            aria-labelledby="knowledge-panel-title"
+            aria-modal="true"
+            className="kb-slide-in"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+          >
             <header className="kb-header">
               <div className="kb-header-left">
                 <div>
-                  <h2 className="kb-header-title">知识库管理</h2>
-                  <p className="kb-header-sub">
+                  <h2 className="kb-header-title" id="knowledge-panel-title">知识库管理</h2>
+                  <p className="kb-header-sub" id="knowledge-panel-description">
                     共 {knowledgeBases.length} 个知识库 · {totalDocuments} 份文档
                   </p>
                 </div>
               </div>
               <div className="kb-header-actions">
-                <button className="kb-create-btn" onClick={handleOpenCreate}>
-                  <span>+</span> 新建
+                <button
+                  className="kb-create-btn"
+                  onClick={handleOpenCreate}
+                  type="button"
+                  aria-label="新建知识库"
+                  title="新建知识库"
+                >
+                  <KnowledgeIcon name="plus" />
+                  <span>新建</span>
                 </button>
-                <button className="kb-close-btn" onClick={onClose} title="关闭">✕</button>
+                <button
+                  className="kb-close-btn"
+                  onClick={onClose}
+                  ref={closeButtonRef}
+                  type="button"
+                  aria-label="关闭知识库管理"
+                  title="关闭知识库管理"
+                >
+                  <KnowledgeIcon name="x" />
+                </button>
               </div>
             </header>
 
@@ -391,8 +424,15 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
             <div className="kb-empty">
               <p className="kb-empty-title">暂无知识库</p>
               <p className="kb-empty-sub">创建第一个知识库，开始管理本地文档</p>
-              <button className="kb-create-btn" onClick={handleOpenCreate}>
-                <span>+</span> 新建知识库
+              <button
+                className="kb-create-btn"
+                onClick={handleOpenCreate}
+                type="button"
+                aria-label="新建知识库"
+                title="新建知识库"
+              >
+                <KnowledgeIcon name="plus" />
+                <span>新建知识库</span>
               </button>
             </div>
           ) : (

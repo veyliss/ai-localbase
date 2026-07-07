@@ -123,43 +123,47 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
         </div>
       )}
 
-      <div className="kb-workspace-grid">
-        <KnowledgeHealthPanel
-          health={activeHealth}
-          loading={healthLoadingId === knowledgeBaseId}
-          error={healthError}
-          onReindexDocument={onReindexDocument}
-          reindexingDocumentId={docContext.reindexingDocumentId}
-        />
+      <div className="kb-workspace-layout">
+        <div className="kb-workspace-primary">
+          <DocumentList
+            documents={knowledgeBase.documents}
+            healthDocuments={activeHealth?.documents}
+            selectedDocumentId={selectedDocumentId}
+            documentDetailLoadingId={docContext.documentDetailLoading ? selectedDocumentId : null}
+            reindexingDocumentId={docContext.reindexingDocumentId}
+            onSelectDocument={onSelectDocument}
+            onOpenDocumentDetail={onOpenDocumentDetail}
+            onReindexDocument={onReindexDocument}
+            onRemoveDocument={onRemoveDocument}
+          />
+        </div>
 
-        <RetrievalDebugPanel
-          scopeLabel={selectedScopeLabel}
-          query={retrievalQuery}
-          searchMode={retrievalSearchMode}
-          result={retrievalDebugResult}
-          error={retrievalDebugError}
-          loading={retrievalDebugKnowledgeBaseId === knowledgeBaseId}
-          savingEvalCandidate={evalContext.savingEvalCandidate}
-          evalCandidateSaveMessage={evalContext.evalCandidateSaveMessage}
-          onQueryChange={onSetRetrievalQuery}
-          onSearchModeChange={onSetRetrievalSearchMode}
-          onRun={onRunRetrievalDebug}
-          onDownloadEvalCandidate={onDownloadRetrievalEvalCandidate}
-          onAddEvalCandidate={onAddRetrievalEvalCandidate}
-        />
+        <aside className="kb-workspace-side" aria-label="知识库检查与调试">
+          <RetrievalDebugPanel
+            scopeLabel={selectedScopeLabel}
+            query={retrievalQuery}
+            searchMode={retrievalSearchMode}
+            result={retrievalDebugResult}
+            error={retrievalDebugError}
+            loading={retrievalDebugKnowledgeBaseId === knowledgeBaseId}
+            savingEvalCandidate={evalContext.savingEvalCandidate}
+            evalCandidateSaveMessage={evalContext.evalCandidateSaveMessage}
+            onQueryChange={onSetRetrievalQuery}
+            onSearchModeChange={onSetRetrievalSearchMode}
+            onRun={onRunRetrievalDebug}
+            onDownloadEvalCandidate={onDownloadRetrievalEvalCandidate}
+            onAddEvalCandidate={onAddRetrievalEvalCandidate}
+          />
+
+          <KnowledgeHealthPanel
+            health={activeHealth}
+            loading={healthLoadingId === knowledgeBaseId}
+            error={healthError}
+            onReindexDocument={onReindexDocument}
+            reindexingDocumentId={docContext.reindexingDocumentId}
+          />
+        </aside>
       </div>
-
-      <DocumentList
-        documents={knowledgeBase.documents}
-        healthDocuments={activeHealth?.documents}
-        selectedDocumentId={selectedDocumentId}
-        documentDetailLoadingId={docContext.documentDetailLoading ? selectedDocumentId : null}
-        reindexingDocumentId={docContext.reindexingDocumentId}
-        onSelectDocument={onSelectDocument}
-        onOpenDocumentDetail={onOpenDocumentDetail}
-        onReindexDocument={onReindexDocument}
-        onRemoveDocument={onRemoveDocument}
-      />
 
       <div className="kb-eval-grid">
         <EvalDatasetHistoryPanel

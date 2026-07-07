@@ -1,4 +1,5 @@
 import React from 'react'
+import KnowledgeIcon from './KnowledgeIcon'
 
 interface UploadPreviewProps {
   files: File[]
@@ -13,19 +14,6 @@ const formatFileSize = (bytes: number): string => {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
-const getFileIcon = (type: string): string => {
-  if (type.startsWith('image/')) return '🖼️'
-  if (type.startsWith('video/')) return '🎬'
-  if (type.startsWith('audio/')) return '🎵'
-  if (type.includes('pdf')) return '📄'
-  if (type.includes('word') || type.includes('document')) return '📝'
-  if (type.includes('sheet') || type.includes('excel')) return '📊'
-  if (type.includes('presentation') || type.includes('powerpoint')) return '📽️'
-  if (type.includes('zip') || type.includes('rar') || type.includes('compressed')) return '🗜️'
-  if (type.includes('text')) return '📃'
-  return '📁'
-}
-
 const UploadPreview: React.FC<UploadPreviewProps> = ({ files, onRemoveFile }) => {
   const totalSize = files.reduce((sum, file) => sum + file.size, 0)
 
@@ -38,7 +26,9 @@ const UploadPreview: React.FC<UploadPreviewProps> = ({ files, onRemoveFile }) =>
       <div className="upload-preview-list">
         {files.map((file, index) => (
           <div key={`${file.name}-${index}`} className="upload-preview-item">
-            <span className="upload-preview-icon">{getFileIcon(file.type)}</span>
+            <span className="upload-preview-icon">
+              <KnowledgeIcon name="file" />
+            </span>
             <div className="upload-preview-info">
               <span className="upload-preview-name">{file.name}</span>
               <span className="upload-preview-meta">
@@ -50,7 +40,7 @@ const UploadPreview: React.FC<UploadPreviewProps> = ({ files, onRemoveFile }) =>
               onClick={() => onRemoveFile(index)}
               title="移除文件"
             >
-              ×
+              <KnowledgeIcon name="x" />
             </button>
           </div>
         ))}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useRef, useState } from 'react'
 import type {
   EvalDatasetDetail,
   EvalGroundTruthCase,
@@ -8,6 +8,7 @@ import type {
   RetrievalSearchMode,
   RunEvalDatasetResponse,
 } from '../../services/api'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 import ConfirmDialog from '../common/ConfirmDialog'
 
 type EvalDatasetDialogDataset = GenerateEvalDatasetResponse | EvalDatasetDetail
@@ -526,6 +527,8 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
   onDeleteItem,
   onRun,
 }) => {
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const [editingItemId, setEditingItemId] = useState<string | null>(null)
   const [draft, setDraft] = useState<EvalItemDraft | null>(null)
   const [savingItemId, setSavingItemId] = useState<string | null>(null)
@@ -820,15 +823,35 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
   ))
   const actionBusy = running || comparing || strategyComparing
 
+  useModalFocusTrap(backdropRef, {
+    initialFocusRef: closeButtonRef,
+    onClose,
+  })
+
   return (
-    <div className="kb-dialog-backdrop" onClick={onClose}>
-      <div className="kb-eval-dialog" onClick={(event) => event.stopPropagation()}>
+    <div className="kb-dialog-backdrop" onClick={onClose} ref={backdropRef}>
+      <div
+        aria-labelledby="kb-eval-dialog-title"
+        aria-modal="true"
+        className="kb-eval-dialog"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
         <header className="kb-eval-dialog-head">
           <div>
             <span>评估集预览</span>
-            <h3>{scopeName || dataset.knowledgeBaseId || '当前知识库'}</h3>
+            <h3 id="kb-eval-dialog-title">{scopeName || dataset.knowledgeBaseId || '当前知识库'}</h3>
           </div>
-          <button className="kb-close-btn" onClick={onClose} title="关闭">x</button>
+          <button
+            className="kb-close-btn"
+            onClick={onClose}
+            ref={closeButtonRef}
+            aria-label="关闭评估集"
+            title="关闭"
+            type="button"
+          >
+            x
+          </button>
         </header>
 
         <section className="kb-eval-summary-grid">

@@ -1,4 +1,6 @@
-import React, { useEffect } from 'react'
+import React, { useRef } from 'react'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
+import KnowledgeIcon from './KnowledgeIcon'
 
 interface CreateKnowledgeBaseDialogProps {
   name: string
@@ -17,22 +19,16 @@ const CreateKnowledgeBaseDialog: React.FC<CreateKnowledgeBaseDialogProps> = ({
   onCancel,
   onConfirm,
 }) => {
-  // ESC 键关闭
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onCancel()
-      }
-    }
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
 
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [onCancel])
+  useModalFocusTrap(backdropRef, {
+    initialFocusRef: nameInputRef,
+    onClose: onCancel,
+  })
 
   return (
-    <div className="kb-create-backdrop" onClick={onCancel}>
+    <div className="kb-create-backdrop" onClick={onCancel} ref={backdropRef}>
       <div
         className="kb-create-dialog"
         onClick={(event) => event.stopPropagation()}
@@ -48,7 +44,7 @@ const CreateKnowledgeBaseDialog: React.FC<CreateKnowledgeBaseDialogProps> = ({
             aria-label="关闭对话框"
             type="button"
           >
-            ×
+            <KnowledgeIcon name="x" />
           </button>
         </div>
         <div className="kb-create-dialog-body">
@@ -65,6 +61,7 @@ const CreateKnowledgeBaseDialog: React.FC<CreateKnowledgeBaseDialogProps> = ({
               onChange={(event) => onNameChange(event.target.value)}
               onKeyDown={(event) => event.key === 'Enter' && name.trim() && onConfirm()}
               autoFocus
+              ref={nameInputRef}
               maxLength={50}
               aria-required="true"
             />

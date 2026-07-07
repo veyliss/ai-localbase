@@ -2,6 +2,7 @@ import React from 'react'
 import type { KnowledgeBase } from '../../App'
 import type { KnowledgeBaseHealthResponse } from '../../services/api'
 import { healthStatusLabel } from './knowledgeLabels'
+import KnowledgeIcon from './KnowledgeIcon'
 
 interface WorkspaceHeroProps {
   knowledgeBase: KnowledgeBase
@@ -75,7 +76,8 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
       </div>
       <div className="kb-workspace-actions">
         <label className="kb-upload-btn kb-upload-btn--primary" title="上传文档">
-          <span>+</span> 上传文件
+          <KnowledgeIcon name="upload" />
+          <span>上传文件</span>
           <input
             type="file"
             multiple
@@ -85,7 +87,8 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
           />
         </label>
         <label className="kb-upload-btn kb-upload-btn--secondary" title="上传目录">
-          <span>+</span> 上传目录
+          <KnowledgeIcon name="folderPlus" />
+          <span>上传目录</span>
           <input
             ref={registerDirectoryInput}
             type="file"

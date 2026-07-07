@@ -7,17 +7,17 @@ export interface LabelTone {
 }
 
 export const documentStatusLabel = (status: string): LabelTone => {
-  if (status === 'indexed') return { text: '已索引', color: '#047857', bg: '#d1fae5' }
-  if (status === 'processing') return { text: '处理中', color: '#b45309', bg: '#fef3c7' }
-  if (status === 'failed') return { text: '失败', color: '#b91c1c', bg: '#fee2e2' }
-  return { text: '就绪', color: '#2563eb', bg: '#dbeafe' }
+  if (status === 'indexed') return { text: '已索引', color: 'var(--color-success)', bg: 'var(--color-success-light)' }
+  if (status === 'processing') return { text: '处理中', color: 'var(--color-warning)', bg: 'var(--color-warning-light)' }
+  if (status === 'failed') return { text: '失败', color: 'var(--color-error)', bg: 'var(--color-error-light)' }
+  return { text: '就绪', color: 'var(--color-primary)', bg: 'var(--color-primary-light)' }
 }
 
 export const healthStatusLabel = (status: KnowledgeBaseHealthResponse['status']): LabelTone => {
-  if (status === 'healthy') return { text: '健康', color: '#047857', bg: '#d1fae5' }
-  if (status === 'warning') return { text: '需关注', color: '#b45309', bg: '#fef3c7' }
-  if (status === 'attention') return { text: '需处理', color: '#b91c1c', bg: '#fee2e2' }
-  return { text: '空库', color: '#475569', bg: '#e2e8f0' }
+  if (status === 'healthy') return { text: '健康', color: 'var(--color-success)', bg: 'var(--color-success-light)' }
+  if (status === 'warning') return { text: '需关注', color: 'var(--color-warning)', bg: 'var(--color-warning-light)' }
+  if (status === 'attention') return { text: '需处理', color: 'var(--color-error)', bg: 'var(--color-error-light)' }
+  return { text: '空库', color: 'var(--text-secondary)', bg: 'var(--surface-muted)' }
 }
 
 export const chunkKindLabel = (kind: string): string => {

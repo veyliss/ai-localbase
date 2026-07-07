@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import type { DocumentItem } from '../../App'
 import type { KnowledgeBaseDocumentHealth } from '../../services/api'
+import KnowledgeIcon from './KnowledgeIcon'
 import { documentStatusLabel } from './knowledgeLabels'
 
 interface DocumentListProps {
@@ -17,6 +18,15 @@ interface DocumentListProps {
 
 type SortField = 'name' | 'size' | 'uploadedAt'
 type SortOrder = 'asc' | 'desc'
+
+const SortIndicator: React.FC<{ active: boolean; order: SortOrder }> = ({ active, order }) => {
+  if (!active) return null
+  return (
+    <span className="kb-sort-indicator">
+      <KnowledgeIcon name={order === 'asc' ? 'chevronUp' : 'chevronDown'} />
+    </span>
+  )
+}
 
 const DocumentList: React.FC<DocumentListProps> = ({
   documents,
@@ -120,7 +130,9 @@ const DocumentList: React.FC<DocumentListProps> = ({
         <span className="kb-scope-label">范围</span>
         <button
           className={`kb-scope-btn${selectedDocumentId === null ? ' kb-scope-btn--active' : ''}`}
+          type="button"
           onClick={() => onSelectDocument(null)}
+          aria-pressed={selectedDocumentId === null}
         >
           全部文档
         </button>
@@ -128,7 +140,9 @@ const DocumentList: React.FC<DocumentListProps> = ({
           <button
             key={document.id}
             className={`kb-scope-btn${selectedDocumentId === document.id ? ' kb-scope-btn--active' : ''}`}
+            type="button"
             onClick={() => onSelectDocument(document.id)}
+            aria-pressed={selectedDocumentId === document.id}
           >
             {document.name}
           </button>
@@ -149,24 +163,33 @@ const DocumentList: React.FC<DocumentListProps> = ({
         <div className="kb-docs-sort">
           <button
             className={`kb-sort-btn${sortField === 'name' ? ' kb-sort-btn--active' : ''}`}
+            type="button"
             onClick={() => handleSort('name')}
+            aria-pressed={sortField === 'name'}
             title="按名称排序"
           >
-            名称 {sortField === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}
+            <span>名称</span>
+            <SortIndicator active={sortField === 'name'} order={sortOrder} />
           </button>
           <button
             className={`kb-sort-btn${sortField === 'size' ? ' kb-sort-btn--active' : ''}`}
+            type="button"
             onClick={() => handleSort('size')}
+            aria-pressed={sortField === 'size'}
             title="按大小排序"
           >
-            大小 {sortField === 'size' && (sortOrder === 'asc' ? '↑' : '↓')}
+            <span>大小</span>
+            <SortIndicator active={sortField === 'size'} order={sortOrder} />
           </button>
           <button
             className={`kb-sort-btn${sortField === 'uploadedAt' ? ' kb-sort-btn--active' : ''}`}
+            type="button"
             onClick={() => handleSort('uploadedAt')}
+            aria-pressed={sortField === 'uploadedAt'}
             title="按上传时间排序"
           >
-            时间 {sortField === 'uploadedAt' && (sortOrder === 'asc' ? '↑' : '↓')}
+            <span>时间</span>
+            <SortIndicator active={sortField === 'uploadedAt'} order={sortOrder} />
           </button>
         </div>
 
@@ -266,22 +289,32 @@ const DocumentList: React.FC<DocumentListProps> = ({
                 <div className="kb-doc-actions">
                   <button
                     className="kb-doc-action"
+                    type="button"
                     onClick={() => onOpenDocumentDetail(document.id)}
                     disabled={documentDetailLoadingId === document.id}
+                    aria-label={`查看 ${document.name} 的索引详情`}
                     title="查看索引详情"
                   >
                     {documentDetailLoadingId === document.id ? '加载' : '详情'}
                   </button>
                   <button
                     className="kb-doc-action"
+                    type="button"
                     onClick={() => onReindexDocument(document.id)}
                     disabled={reindexingDocumentId === document.id}
+                    aria-label={`重新解析并重建 ${document.name}`}
                     title="重新解析并重建索引"
                   >
                     {reindexingDocumentId === document.id ? '重建中' : '重建'}
                   </button>
-                  <button className="kb-doc-remove" onClick={() => onRemoveDocument(document.id)} title="删除文档">
-                    x
+                  <button
+                    className="kb-doc-remove"
+                    type="button"
+                    onClick={() => onRemoveDocument(document.id)}
+                    aria-label={`删除文档 ${document.name}`}
+                    title="删除文档"
+                  >
+                    <KnowledgeIcon name="trash" />
                   </button>
                 </div>
               </div>

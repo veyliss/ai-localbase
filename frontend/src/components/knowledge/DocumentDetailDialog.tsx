@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react'
 import type { DocumentDetailResponse } from '../../services/api'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 import { chunkKindLabel } from './knowledgeLabels'
 
 interface DocumentDetailDialogProps {
@@ -15,7 +16,14 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
   focusChunkId,
   onClose,
 }) => {
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const focusChunkRef = useRef<HTMLDivElement | null>(null)
+
+  useModalFocusTrap(backdropRef, {
+    initialFocusRef: closeButtonRef,
+    onClose,
+  })
 
   useEffect(() => {
     focusChunkRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -26,16 +34,31 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
   )
 
   return (
-    <div className="kb-detail-backdrop" onClick={onClose}>
-      <div className="kb-detail-dialog" onClick={(event) => event.stopPropagation()}>
+    <div className="kb-detail-backdrop" onClick={onClose} ref={backdropRef}>
+      <div
+        aria-labelledby="kb-detail-title"
+        aria-modal="true"
+        className="kb-detail-dialog"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
         <div className="kb-detail-header">
           <div>
-            <h3>{detail?.document.name ?? '文档详情'}</h3>
+            <h3 id="kb-detail-title">{detail?.document.name ?? '文档详情'}</h3>
             {detail?.document.indexedAt && (
               <p>最近索引：{new Date(detail.document.indexedAt).toLocaleString('zh-CN')}</p>
             )}
           </div>
-          <button className="kb-close-btn" onClick={onClose}>x</button>
+          <button
+            className="kb-close-btn"
+            onClick={onClose}
+            ref={closeButtonRef}
+            type="button"
+            aria-label="关闭文档详情"
+            title="关闭文档详情"
+          >
+            x
+          </button>
         </div>
 
         {error ? (

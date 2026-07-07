@@ -38,13 +38,13 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const getHealthBadgeStyle = () => {
     switch (healthStatus) {
       case 'healthy':
-        return { background: '#dcfce7', color: '#15803d' }
+        return { background: 'var(--color-success-light)', color: 'var(--color-success)' }
       case 'warning':
-        return { background: '#fef3c7', color: '#b45309' }
+        return { background: 'var(--color-warning-light)', color: 'var(--color-warning)' }
       case 'attention':
-        return { background: '#fee2e2', color: '#b91c1c' }
+        return { background: 'var(--color-error-light)', color: 'var(--color-error)' }
       default:
-        return { background: '#e2e8f0', color: '#475569' }
+        return { background: 'var(--surface-muted)', color: 'var(--text-secondary)' }
     }
   }
 
@@ -89,8 +89,8 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           <section className="settings-panel-block single-column">
             <div className="settings-section-head" style={{ marginBottom: '16px' }}>
               <div>
-                <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: '#111827' }}>基本信息</h3>
-                <p style={{ margin: 0, fontSize: '13px', color: '#6b7280' }}>
+                <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: 'var(--text-primary)' }}>基本信息</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)' }}>
                   文档名称、大小和上传时间
                 </p>
               </div>
@@ -98,13 +98,13 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '13px', color: '#64748b', minWidth: '80px' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)', minWidth: '80px' }}>
                   文件名
                 </span>
                 <strong
                   style={{
                     fontSize: '14px',
-                    color: '#0f172a',
+                    color: 'var(--text-primary)',
                     wordBreak: 'break-word',
                     flex: 1,
                   }}
@@ -114,25 +114,25 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '13px', color: '#64748b', minWidth: '80px' }}>大小</span>
-                <strong style={{ fontSize: '14px', color: '#0f172a' }}>{documentSize}</strong>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)', minWidth: '80px' }}>大小</span>
+                <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>{documentSize}</strong>
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{ fontSize: '13px', color: '#64748b', minWidth: '80px' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)', minWidth: '80px' }}>
                   上传时间
                 </span>
-                <strong style={{ fontSize: '14px', color: '#0f172a' }}>
+                <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>
                   {formatDate(uploadedAt)}
                 </strong>
               </div>
 
               {indexedAt && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '13px', color: '#64748b', minWidth: '80px' }}>
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)', minWidth: '80px' }}>
                     索引时间
                   </span>
-                  <strong style={{ fontSize: '14px', color: '#0f172a' }}>
+                  <strong style={{ fontSize: '14px', color: 'var(--text-primary)' }}>
                     {formatDate(indexedAt)}
                   </strong>
                 </div>
@@ -143,8 +143,8 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           <section className="settings-panel-block single-column">
             <div className="settings-section-head" style={{ marginBottom: '16px' }}>
               <div>
-                <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: '#111827' }}>索引统计</h3>
-                <p style={{ margin: 0, fontSize: '13px', color: '#6b7280' }}>
+                <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: 'var(--text-primary)' }}>索引统计</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)' }}>
                   文档分块数量、向量数量和健康度
                 </p>
               </div>
@@ -160,12 +160,12 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               <div
                 style={{
                   padding: '12px 14px',
-                  border: '1px solid #e2e8f0',
+                  border: '1px solid var(--border-color)',
                   borderRadius: '10px',
-                  background: '#f8fafc',
+                  background: 'var(--surface-secondary)',
                 }}
               >
-                <span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>
+                <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)' }}>
                   分块数量
                 </span>
                 <strong
@@ -173,7 +173,7 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     display: 'block',
                     marginTop: '6px',
                     fontSize: '20px',
-                    color: '#0f172a',
+                    color: 'var(--text-primary)',
                   }}
                 >
                   {chunkCount ?? 0}
@@ -183,12 +183,12 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               <div
                 style={{
                   padding: '12px 14px',
-                  border: '1px solid #e2e8f0',
+                  border: '1px solid var(--border-color)',
                   borderRadius: '10px',
-                  background: '#f8fafc',
+                  background: 'var(--surface-secondary)',
                 }}
               >
-                <span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>
+                <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)' }}>
                   向量数量
                 </span>
                 <strong
@@ -196,7 +196,7 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     display: 'block',
                     marginTop: '6px',
                     fontSize: '20px',
-                    color: '#0f172a',
+                    color: 'var(--text-primary)',
                   }}
                 >
                   {vectorCount ?? 0}
@@ -212,13 +212,13 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                 gap: '12px',
                 marginTop: '12px',
                 padding: '12px 14px',
-                border: '1px solid #e2e8f0',
+                border: '1px solid var(--border-color)',
                 borderRadius: '10px',
-                background: '#fff',
+                background: 'var(--surface-primary)',
               }}
             >
               <div>
-                <span style={{ display: 'block', fontSize: '12px', color: '#64748b' }}>
+                <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)' }}>
                   健康度状态
                 </span>
                 <strong
@@ -226,12 +226,12 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     display: 'block',
                     marginTop: '4px',
                     fontSize: '14px',
-                    color: '#0f172a',
+                    color: 'var(--text-primary)',
                   }}
                 >
                   {getHealthLabel()}
                   {healthScore !== undefined && (
-                    <span style={{ marginLeft: '8px', fontSize: '13px', color: '#64748b' }}>
+                    <span style={{ marginLeft: '8px', fontSize: '13px', color: 'var(--text-secondary)' }}>
                       {healthScore.toFixed(1)} 分
                     </span>
                   )}
@@ -254,8 +254,8 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           <section className="settings-panel-block single-column">
             <div className="settings-section-head" style={{ marginBottom: '16px' }}>
               <div>
-                <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: '#111827' }}>内容预览</h3>
-                <p style={{ margin: 0, fontSize: '13px', color: '#6b7280' }}>
+                <h3 style={{ margin: '0 0 6px', fontSize: '16px', color: 'var(--text-primary)' }}>内容预览</h3>
+                <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)' }}>
                   文档内容前 500 字符
                 </p>
               </div>
@@ -267,10 +267,10 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                 padding: '14px',
                 maxHeight: '300px',
                 overflow: 'auto',
-                border: '1px solid #e2e8f0',
+                border: '1px solid var(--border-color)',
                 borderRadius: '10px',
-                background: '#f8fafc',
-                color: '#334155',
+                background: 'var(--surface-secondary)',
+                color: 'var(--text-secondary)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 fontSize: '13px',

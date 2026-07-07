@@ -2,6 +2,7 @@ import React from 'react'
 import type { KnowledgeBase } from '../../App'
 import type { KnowledgeBaseHealthResponse } from '../../services/api'
 import { healthStatusLabel } from './knowledgeLabels'
+import KnowledgeIcon from './KnowledgeIcon'
 
 interface KnowledgeBaseRailProps {
   knowledgeBases: KnowledgeBase[]
@@ -30,7 +31,9 @@ const KnowledgeBaseRail: React.FC<KnowledgeBaseRailProps> = ({
         <h3>知识库</h3>
         <p>{knowledgeBases.length} 个空间</p>
       </div>
-      <button className="kb-rail-create" onClick={onCreate} title="新建知识库">+</button>
+      <button className="kb-rail-create" onClick={onCreate} title="新建知识库" aria-label="新建知识库">
+        <KnowledgeIcon name="plus" />
+      </button>
     </div>
 
     <div className="kb-rail-list">
@@ -58,22 +61,33 @@ const KnowledgeBaseRail: React.FC<KnowledgeBaseRailProps> = ({
               <div className="kb-rail-delete-confirm">
                 <button
                   className="kb-delete-yes"
+                  type="button"
                   onClick={() => {
                     onDeleteKnowledgeBase(knowledgeBase.id)
                     onSetDeleteConfirmId(null)
                   }}
+                  aria-label={`确认删除知识库 ${knowledgeBase.name}`}
                 >
                   删除
                 </button>
-                <button className="kb-delete-no" onClick={() => onSetDeleteConfirmId(null)}>取消</button>
+                <button
+                  className="kb-delete-no"
+                  type="button"
+                  onClick={() => onSetDeleteConfirmId(null)}
+                  aria-label={`取消删除知识库 ${knowledgeBase.name}`}
+                >
+                  取消
+                </button>
               </div>
             ) : (
               <button
                 className="kb-rail-delete"
+                type="button"
                 onClick={() => onSetDeleteConfirmId(knowledgeBase.id)}
+                aria-label={`删除知识库 ${knowledgeBase.name}`}
                 title="删除知识库"
               >
-                x
+                <KnowledgeIcon name="trash" />
               </button>
             )}
           </div>

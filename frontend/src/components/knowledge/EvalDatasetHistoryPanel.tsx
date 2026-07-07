@@ -1,5 +1,6 @@
 import React from 'react'
 import type { EvalDatasetSummary } from '../../services/api'
+import KnowledgeIcon from './KnowledgeIcon'
 
 interface EvalDatasetHistoryPanelProps {
   datasets: EvalDatasetSummary[]
@@ -73,19 +74,26 @@ const EvalDatasetHistoryPanel: React.FC<EvalDatasetHistoryPanelProps> = ({
               </button>
               <div className="kb-eval-history-actions">
                 <button
-                  className="kb-doc-action"
+                  className="kb-eval-history-action"
                   onClick={() => onOpen(dataset.id)}
                   disabled={openingDatasetId === dataset.id}
+                  type="button"
                 >
                   {openingDatasetId === dataset.id ? '打开中' : '查看'}
                 </button>
                 <button
-                  className="kb-doc-remove"
+                  className="kb-eval-history-remove"
                   onClick={() => onDelete(dataset.id)}
                   disabled={deletingDatasetId === dataset.id}
+                  aria-label={`删除评估集 ${dataset.name || dataset.id}`}
                   title="删除评估集"
+                  type="button"
                 >
-                  {deletingDatasetId === dataset.id ? '...' : 'x'}
+                  {deletingDatasetId === dataset.id ? (
+                    <span className="kb-eval-history-loading" />
+                  ) : (
+                    <KnowledgeIcon name="trash" />
+                  )}
                 </button>
               </div>
             </article>

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-localbase/internal/model"
 	"ai-localbase/internal/service"
 )
 
@@ -162,5 +163,36 @@ func TestSearchWebErrorPropagates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "429") {
 		t.Fatalf("expected propagated error to retain status detail, got %q", err.Error())
+	}
+}
+
+// fakeConfigProvider satisfies TokenProvider for capabilities-tool tests.
+type fakeConfigProvider struct{}
+
+func (fakeConfigProvider) GetConfig() model.AppConfig { return model.AppConfig{} }
+
+func TestRegistryBoundCapabilitiesCountsLateRegisteredTools(t *testing.T) {
+	registry := NewToolRegistry(
+		ToolDefinition{Name: "tool_a", ReadOnly: true, PermissionLevel: ToolPermissionReadOnly, Handler: noopToolHandler},
+	)
+	registry.Register(newRegistryCapabilitiesTool(fakeConfigProvider{}, registry))
+
+	// Register an extra tool AFTER the capabilities tool, mirroring how
+	// main.go adds search_web after DefaultRegistry.
+	for _, tool := range NewWebSearchTools(&fakeWebSearcher{enabled: true}) {
+		registry.Register(tool)
+	}
+
+	result, err := registry.Call(context.Background(), "get_mcp_capabilities", nil)
+	if err != nil {
+		t.Fatalf("capabilities call failed: %v", err)
+	}
+	capabilities, ok := result.Data["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected capabilities map, got %#v", result.Data)
+	}
+	want := len(registry.List())
+	if got := capabilities["toolCount"]; got != want {
+		t.Fatalf("toolCount = %v, want %d (must reflect late-registered tools)", got, want)
 	}
 }

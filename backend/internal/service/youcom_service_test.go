@@ -336,3 +336,53 @@ func TestYouComSearchIntegration(t *testing.T) {
 		t.Fatalf("expected non-empty url and title, got %#v", resp.Results.Web[0])
 	}
 }
+
+func TestYouComSearchContextCanceled(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		time.Sleep(200 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(YouComSearchResponse{})
+	}))
+	defer server.Close()
+
+	svc := newTestYouComService(t, server.URL, "test-key", 5)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	_, err := svc.Search(ctx, YouComSearchRequest{Query: "test"})
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if !strings.Contains(err.Error(), "canceled") {
+		t.Fatalf("expected canceled-labeled error, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("cancellation must not be labeled as timeout, got %q", err.Error())
+	}
+}
+
+func TestTruncateForErrorKeepsRunesIntact(t *testing.T) {
+	long := strings.Repeat("错", 100) // 3 bytes per rune, 300 bytes total
+	truncated := truncateForError(long)
+	if len(truncated) > 200 {
+		t.Fatalf("expected truncation to at most 200 bytes, got %d", len(truncated))
+	}
+	if !strings.HasPrefix(long, truncated) {
+		t.Fatal("truncated string must be a prefix of the original")
+	}
+	for _, r := range truncated {
+		if r != '错' {
+			t.Fatalf("found mangled rune %q — multi-byte character was split", r)
+		}
+	}
+
+	short := "short"
+	if truncateForError(short) != short {
+		t.Fatal("short strings must be returned unchanged")
+	}
+}

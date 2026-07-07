@@ -1145,7 +1145,35 @@ func NewReadOnlyTools(appService AppServiceReader) []ToolDefinition {
 }
 
 func DefaultRegistry(appService *service.AppService) *ToolRegistry {
-	return NewToolRegistry(NewReadOnlyTools(appService)...)
+	registry := NewToolRegistry(NewReadOnlyTools(appService)...)
+	// The get_mcp_capabilities defined in NewReadOnlyTools recomputes the tool
+	// list statically, so its toolCount drifts once callers register extra
+	// tools (e.g. search_web in main.go). Rebind it to the live registry so
+	// the summary always matches tools/list.
+	registry.Register(newRegistryCapabilitiesTool(appService, registry))
+	return registry
+}
+
+// newRegistryCapabilitiesTool returns a get_mcp_capabilities definition bound
+// to the live registry, so the reported summary reflects every registered
+// tool rather than only the NewReadOnlyTools set.
+func newRegistryCapabilitiesTool(cfgProvider TokenProvider, registry *ToolRegistry) ToolDefinition {
+	return ToolDefinition{
+		Name:            "get_mcp_capabilities",
+		Description:     "返回 MCP Server 能力摘要，包括版本、协议、工具数量、权限分布、启用状态和基础配置。",
+		InputSchema:     emptyObjectSchema(),
+		ReadOnly:        true,
+		PermissionLevel: ToolPermissionReadOnly,
+		Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
+			_ = ctx
+			tools := registry.List()
+			capabilities := buildMCPCapabilities(cfgProvider.GetConfig(), tools)
+			return NewTextResult(
+				fmt.Sprintf("MCP Server %s 当前提供 %d 个工具。", serverVersion, capabilities["toolCount"]),
+				map[string]any{"capabilities": capabilities},
+			), nil
+		},
+	}
 }
 
 func buildKnowledgeBaseQualityInsights(health model.KnowledgeBaseHealthResponse, evalRuns []model.EvalRunSummary) []string {

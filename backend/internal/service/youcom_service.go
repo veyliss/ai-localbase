@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"ai-localbase/internal/model"
 )
@@ -152,8 +153,11 @@ func (s *YouComService) Search(ctx context.Context, req YouComSearchRequest) (Yo
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return YouComSearchResponse{}, fmt.Errorf("you.com search timed out: %w", err)
+		}
+		if errors.Is(err, context.Canceled) {
+			return YouComSearchResponse{}, fmt.Errorf("you.com search canceled: %w", err)
 		}
 		return YouComSearchResponse{}, fmt.Errorf("request you.com search: %w", err)
 	}
@@ -197,8 +201,13 @@ func mapYouComStatusError(statusCode int, body []byte) error {
 
 func truncateForError(s string) string {
 	const maxLen = 200
-	if len(s) > maxLen {
-		return s[:maxLen]
+	if len(s) <= maxLen {
+		return s
 	}
-	return s
+	truncated := s[:maxLen]
+	// Trim any bytes left over from a multi-byte rune split at the cut point.
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated
 }

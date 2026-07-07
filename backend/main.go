@@ -61,6 +61,10 @@ func main() {
 	}
 	llmService := service.NewLLMService()
 	mcpRegistry := mcp.DefaultRegistry(appService)
+	youcomService := service.NewYouComService(serverConfig)
+	for _, tool := range mcp.NewWebSearchTools(youcomService) {
+		mcpRegistry.Register(tool)
+	}
 	toolPlanner := mcp.NewToolUsePlanner(mcpRegistry)
 	appHandler := handler.NewAppHandler(serverConfig, appService, llmService, toolPlanner)
 	configHandler := handler.NewConfigHandler(appService, qdrantService)

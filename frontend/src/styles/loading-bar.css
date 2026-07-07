@@ -1,17 +1,22 @@
-/* 全局加载指示器 */
+/* 全局加载指示器 - 适配设计代币系统 */
 .loading-bar {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   height: 3px;
-  z-index: 10002;
+  z-index: calc(var(--z-toast) + 2);
   background: transparent;
 }
 
 .loading-bar-progress {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
+  background: linear-gradient(
+    90deg,
+    var(--color-primary),
+    var(--color-accent),
+    var(--color-info)
+  );
   animation: loading-progress 2s ease-in-out infinite;
   transform-origin: left;
 }

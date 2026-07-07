@@ -1,3 +1,4 @@
+/* 主题切换按钮 - 适配设计代币系统 */
 .theme-toggle {
   display: flex;
   align-items: center;
@@ -5,17 +6,27 @@
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
   padding: 0;
 }
 
+.sidebar-footer-icons .theme-toggle {
+  flex: 0 0 38px;
+  border: 1px solid transparent;
+  background: var(--surface-secondary);
+}
+
 .theme-toggle:hover {
-  background: var(--bg-hover, #f5f5f5);
-  color: var(--text-primary, #333);
+  background: var(--color-sidebar-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-footer-icons .theme-toggle:hover {
+  border-color: var(--border-color);
 }
 
 .theme-toggle svg {
@@ -27,10 +38,10 @@
 }
 
 [data-theme="dark"] .theme-toggle {
-  color: var(--text-secondary, #aaa);
+  color: var(--text-secondary);
 }
 
 [data-theme="dark"] .theme-toggle:hover {
-  background: var(--bg-hover, #2a2a2a);
-  color: var(--text-primary, #eee);
+  background: var(--color-sidebar-hover);
+  color: var(--text-primary);
 }

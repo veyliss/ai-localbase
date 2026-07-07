@@ -1,32 +1,58 @@
 /* ==========================================================================
    按钮系统 (Button System)
+   遵循全新的 Modern Design Tokens
    ========================================================================== */
 
-/* Primary Button — 主要操作 */
-.btn-primary {
-  background: var(--color-primary);
-  color: white;
+/* 核心公共样式 */
+.btn-base {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-md);
   padding: var(--padding-button-inner);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-weight: 600;
-  border: none;
+  font-family: var(--font-sans);
   cursor: pointer;
   transition: all var(--transition-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+  user-select: none;
+  border: 1px solid transparent;
+}
+
+.btn-base:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.btn-base:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Primary Button — 主要操作 */
+.btn-primary {
+  background: var(--color-primary);
+  color: var(--text-inverse);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-xs);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:active:not(:disabled) {
+  background: var(--color-primary-active);
+  border-color: var(--color-primary-active);
   transform: translateY(0);
+  box-shadow: none;
 }
 
 .btn-primary:disabled {
@@ -38,48 +64,32 @@
 
 /* Secondary Button — 次要操作 */
 .btn-secondary {
-  background: var(--bg-primary);
+  background: var(--surface-primary);
   color: var(--text-primary);
-  padding: var(--padding-button-inner);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 500;
   border: 1px solid var(--border-color);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+  box-shadow: var(--shadow-xs);
+  font-weight: 500;
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--bg-secondary);
+  background: var(--surface-secondary);
   border-color: var(--border-color-hover);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-secondary:active:not(:disabled) {
+  background: var(--surface-muted);
   transform: translateY(0);
-}
-
-.btn-secondary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* Ghost Button — 最次要操作 */
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  border: none;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  font-weight: 500;
 }
 
 .btn-ghost:hover:not(:disabled) {
@@ -87,60 +97,45 @@
   color: var(--text-primary);
 }
 
-.btn-ghost:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.btn-ghost:active:not(:disabled) {
+  background: var(--border-color);
+  transform: translateY(0);
 }
 
 /* Danger Button — 危险操作 */
 .btn-danger {
   background: var(--color-error);
-  color: white;
-  padding: var(--padding-button-inner);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  border: none;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+  color: var(--text-inverse);
+  border-color: var(--color-error);
+  box-shadow: var(--shadow-xs);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: #dc2626;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+  background: var(--color-error);
+  filter: brightness(0.9);
+  border-color: transparent;
   transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-danger:active:not(:disabled) {
+  background: var(--color-error);
+  filter: brightness(0.8);
+  border-color: transparent;
   transform: translateY(0);
-}
-
-.btn-danger:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
   box-shadow: none;
 }
 
 /* Icon Button — 图标按钮 */
 .btn-icon {
-  width: 32px;
-  height: 32px;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
   padding: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  border: none;
-  cursor: pointer;
   color: var(--text-secondary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--transition-fast);
   font-size: var(--text-base);
+  border: 1px solid transparent;
 }
 
 .btn-icon:hover:not(:disabled) {
@@ -148,64 +143,89 @@
   color: var(--text-primary);
 }
 
-.btn-icon:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.btn-icon:active:not(:disabled) {
+  background: var(--border-color);
+  transform: scale(0.96);
 }
 
 /* Send Button — 发送按钮专用 */
 .btn-send {
   background: var(--color-primary);
-  color: white;
-  padding: 8px 16px;
-  border-radius: var(--radius-md);
+  color: var(--text-inverse);
+  border: 1px solid var(--color-primary);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg); /* 更圆润以匹配输入框 */
   font-size: var(--text-sm);
   font-weight: 600;
-  border: none;
-  cursor: pointer;
-  transition: all var(--transition-fast);
   flex-shrink: 0;
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-send:hover:not(:disabled) {
   background: var(--color-primary-hover);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+  border-color: var(--color-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .btn-send:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.btn-send:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  background: var(--color-primary-active);
+  transform: translateY(0) scale(0.98);
+  box-shadow: none;
 }
 
 /* Loading Spinner */
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
   border-radius: 50%;
-  animation: spin 0.6s linear infinite;
+  animation: spin 0.75s linear infinite;
   flex-shrink: 0;
+  opacity: 0.8;
 }
 
 .btn-loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: var(--padding-button-inner);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: not-allowed;
-  opacity: 0.8;
+  opacity: 0.7 !important;
+  cursor: wait !important;
+  pointer-events: none;
 }
 
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* 兼容兜底：确保所有按钮类拥有基础布局属性 */
+/* 注意：各按钮类（.btn-primary 等）在上方已有独自的完整定义 */
+/* 此处仅确保在类名单独使用时也能获得 flex 布局属性 */
+.btn-primary,
+.btn-secondary,
+.btn-ghost,
+.btn-danger,
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-md);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.btn-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
 }

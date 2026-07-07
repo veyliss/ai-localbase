@@ -1,6 +1,7 @@
 /* ==========================================================================
-   设计代币系统 (Design Tokens)
-   极客智感风格 - Geek-Chic Tech Console
+   全新设计代币系统 (Modern UI Design Tokens)
+   风格：极简、通透、现代化 (Clean, Translucent, Modern)
+   遵循 WCAG 无障碍标准与优雅的现代交互体验
    ========================================================================== */
 
 /* ==========================================================================
@@ -9,189 +10,244 @@
 :root {
   color-scheme: light;
 
-  /* 基础背景色 */
+  /* --- 基础背景色 (Backgrounds) --- */
+  /* 主背景采用纯白，次级背景采用高明度低饱和冷灰，提升呼吸感 */
   --bg-primary: #ffffff;
-  --bg-secondary: #f8fafc;
-  --bg-tertiary: #f1f5f9;
-  --bg-app: #f8f9fc;
-  --bg-sidebar: #0c1222;
-  --bg-sidebar-elevated: #172033;
+  --bg-secondary: #fbfbfc;
+  --bg-tertiary: #f4f4f5;
+  --bg-app: #fafafa;
+  --bg-sidebar: #ffffff;
+  --bg-sidebar-elevated: #f4f4f5;
 
-  /* 文字层级 */
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-tertiary: #94a3b8;
-  --text-inverse: #f8fafc;
-  --text-muted-inverse: rgba(248, 250, 252, 0.64);
+  /* --- 文字层级 (Typography Colors) --- */
+  /* 文字避免纯黑，采用深灰蓝提升阅读舒适度 */
+  --text-primary: #09090b;   /* 标题与主正文 */
+  --text-secondary: #52525b; /* 辅助文字段落 */
+  --text-tertiary: #71717a;  /* 次要信息/占位符 */
+  --text-inverse: #ffffff;
+  --text-muted-inverse: rgba(255, 255, 255, 0.7);
 
-  /* 核心品牌色 */
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-primary-active: #1e40af;
+  /* --- 核心品牌色 (Primary Brand Colors) --- */
+  /* 高对比度、富有科技感的深空蓝，WCAG 达标 */
+  --color-primary: #1d4ed8;
+  --color-primary-hover: #1e40af;
+  --color-primary-active: #1e3a8a;
   --color-primary-light: #dbeafe;
-  --color-primary-soft: #eff6ff;
-  --color-accent: #6366f1;
-  --color-accent-light: #eef2ff;
+  --color-primary-soft: rgba(29, 78, 216, 0.08);
+
+  --color-accent: #0f766e;
+  --color-accent-light: #ccfbf1;
+  --color-accent-soft: rgba(15, 118, 110, 0.08);
 
   /* 用户消息专用色 */
-  --color-user-bubble: #2563eb;
+  --color-user-bubble: #1d4ed8;
   --color-user-bubble-text: #ffffff;
 
-  /* 语义反馈色 */
+  /* --- 语义反馈色 (Semantic Colors) --- */
+  /* 色彩校准，降低刺眼感，提升识别度 */
   --color-success: #10b981;
-  --color-success-light: #ecfdf5;
+  --color-success-hover: #059669;
+  --color-success-active: #047857;
+  --color-success-light: #d1fae5;
+  --color-success-soft: rgba(16, 185, 129, 0.1);
   --color-warning: #f59e0b;
-  --color-warning-light: #fffbeb;
+  --color-warning-hover: #d97706;
+  --color-warning-active: #b45309;
+  --color-warning-light: #fef3c7;
+  --color-warning-soft: rgba(245, 158, 11, 0.12);
   --color-error: #ef4444;
-  --color-error-light: #fef2f2;
-  --color-info: #3b82f6;
-  --color-info-light: #eff6ff;
+  --color-error-hover: #dc2626;
+  --color-error-active: #b91c1c;
+  --color-error-light: #fee2e2;
+  --color-error-soft: rgba(239, 68, 68, 0.1);
+  --color-info: #0ea5e9;
+  --color-info-hover: #0284c7;
+  --color-info-active: #0369a1;
+  --color-info-light: #e0f2fe;
+  --color-info-soft: rgba(14, 165, 233, 0.1);
 
-  /* 物理材质质感 */
-  --border-color: #e2e8f0;
-  --border-color-hover: #cbd5e1;
-  --border-subtle: #eef2f7;
+  /* --- 物理材质与边框 (Materials & Borders) --- */
+  /* 使用带透明度的边框适配不同的背景切换 */
+  --border-color: rgba(9, 9, 11, 0.08);
+  --border-color-hover: rgba(9, 9, 11, 0.15);
+  --border-subtle: rgba(9, 9, 11, 0.04);
+
   --surface-primary: #ffffff;
-  --surface-secondary: #f8fafc;
-  --surface-muted: #f1f5f9;
+  --surface-secondary: #fbfbfc;
+  --surface-muted: #f4f4f5;
   --glass-bg: rgba(255, 255, 255, 0.75);
-  --glass-border: rgba(226, 232, 240, 0.8);
+  --glass-border: rgba(255, 255, 255, 0.4);
 
-  /* 圆角代币 */
+  /* --- 圆角代币 (Radii) --- */
+  /* 调整为更现代的微曲率圆角 */
   --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 8px;
+  --radius-md: 10px;
   --radius-lg: 14px;
-  --radius-xl: 18px;
-  --radius-2xl: 20px;
-  --radius-full: 999px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-full: 9999px;
 
-  /* 柔和阴影 */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 18px 40px -20px rgba(15, 23, 42, 0.32), 0 8px 18px -14px rgba(15, 23, 42, 0.2);
-  --shadow-modal: 0 30px 90px rgba(15, 23, 42, 0.28);
-  --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  /* --- 柔和多层阴影 (Smooth Shadows) --- */
+  /* 丢弃生硬的单层阴影，使用物理级扩散阴影 */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.08);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+  --shadow-modal: 0 0 0 1px rgba(0,0,0,0.03), 0 24px 48px -12px rgba(0,0,0,0.18);
+  --shadow-focus: 0 0 0 3px rgba(29, 78, 216, 0.15);
 
-  /* 聊天专用令牌 */
+  /* --- 层级系统 (Z Index) --- */
+  --z-dropdown: 40;
+  --z-sticky: 80;
+  --z-modal: 1500;
+  --z-modal-elevated: 2000;
+  --z-modal-nested: 2200;
+  --z-toast: 10000;
+
+  /* --- 组件级令牌 (Component Tokens) --- */
   --surface-chat-user: var(--color-user-bubble);
   --surface-chat-ai: var(--surface-primary);
   --border-input: var(--border-color);
 
-  /* 侧边栏专用令牌 */
-  --color-sidebar-accent: rgba(96, 165, 250, 0.15);
-  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --color-sidebar-accent: rgba(29, 78, 216, 0.08);
+  --color-sidebar-hover: rgba(9, 9, 11, 0.045);
 
-  /* 间距系统 (基于 4px) */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
+  /* --- 空间与网格系统 (Spacing & Grid - 基于 4px 模块) --- */
+  --space-1: 0.25rem;  /* 4px  */
+  --space-2: 0.5rem;   /* 8px  */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-7: 1.75rem;  /* 28px */
+  --space-8: 2rem;     /* 32px */
+  --space-10: 2.5rem;  /* 40px */
+  --space-12: 3rem;    /* 48px */
 
-  /* 组件间距 */
   --spacing-component-inner: 16px;
   --spacing-component-outer: 24px;
   --spacing-section: 32px;
 
-  /* 按钮内边距 */
-  --padding-button-inner: 8px 20px;
+  --padding-button-inner: 8px 16px;
 
-  /* 字体系统 */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "SF Mono", Monaco, Menlo, Consolas, "Liberation Mono", monospace;
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-md: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.25rem;
-  --text-2xl: 1.5rem;
+  /* --- 排版与字体系统 (Typography System) --- */
+  /* 引入更现代的系统字体栈与字重阶梯 */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --text-xs: 0.75rem;     /* 12px, lh 16px */
+  --text-sm: 0.875rem;    /* 14px, lh 20px */
+  --text-md: 0.9375rem;   /* 15px, lh 24px */
+  --text-base: 1rem;      /* 16px, lh 24px */
+  --text-lg: 1.125rem;    /* 18px, lh 28px */
+  --text-xl: 1.25rem;     /* 20px, lh 28px */
+  --text-2xl: 1.5rem;     /* 24px, lh 32px */
+
   --control-height-sm: 32px;
-  --control-height-md: 38px;
+  --control-height-md: 36px; /* 修正更紧凑的控制高度 */
   --control-height-lg: 44px;
 
-  /* 贝塞尔过渡 */
-  --transition-fast: 0.12s cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-normal: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  /* --- 贝塞尔过渡动效 (Bezier Transitions) --- */
+  --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-slow: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* ==========================================================================
-   2. 极客暗色模式 (Dark Theme)
+   2. 极夜暗色模式 (Dark Theme)
    ========================================================================== */
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg-primary: #090d16;
-  --bg-secondary: #0f172a;
-  --bg-tertiary: #1e293b;
-  --bg-app: #0b1120;
-  --bg-sidebar: #050816;
-  --bg-sidebar-elevated: #111827;
+  /* 使用深邃幽暗的背景色，而非死黑，减少视觉疲劳 */
+  --bg-primary: #09090b;
+  --bg-secondary: #121214;
+  --bg-tertiary: #18181b;
+  --bg-app: #000000;
+  --bg-sidebar: #09090b;
+  --bg-sidebar-elevated: #18181b;
 
-  --surface-chat-user: var(--color-user-bubble);
-  --surface-chat-ai: var(--surface-primary);
-  --border-input: var(--border-color);
-  --color-sidebar-accent: rgba(96, 165, 250, 0.15);
-  --color-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-inverse: #09090b;
+  --text-muted-inverse: rgba(9, 9, 11, 0.7);
 
-  --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-tertiary: #64748b;
-  --text-inverse: #f8fafc;
-  --text-muted-inverse: rgba(248, 250, 252, 0.66);
-
+  /* 调整品牌色在暗黑模式的明度，防止过爆 */
   --color-primary: #60a5fa;
-  --color-primary-hover: #3b82f6;
-  --color-primary-active: #2563eb;
+  --color-primary-hover: #93c5fd;
+  --color-primary-active: #3b82f6;
   --color-primary-light: rgba(96, 165, 250, 0.16);
   --color-primary-soft: rgba(96, 165, 250, 0.1);
-  --color-accent: #818cf8;
-  --color-accent-light: rgba(129, 140, 248, 0.14);
 
-  /* 用户消息专用色（暗色模式） */
-  --color-user-bubble: #3b82f6;
+  --color-accent: #5eead4;
+  --color-accent-light: rgba(94, 234, 212, 0.15);
+  --color-accent-soft: rgba(94, 234, 212, 0.12);
+
+  --color-user-bubble: #2563eb;
   --color-user-bubble-text: #ffffff;
 
-  --color-success: #34d399;
-  --color-success-light: rgba(52, 211, 153, 0.08);
+  --color-success: #10b981;
+  --color-success-hover: #34d399;
+  --color-success-active: #059669;
+  --color-success-light: rgba(16, 185, 129, 0.15);
+  --color-success-soft: rgba(16, 185, 129, 0.12);
   --color-warning: #fbbf24;
-  --color-warning-light: rgba(251, 191, 36, 0.08);
-  --color-error: #f87171;
-  --color-error-light: rgba(248, 113, 113, 0.08);
-  --color-info: #60a5fa;
-  --color-info-light: rgba(96, 165, 250, 0.1);
+  --color-warning-hover: #f59e0b;
+  --color-warning-active: #d97706;
+  --color-warning-light: rgba(251, 191, 36, 0.15);
+  --color-warning-soft: rgba(251, 191, 36, 0.12);
+  --color-error: #ef4444;
+  --color-error-hover: #f87171;
+  --color-error-active: #dc2626;
+  --color-error-light: rgba(239, 68, 68, 0.15);
+  --color-error-soft: rgba(239, 68, 68, 0.12);
+  --color-info: #38bdf8;
+  --color-info-hover: #0ea5e9;
+  --color-info-active: #0284c7;
+  --color-info-light: rgba(56, 189, 248, 0.15);
+  --color-info-soft: rgba(56, 189, 248, 0.12);
 
-  --border-color: #1e293b;
-  --border-color-hover: #334155;
-  --border-subtle: rgba(148, 163, 184, 0.14);
-  --surface-primary: #101827;
-  --surface-secondary: #0f172a;
-  --surface-muted: #1e293b;
-  --glass-bg: rgba(9, 13, 22, 0.7);
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-color-hover: rgba(255, 255, 255, 0.18);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+
+  --surface-primary: #121214;
+  --surface-secondary: #18181b;
+  --surface-muted: #27272a;
+  --glass-bg: rgba(9, 9, 11, 0.75);
   --glass-border: rgba(255, 255, 255, 0.08);
 
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 20px 30px rgba(0, 0, 0, 0.5);
-  --shadow-modal: 0 30px 90px rgba(0, 0, 0, 0.54);
-  --shadow-focus: 0 0 0 3px rgba(96, 165, 250, 0.22);
+  /* 暗色模式下减弱投影强度，使用发光轮廓代替 */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 0 0 1px rgba(255,255,255,0.08), 0 24px 48px -12px rgba(0,0,0,0.8);
+  --shadow-focus: 0 0 0 3px rgba(96, 165, 250, 0.2);
+
+  --color-sidebar-accent: rgba(255, 255, 255, 0.08);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
 }
 
 /* ==========================================================================
-   3. 全局基础样式
+   3. 全局基础样式 (Global Base)
    ========================================================================== */
-* {
-  transition: background-color var(--transition-normal),
-              border-color var(--transition-normal),
-              color var(--transition-normal);
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--bg-primary);
+  background: var(--bg-app);
   color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
 }

@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useRef } from 'react'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 
 interface ConfirmDialogProps {
   open: boolean
@@ -19,15 +20,31 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   onCancel,
 }) => {
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const cancelButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useModalFocusTrap(backdropRef, {
+    enabled: open,
+    initialFocusRef: cancelButtonRef,
+    onClose: onCancel,
+  })
+
   if (!open) return null
 
   return (
-    <div className="confirm-backdrop" onClick={onCancel}>
-      <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="confirm-header">{title}</div>
-        <div className="confirm-body">{message}</div>
+    <div className="confirm-backdrop" onClick={onCancel} ref={backdropRef}>
+      <div
+        aria-describedby="confirm-dialog-message"
+        aria-labelledby="confirm-dialog-title"
+        aria-modal="true"
+        className="confirm-dialog"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+      >
+        <div className="confirm-header" id="confirm-dialog-title">{title}</div>
+        <div className="confirm-body" id="confirm-dialog-message">{message}</div>
         <div className="confirm-footer">
-          <button className="confirm-btn confirm-btn--cancel" onClick={onCancel}>
+          <button className="confirm-btn confirm-btn--cancel" onClick={onCancel} ref={cancelButtonRef}>
             {cancelText}
           </button>
           <button className="confirm-btn confirm-btn--confirm" onClick={onConfirm}>

@@ -43,41 +43,48 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-primary);
   outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+  transition: all var(--transition-fast);
   font-family: inherit;
   width: 100%;
   box-sizing: border-box;
+  box-shadow: var(--shadow-xs);
 }
 
 .form-input::placeholder {
   color: var(--text-tertiary);
 }
 
-.form-input:hover {
+.form-input:hover:not(:disabled):not(:read-only) {
   border-color: var(--border-color-hover);
+  background: var(--surface-secondary);
 }
 
 .form-input:focus {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-focus);
-  background: var(--bg-primary);
+  background: var(--surface-primary);
 }
 
 /* 只读状态 */
 .form-input:read-only {
-  background: var(--bg-tertiary);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  border-color: transparent;
+  box-shadow: none;
   cursor: default;
 }
 
 /* 禁用状态 */
 .form-input:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
-  background: var(--bg-tertiary);
+  background: var(--surface-muted);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* ==========================================================================
@@ -89,98 +96,113 @@
   padding-right: 36px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-primary);
   outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+  transition: all var(--transition-fast);
   font-family: inherit;
   width: 100%;
   box-sizing: border-box;
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8.825L1.175 4 2.238 2.938 6 6.7 9.763 2.938 10.825 4z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2371717a' d='M6 8.825L1.175 4 2.238 2.938 6 6.7 9.763 2.938 10.825 4z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right var(--space-3) center;
   background-size: 12px;
+  box-shadow: var(--shadow-xs);
 }
 
-.form-select:hover {
+.form-select:hover:not(:disabled) {
   border-color: var(--border-color-hover);
+  background-color: var(--surface-secondary);
 }
 
 .form-select:focus {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-focus);
-  background-color: var(--bg-primary);
+  background-color: var(--surface-primary);
 }
 
 .form-select:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
+  background: var(--surface-muted);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* ==========================================================================
    5. 文本域 (Textarea)
    ========================================================================== */
 .form-textarea {
-  min-height: var(--control-height-lg);
+  min-height: 80px;
   padding: var(--space-3);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--surface-primary);
   outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+  transition: all var(--transition-fast);
   font-family: inherit;
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
-  min-height: 80px;
+  box-shadow: var(--shadow-xs);
+  line-height: 1.5;
 }
 
 .form-textarea::placeholder {
   color: var(--text-tertiary);
 }
 
-.form-textarea:hover {
+.form-textarea:hover:not(:disabled):not(:read-only) {
   border-color: var(--border-color-hover);
+  background: var(--surface-secondary);
 }
 
 .form-textarea:focus {
   border-color: var(--color-primary);
   box-shadow: var(--shadow-focus);
-  background: var(--bg-primary);
+  background: var(--surface-primary);
+}
+
+.form-textarea:read-only {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  border-color: transparent;
+  box-shadow: none;
+  cursor: default;
 }
 
 .form-textarea:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
-  background: var(--bg-tertiary);
+  background: var(--surface-muted);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* ==========================================================================
-   6. 复选框 (Checkbox)
+   6. 复选框 (Toggle / Switch)
    ========================================================================== */
 .form-checkbox {
   -webkit-appearance: none;
   appearance: none;
   flex: 0 0 auto;
   position: relative;
-  width: 34px;
-  min-width: 34px;
-  max-width: 34px;
-  height: 18px;
-  min-height: 18px;
-  max-height: 18px;
+  width: 36px;
+  min-width: 36px;
+  height: 20px;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border-color);
+  border: 1px solid transparent;
   border-radius: var(--radius-full);
-  background: var(--bg-tertiary);
+  background: var(--border-color-hover);
   cursor: pointer;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: all var(--transition-fast);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
 }
 
 .form-checkbox::after {
@@ -188,30 +210,34 @@
   position: absolute;
   top: 50%;
   left: 2px;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--text-tertiary);
+  background: var(--surface-primary);
   transform: translateY(-50%);
   transition: transform var(--transition-fast), background-color var(--transition-fast);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+.form-checkbox:hover:not(:disabled) {
+  filter: brightness(0.95);
 }
 
 .form-checkbox:checked {
   background: var(--color-primary);
-  border-color: var(--color-primary);
 }
 
 .form-checkbox:checked::after {
-  transform: translateY(-50%) translateX(16px);
-  background: white;
+  transform: translate(16px, -50%);
 }
 
-.form-checkbox:focus {
+.form-checkbox:focus-visible {
+  outline: none;
   box-shadow: var(--shadow-focus);
 }
 
 .form-checkbox:disabled {
-  opacity: 0.4;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 

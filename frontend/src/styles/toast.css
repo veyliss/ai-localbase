@@ -1,9 +1,9 @@
-/* Toast 通知 */
+/* Toast 通知 - 适配设计代币系统 */
 .toast-container {
   position: fixed;
   top: 20px;
   right: 20px;
-  z-index: 10001;
+  z-index: calc(var(--z-toast) + 1);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -12,32 +12,32 @@
 .toast {
   min-width: 280px;
   padding: 12px 16px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   font-size: 14px;
   animation: toast-slide-in 0.3s ease-out;
-  background: white;
+  background: var(--surface-primary);
   border-left: 4px solid;
 }
 
 .toast-success {
-  border-left-color: #10b981;
-  color: #065f46;
+  border-left-color: var(--color-success);
+  color: var(--text-primary);
 }
 
 .toast-error {
-  border-left-color: #ef4444;
-  color: #991b1b;
+  border-left-color: var(--color-error);
+  color: var(--text-primary);
 }
 
 .toast-warning {
-  border-left-color: #f59e0b;
-  color: #92400e;
+  border-left-color: var(--color-warning);
+  color: var(--text-primary);
 }
 
 .toast-info {
-  border-left-color: #3b82f6;
-  color: #1e40af;
+  border-left-color: var(--color-info);
+  color: var(--text-primary);
 }
 
 @keyframes toast-slide-in {

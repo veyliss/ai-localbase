@@ -1,4 +1,4 @@
-/* Skeleton base styles */
+/* Skeleton 骨架屏 - 适配设计代币系统 */
 @keyframes skeleton-shimmer {
   0% {
     background-position: -200% 0;
@@ -11,13 +11,13 @@
 .skeleton {
   background: linear-gradient(
     90deg,
-    #f0f0f0 0%,
-    #e0e0e0 50%,
-    #f0f0f0 100%
+    var(--surface-muted) 0%,
+    var(--border-color) 50%,
+    var(--surface-muted) 100%
   );
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s ease-in-out infinite;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .skeleton-block {
@@ -39,13 +39,13 @@
   align-items: center;
   gap: 12px;
   padding: 12px;
-  background: #fff;
-  border-radius: 8px;
+  background: var(--surface-primary);
+  border-radius: var(--radius-md);
 }
 
 .doc-icon-skeleton {
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .doc-info-skeleton {

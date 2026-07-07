@@ -7,7 +7,7 @@
 }
 
 ::selection {
-  background: rgba(37, 99, 235, 0.18);
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
   color: var(--text-primary);
 }
 
@@ -78,17 +78,17 @@ select:disabled {
 }
 
 .sidebar {
-  background: linear-gradient(180deg, var(--bg-sidebar) 0%, #0e1525 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
-  color: var(--text-inverse);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 
 .sidebar-header {
-  border-bottom-color: rgba(255, 255, 255, 0.08);
+  border-bottom-color: var(--border-color);
 }
 
 .sidebar-header h2 {
-  color: var(--text-inverse);
+  color: var(--text-primary);
   font-size: 20px;
   letter-spacing: 0;
 }
@@ -109,40 +109,40 @@ select:disabled {
 
 .toggle-btn,
 .ghost-btn {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-muted-inverse);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
 }
 
 .toggle-btn:hover,
 .ghost-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--text-inverse);
+  background: var(--color-sidebar-hover);
+  color: var(--text-primary);
   filter: none;
 }
 
 .section + .section,
 .sidebar-footer {
-  border-top-color: rgba(255, 255, 255, 0.08);
+  border-top-color: var(--border-color);
 }
 
 .section-title-row,
 .section-title-row h3,
 .sidebar-section-header {
-  color: rgba(248, 250, 252, 0.48);
+  color: var(--text-tertiary);
   letter-spacing: 0.06em;
 }
 
 .conversation-item,
 .sidebar-nav-btn,
 .settings-entry {
-  color: rgba(248, 250, 252, 0.72);
+  color: var(--text-secondary);
 }
 
 .conversation-item:hover,
 .sidebar-nav-btn:hover,
 .settings-entry:hover {
   background: var(--color-sidebar-hover);
-  color: var(--text-inverse);
+  color: var(--text-primary);
   filter: none;
 }
 
@@ -150,20 +150,20 @@ select:disabled {
 .sidebar-nav-btn.active,
 .sidebar-icon-btn.active {
   background: var(--color-sidebar-accent);
-  color: #bfdbfe;
-  box-shadow: inset 3px 0 0 #60a5fa;
+  color: var(--color-primary);
+  box-shadow: inset 3px 0 0 var(--color-primary);
 }
 
 .conversation-meta,
 .conversation-time {
-  color: rgba(248, 250, 252, 0.36);
+  color: var(--text-tertiary);
 }
 
 .conversation-menu {
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-color);
   border-radius: var(--radius-lg);
-  background: #172033;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+  background: var(--bg-sidebar-elevated);
+  box-shadow: var(--shadow-lg);
 }
 
 /* Shared controls */
@@ -226,7 +226,7 @@ select:disabled {
 .kb-delete-yes {
   border-color: transparent;
   background: var(--color-primary);
-  color: #ffffff;
+  color: var(--text-inverse);
   box-shadow: none;
 }
 
@@ -238,14 +238,14 @@ select:disabled {
 .kb-scope-btn--active:hover,
 .kb-delete-yes:hover {
   background: var(--color-primary-hover);
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--color-primary) 18%, transparent);
   transform: translateY(-1px);
 }
 
 .danger-btn,
 .kb-rail-delete:hover,
 .confirm-btn--confirm {
-  color: #ffffff;
+  color: var(--text-inverse);
 }
 
 .kb-doc-remove {
@@ -260,14 +260,14 @@ select:disabled {
 }
 
 .kb-doc-remove:hover {
-  color: #ffffff;
+  color: var(--text-inverse);
 }
 
 /* Chat workspace */
 .chat-topbar,
 .input-area {
   border-color: var(--border-color);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--glass-bg);
   backdrop-filter: blur(12px);
 }
 
@@ -295,14 +295,14 @@ select:disabled {
 .kb-retrieval-reasons span,
 .kb-eval-preview-tags span,
 .kb-eval-trend-metrics span {
-  border-color: rgba(37, 99, 235, 0.18);
+  border-color: color-mix(in srgb, var(--color-primary) 18%, transparent);
   background: var(--color-primary-soft);
   color: var(--color-primary-active);
 }
 
 .message.user .message-content {
   background: var(--surface-chat-user);
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.18);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-primary) 18%, transparent);
   border-radius: 14px 14px 4px 14px;
 }
 
@@ -325,8 +325,8 @@ select:disabled {
 }
 
 .input-container:focus-within {
-  border-color: rgba(37, 99, 235, 0.72);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08), var(--shadow-sm);
+  border-color: color-mix(in srgb, var(--color-primary) 72%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 8%, transparent), var(--shadow-sm);
 }
 
 .input-container textarea {
@@ -342,22 +342,23 @@ select:disabled {
 .chat-area .input-mode-toggle:focus-visible,
 .chat-area .send-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 12%, transparent);
 }
 
 /* Modals and dialogs */
 .settings-modal-backdrop,
 .kb-dialog-backdrop,
 .confirm-backdrop {
-  background: rgba(15, 23, 42, 0.58);
-  backdrop-filter: blur(8px);
+  background: rgba(9, 9, 11, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .settings-modal,
 .kb-slide-in,
 .kb-eval-dialog,
 .confirm-dialog {
-  border: 1px solid rgba(226, 232, 240, 0.76);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius-2xl);
   background: var(--surface-primary);
   box-shadow: var(--shadow-modal);
@@ -559,26 +560,26 @@ select:disabled {
 }
 
 .kb-retrieval-mode-tabs {
-  border-color: rgba(37, 99, 235, 0.22);
+  border-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
   background: var(--surface-primary);
 }
 
 .kb-retrieval-mode-tabs button {
-  border-right-color: rgba(37, 99, 235, 0.14);
+  border-right-color: color-mix(in srgb, var(--color-primary) 14%, transparent);
   color: var(--text-secondary);
 }
 
 .kb-retrieval-mode-tabs button.active {
   background: var(--color-primary);
-  color: #ffffff;
+  color: var(--text-inverse);
 }
 
 .kb-retrieval-confidence--low,
 .kb-eval-dialog-error,
 .kb-retrieval-error {
-  border-color: rgba(239, 68, 68, 0.26);
+  border-color: var(--color-error-soft);
   background: var(--color-error-light);
-  color: #b91c1c;
+  color: var(--color-error);
 }
 
 .kb-retrieval-confidence--normal {
@@ -627,9 +628,12 @@ select:disabled {
   border: 1px solid var(--border-color);
   border-left-width: 4px;
   border-radius: var(--radius-lg);
-  background: var(--surface-primary);
-  box-shadow: var(--shadow-lg);
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-xl);
   color: var(--text-primary);
+  transform: translateZ(0); /* 防止动画模糊 */
 }
 
 .toast-success {
@@ -677,4 +681,174 @@ select:disabled {
   .input-area {
     backdrop-filter: none;
   }
+}
+
+/* ==========================================================================
+   Theme Compatibility Override Layer
+   覆盖上方残留的旧品牌色硬编码
+   ========================================================================== */
+
+/* Sidebar theme harmonization */
+.sidebar-header {
+  border-bottom-color: var(--border-color) !important;
+}
+
+.toggle-btn,
+.ghost-btn {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-secondary) !important;
+}
+.toggle-btn:hover,
+.ghost-btn:hover {
+  background: var(--color-sidebar-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+.section + .section,
+.sidebar-footer {
+  border-top-color: var(--border-color) !important;
+}
+
+.section-title-row,
+.section-title-row h3,
+.sidebar-section-header {
+  color: var(--text-tertiary) !important;
+}
+
+.conversation-item,
+.sidebar-nav-btn,
+.settings-entry {
+  color: var(--text-secondary) !important;
+}
+
+.conversation-item.active,
+.sidebar-nav-btn.active,
+.sidebar-icon-btn.active {
+  color: var(--color-primary) !important;
+  box-shadow: inset 3px 0 0 var(--color-primary) !important;
+}
+
+.conversation-meta,
+.conversation-time {
+  color: var(--text-tertiary) !important;
+}
+
+.conversation-menu {
+  border-color: var(--border-color) !important;
+  background: var(--surface-secondary) !important;
+  box-shadow: var(--shadow-modal) !important;
+}
+
+/* 品牌色覆盖层 */
+.topbar-badge,
+.prompt-chip,
+.message-citation-head span,
+.message-citation-head button,
+.kb-retrieval-summary span,
+.kb-retrieval-confidence-metrics span,
+.kb-retrieval-confidence-actions span,
+.kb-retrieval-contribution span,
+.kb-retrieval-reasons span,
+.kb-eval-preview-tags span,
+.kb-eval-trend-metrics span {
+  border-color: var(--color-primary-soft) !important;
+  background: var(--color-primary-soft) !important;
+  color: var(--color-primary) !important;
+}
+
+.message.user .message-content {
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--color-primary) 18%, transparent) !important;
+}
+
+.input-container:focus-within {
+  border-color: var(--color-primary) !important;
+  box-shadow: var(--shadow-focus) !important;
+}
+
+.chat-area .input-mode-toggle:focus-visible,
+.chat-area .send-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-primary-soft) !important;
+}
+
+/* 模态框背景 */
+.settings-modal-backdrop,
+.kb-dialog-backdrop,
+.confirm-backdrop {
+  background: color-mix(in srgb, var(--text-primary) 40%, transparent) !important;
+}
+
+/* 提示按钮 hover 阴影 */
+.send-btn.send-btn-active:hover,
+.kb-retrieval-run:hover:not(:disabled),
+.kb-create-btn:hover,
+.kb-confirm-btn:hover:not(:disabled),
+.confirm-btn--confirm:hover,
+.kb-scope-btn--active:hover,
+.kb-delete-yes:hover {
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--color-primary) 18%, transparent) !important;
+}
+
+/* 白色文字 */
+.send-btn.send-btn-active,
+.kb-retrieval-run,
+.kb-create-btn,
+.kb-confirm-btn,
+.confirm-btn--confirm,
+.kb-scope-btn--active,
+.kb-delete-yes,
+.danger-btn,
+.kb-rail-delete:hover,
+.kb-doc-remove:hover {
+  color: var(--text-inverse) !important;
+}
+
+/* Chat topbar / input area 微透明背景 */
+.chat-topbar,
+.input-area {
+  background: var(--glass-bg) !important;
+}
+
+/* Knowledge workspace keeps active scope chips readable on soft backgrounds. */
+.kb-modal-backdrop .kb-scope-btn--active,
+.kb-modal-backdrop .kb-scope-btn--active:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 16%, transparent) !important;
+  background: var(--kb-active-bg) !important;
+  color: var(--kb-active-text) !important;
+  box-shadow: none !important;
+}
+
+/* 检索模式 tabs */
+.kb-retrieval-mode-tabs {
+  border-color: var(--color-primary-soft) !important;
+}
+.kb-retrieval-mode-tabs button {
+  border-right-color: var(--border-color) !important;
+}
+.kb-retrieval-mode-tabs button.active {
+  background: var(--color-primary) !important;
+  color: var(--text-inverse) !important;
+}
+
+/* 检索置信度 */
+.kb-retrieval-confidence--low,
+.kb-eval-dialog-error,
+.kb-retrieval-error {
+  border-color: color-mix(in srgb, var(--color-error) 26%, transparent) !important;
+  color: var(--color-error) !important;
+}
+.kb-retrieval-confidence--normal {
+  border-color: color-mix(in srgb, var(--color-success) 26%, transparent) !important;
+}
+.kb-retrieval-eval {
+  border-color: color-mix(in srgb, var(--color-warning) 28%, transparent) !important;
+}
+
+/* Knowledge rail */
+.kb-rail-head {
+  background: var(--glass-bg) !important;
+}
+
+/* 检索模式 */
+.kb-retrieval-mode {
+  color: var(--color-primary) !important;
 }

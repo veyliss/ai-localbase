@@ -424,8 +424,11 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
           </div>
           <div className="settings-security-list">
             {mcpEvents.length === 0 && <div className="settings-empty-row">暂无 MCP 调用记录</div>}
-            {mcpEvents.slice(0, 6).map((event) => (
-              <div className="settings-security-row" key={event.id}>
+            {mcpEvents.slice(0, 6).map((event, index) => (
+              <div
+                className="settings-security-row"
+                key={`${event.id}-${event.createdAt}-${index}`}
+              >
                 <div>
                   <strong>{eventLabelMap[event.type] || event.type}</strong>
                   <span>{event.message || '无详情'}</span>
@@ -624,8 +627,11 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
           </div>
           <div className="settings-security-list settings-event-list">
             {events.length === 0 && <div className="settings-empty-row">暂无安全事件</div>}
-            {events.slice(0, 10).map((event) => (
-              <div className="settings-security-row" key={event.id}>
+            {events.slice(0, 10).map((event, index) => (
+              <div
+                className="settings-security-row"
+                key={`${event.id}-${event.createdAt}-${index}`}
+              >
                 <div>
                   <strong>{eventLabelMap[event.type] || event.type}</strong>
                   <span>{event.message || '已记录'}{event.ip ? ` · ${event.ip}` : ''}</span>

@@ -1,5 +1,6 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
 import type { AppConfig, ChatConfig, ChatModeSettings, EmbeddingConfig, RetrievalConfig } from '../../App'
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 import GeneralSettings from './tabs/GeneralSettings'
 import AISettings from './tabs/AISettings'
 import RetrievalSettings from './tabs/RetrievalSettings'
@@ -36,11 +37,16 @@ interface SettingsNavItem {
   icon: SettingsNavIconName
 }
 
+interface SettingsSummaryItem {
+  label: string
+  value: string
+}
+
 const navItems: SettingsNavItem[] = [
   { id: 'system', label: '账户管理', description: '会话、密码与访问密钥', icon: 'user' },
   { id: 'general', label: '系统设置', description: '当前模型、检索与运行状态', icon: 'settings' },
   { id: 'mcp', label: '系统授权', description: 'MCP 工具调用与访问令牌', icon: 'shield' },
-  { id: 'ai', label: '模型', description: '模型、接口与推理参数', icon: 'cube' },
+  { id: 'ai', label: '模型', description: '接口与推理参数', icon: 'cube' },
   { id: 'retrieval', label: '检索策略', description: '召回、重排与上下文规模', icon: 'database' },
   { id: 'about', label: '关于', description: '版本、发布与项目资源', icon: 'info' },
 ]
@@ -112,6 +118,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onLogout,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useModalFocusTrap(backdropRef, {
+    initialFocusRef: closeButtonRef,
+    onClose,
+  })
 
   const activeTabIndex = useMemo(
     () => navItems.findIndex((item) => item.id === activeTab),
@@ -122,6 +135,49 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     () => navItems[activeTabIndex] ?? navItems[0],
     [activeTabIndex],
   )
+
+  const activeSummaryItems = useMemo<SettingsSummaryItem[]>(() => {
+    switch (activeTab) {
+      case 'system':
+        return [
+          { label: '登录状态', value: 'Root 已认证' },
+          { label: 'MCP 鉴权', value: config.mcp.enabled ? '已启用' : '未启用' },
+          { label: 'MCP Token', value: config.mcp.tokenConfigured ? '迁移 Token 已生成' : '迁移 Token 未生成' },
+        ]
+      case 'general':
+        return [
+          { label: '聊天模型', value: config.chat.model || '未配置' },
+          { label: 'Embedding', value: config.embedding.model || '未配置' },
+          { label: '检索模式', value: config.retrieval.defaultSearchMode === 'hybrid' ? '混合检索' : '向量检索' },
+        ]
+      case 'mcp':
+        return [
+          { label: 'MCP 服务', value: config.mcp.enabled ? '已启用' : '未启用' },
+          { label: '服务路径', value: config.mcp.basePath || '未配置' },
+          { label: '鉴权建议', value: config.mcp.recommendedAuthMode === 'api_key_scopes' ? 'API Key Scope' : '检查配置' },
+        ]
+      case 'ai':
+        return [
+          { label: '聊天 Provider', value: config.chat.provider },
+          { label: '聊天模型', value: config.chat.model || '未配置' },
+          { label: 'Embedding', value: config.embedding.model || '未配置' },
+        ]
+      case 'retrieval':
+        return [
+          { label: '默认模式', value: config.retrieval.defaultSearchMode === 'hybrid' ? '混合检索' : '向量检索' },
+          { label: '召回规模', value: `KB ${config.retrieval.topKKnowledgeBase} / 候选 ${config.retrieval.candidateTopKAllDocs}` },
+          { label: '上下文', value: `${config.retrieval.maxContextChars} 字符` },
+        ]
+      case 'about':
+        return [
+          { label: '项目', value: 'AI LocalBase' },
+          { label: '运行方式', value: '本地优先' },
+          { label: '设置范围', value: '应用与服务' },
+        ]
+      default:
+        return []
+    }
+  }, [activeTab, config])
 
   const handleTabChange = useCallback((nextTab: SettingsTab) => {
     setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab))
@@ -217,7 +273,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   ])
 
   return (
-    <div className="settings-modal-backdrop" onClick={onClose}>
+    <div className="settings-modal-backdrop" onClick={onClose} ref={backdropRef}>
       <div
         aria-describedby="settings-dialog-description"
         aria-labelledby="settings-dialog-title"
@@ -227,7 +283,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         onKeyDown={handleDialogKeyDown}
         role="dialog"
       >
-        <button className="settings-modal-close" onClick={onClose} aria-label="关闭设置" type="button">
+        <button
+          className="settings-modal-close"
+          onClick={onClose}
+          aria-label="关闭设置"
+          ref={closeButtonRef}
+          type="button"
+        >
           <svg viewBox="0 0 24 24" fill="none" width="28" height="28" aria-hidden="true">
             <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
           </svg>
@@ -271,12 +333,24 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <main className="settings-main">
           <header className="settings-main-header">
             <div>
-              <h3 id="settings-dialog-title">设置</h3>
+              <h3 id="settings-dialog-title">{activeNavItem.label}</h3>
               <p id="settings-dialog-description" className="settings-main-description">
-                {activeNavItem.label} · {activeNavItem.description}
+                {activeNavItem.description}
+              </p>
+              <p className="settings-main-visible-description">
+                {activeNavItem.description}
               </p>
             </div>
           </header>
+
+          <div className="settings-summary-bar" aria-label={`${activeNavItem.label}摘要`}>
+            {activeSummaryItems.map((item) => (
+              <div className="settings-summary-item" key={item.label}>
+                <span>{item.label}</span>
+                <strong title={item.value}>{item.value}</strong>
+              </div>
+            ))}
+          </div>
 
           <section
             aria-labelledby={getTabButtonId(activeTab)}

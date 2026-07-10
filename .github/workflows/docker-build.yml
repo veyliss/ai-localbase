@@ -46,6 +46,12 @@ jobs:
             type=sha,format=short,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Validate Backend Docker tags
+        run: |
+          printf '%s\n' "$DOCKER_METADATA_TAGS" | scripts/check-docker-metadata-tags.sh "${REGISTRY}/${GITHUB_OWNER}/ai-localbase-backend" "${GITHUB_REF_NAME}" "${GITHUB_REF_TYPE}"
+        env:
+          DOCKER_METADATA_TAGS: ${{ steps.meta.outputs.tags }}
+
       - name: Build and push Backend Docker image
         uses: docker/build-push-action@v5
         with:
@@ -89,6 +95,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Validate Frontend Docker tags
+        run: |
+          printf '%s\n' "$DOCKER_METADATA_TAGS" | scripts/check-docker-metadata-tags.sh "${REGISTRY}/${GITHUB_OWNER}/ai-localbase-frontend" "${GITHUB_REF_NAME}" "${GITHUB_REF_TYPE}"
+        env:
+          DOCKER_METADATA_TAGS: ${{ steps.meta.outputs.tags }}
 
       - name: Build and push Frontend Docker image
         uses: docker/build-push-action@v5

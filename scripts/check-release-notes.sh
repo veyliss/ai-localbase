@@ -63,5 +63,20 @@ if ! grep -F "## Docker Images" "$notes_file" >/dev/null; then
   exit 1
 fi
 
+expected_backend_image="ghcr.io/veyliss/ai-localbase-backend:$tag_name"
+expected_frontend_image="ghcr.io/veyliss/ai-localbase-frontend:$tag_name"
+
+if ! grep -F "$expected_backend_image" "$notes_file" >/dev/null; then
+  echo "release check failed: $notes_file does not include backend image $expected_backend_image" >&2
+  rm -f "$tag_message_file"
+  exit 1
+fi
+
+if ! grep -F "$expected_frontend_image" "$notes_file" >/dev/null; then
+  echo "release check failed: $notes_file does not include frontend image $expected_frontend_image" >&2
+  rm -f "$tag_message_file"
+  exit 1
+fi
+
 rm -f "$tag_message_file"
 echo "release notes check passed for $tag_name"

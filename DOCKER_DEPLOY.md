@@ -10,7 +10,7 @@
 
 GitHub Actions 工作流在以下情况自动触发：
 
-- **推送到主分支** (`main`)：构建镜像并标记为 `latest`
+- **推送到主分支** (`main`)：构建镜像并标记为 `main` 与 `latest`
 - **推送到开发分支** (`develop`)：构建镜像并标记为分支名
 - **创建版本标签** (e.g., `v1.0.0`)：构建镜像并标记为版本号
 
@@ -18,10 +18,10 @@ GitHub Actions 工作流在以下情况自动触发：
 
 | 推送情况 | Backend 镜像标签 | Frontend 镜像标签 |
 |---------|-------------|-------------|
-| 推送到 `main` | `ghcr.io/veyliss/ai-localbase-backend:latest` | `ghcr.io/veyliss/ai-localbase-frontend:latest` |
+| 推送到 `main` | `ghcr.io/veyliss/ai-localbase-backend:main`、`:latest` | `ghcr.io/veyliss/ai-localbase-frontend:main`、`:latest` |
 | 推送到 `develop` | `ghcr.io/veyliss/ai-localbase-backend:develop` | `ghcr.io/veyliss/ai-localbase-frontend:develop` |
-| 创建标签 `v1.2.3` | `ghcr.io/veyliss/ai-localbase-backend:v1.2.3` | `ghcr.io/veyliss/ai-localbase-frontend:v1.2.3` |
-| Commit SHA | `ghcr.io/veyliss/ai-localbase-backend:main-<sha>` | `ghcr.io/veyliss/ai-localbase-frontend:main-<sha>` |
+| 创建标签 `v1.2.3` | `ghcr.io/veyliss/ai-localbase-backend:v1.2.3`、`:1.2.3`、`:1.2` | `ghcr.io/veyliss/ai-localbase-frontend:v1.2.3`、`:1.2.3`、`:1.2` |
+| Commit SHA | `ghcr.io/veyliss/ai-localbase-backend:sha-<short>` | `ghcr.io/veyliss/ai-localbase-frontend:sha-<short>` |
 
 ---
 
@@ -116,7 +116,7 @@ git push origin main
 
 ```bash
 # 创建版本标签
-git tag v1.0.0
+git tag -a v1.0.0 -m "v1.0.0" -m "发布说明"
 git push origin v1.0.0
 ```
 
@@ -124,8 +124,14 @@ git push origin v1.0.0
 
 1. 构建并推送版本镜像：
    - `ghcr.io/veyliss/ai-localbase-backend:v1.0.0`
+   - `ghcr.io/veyliss/ai-localbase-backend:1.0.0`
+   - `ghcr.io/veyliss/ai-localbase-backend:1.0`
    - `ghcr.io/veyliss/ai-localbase-frontend:v1.0.0`
+   - `ghcr.io/veyliss/ai-localbase-frontend:1.0.0`
+   - `ghcr.io/veyliss/ai-localbase-frontend:1.0`
 2. 在 GitHub Releases 页面自动创建对应版本发布
+
+发布 workflow 会在构建前校验 Docker metadata 输出，确保 `v` 前缀标签、无 `v` 版本标签和 `major.minor` 标签同时存在；Release workflow 会校验发布说明中的镜像引用与当前 Git tag 一致。
 
 如果只想构建镜像、不创建 GitHub Release，请不要推送版本标签，而是直接推送到 [`main`](DOCKER_DEPLOY.md:13) 或 [`develop`](DOCKER_DEPLOY.md:14)。
 

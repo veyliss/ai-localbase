@@ -6,10 +6,22 @@ import {
   type AuthSessionInfo,
   type SecurityEventInfo,
 } from '../../../services/api'
+import AppIcon from '../../common/AppIcon'
+import ConfirmDialog from '../../common/ConfirmDialog'
 
 interface SystemSettingsProps {
   onLogout: () => void | Promise<void>
 }
+
+type SecurityEventFilter = 'all' | 'account' | 'api-key' | 'mcp' | 'failures'
+
+const securityEventFilters: Array<{ id: SecurityEventFilter; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'account', label: '账户' },
+  { id: 'api-key', label: 'API Key' },
+  { id: 'mcp', label: 'MCP' },
+  { id: 'failures', label: '失败与提醒' },
+]
 
 const formatDateTime = (value?: string | number | null) => {
   if (!value) return '未知'
@@ -62,21 +74,103 @@ const eventLabelMap: Record<string, string> = {
   api_key_revoked: '撤销 API Key',
   mcp_call_succeeded: 'MCP 调用成功',
   mcp_call_failed: 'MCP 调用失败',
-  mcp_danger_succeeded: 'MCP 危险成功',
-  mcp_danger_failed: 'MCP 危险失败',
+  mcp_danger_succeeded: 'MCP 危险操作成功',
+  mcp_danger_failed: 'MCP 危险操作失败',
   root_password_reset_from_env: '环境变量重置密码',
   weak_env_password: '弱密码提醒',
   weak_env_reset_password: '弱重置密码提醒',
 }
 
+const normalizeVersion = (value?: string) => {
+  if (!value) return ''
+  return value.replace(/_/g, '.').split('.').slice(0, 2).join('.')
+}
+
+const describeUserAgent = (userAgent?: string) => {
+  if (!userAgent) {
+    return { browser: '未知浏览器', system: '未知系统' }
+  }
+
+  const browserPatterns: Array<[RegExp, string]> = [
+    [/EdgA?\/([\d.]+)/, 'Microsoft Edge'],
+    [/OPR\/([\d.]+)/, 'Opera'],
+    [/CriOS\/([\d.]+)/, 'Chrome'],
+    [/Chrome\/([\d.]+)/, 'Chrome'],
+    [/FxiOS\/([\d.]+)/, 'Firefox'],
+    [/Firefox\/([\d.]+)/, 'Firefox'],
+    [/Version\/([\d.]+).*Safari/, 'Safari'],
+    [/Electron\/([\d.]+)/, 'Electron'],
+    [/PostmanRuntime\/([\d.]+)/, 'Postman'],
+    [/curl\/([\d.]+)/, 'curl'],
+  ]
+  const browserMatch = browserPatterns.find(([pattern]) => pattern.test(userAgent))
+  const browserVersion = browserMatch?.[0].exec(userAgent)?.[1]
+  const browser = browserMatch
+    ? `${browserMatch[1]}${browserVersion ? ` ${normalizeVersion(browserVersion)}` : ''}`
+    : '其它客户端'
+
+  let system = '未知系统'
+  const iosMatch = /(?:iPhone|CPU(?: iPhone)? OS) ([\d_]+)/.exec(userAgent)
+  const androidMatch = /Android ([\d.]+)/.exec(userAgent)
+  const windowsMatch = /Windows NT ([\d.]+)/.exec(userAgent)
+  const macMatch = /Mac OS X ([\d_]+)/.exec(userAgent)
+
+  if (/iPad/.test(userAgent) || (/Macintosh/.test(userAgent) && /Mobile/.test(userAgent))) {
+    system = `iPadOS${iosMatch?.[1] ? ` ${normalizeVersion(iosMatch[1])}` : ''}`
+  } else if (/iPhone/.test(userAgent)) {
+    system = `iOS${iosMatch?.[1] ? ` ${normalizeVersion(iosMatch[1])}` : ''}`
+  } else if (androidMatch) {
+    system = `Android ${normalizeVersion(androidMatch[1])}`
+  } else if (windowsMatch) {
+    const windowsVersions: Record<string, string> = {
+      '10.0': 'Windows 10/11',
+      '6.3': 'Windows 8.1',
+      '6.2': 'Windows 8',
+      '6.1': 'Windows 7',
+    }
+    system = windowsVersions[windowsMatch[1]] ?? `Windows ${windowsMatch[1]}`
+  } else if (macMatch) {
+    system = `macOS ${normalizeVersion(macMatch[1])}`
+  } else if (/Linux/.test(userAgent)) {
+    system = 'Linux'
+  }
+
+  return { browser, system }
+}
+
+const isSessionExpired = (session: AuthSessionInfo) => {
+  const expiresAt = new Date(session.expiresAt).getTime()
+  return Number.isFinite(expiresAt) && expiresAt <= Date.now()
+}
+
+const isSessionInactive = (session: AuthSessionInfo) => Boolean(session.revokedAt) || isSessionExpired(session)
+
 const isMCPEvent = (event: SecurityEventInfo) => event.type.startsWith('mcp_')
-const isMCPFailureEvent = (event: SecurityEventInfo) => event.type.includes('_failed')
-const isMCPDangerEvent = (event: SecurityEventInfo) => event.type.includes('_danger_')
+const isAPIKeyEvent = (event: SecurityEventInfo) => event.type.startsWith('api_key_')
+const isFailureEvent = (event: SecurityEventInfo) => (
+  event.type.includes('_failed') || event.type.startsWith('weak_')
+)
+
+const matchesEventFilter = (event: SecurityEventInfo, filter: SecurityEventFilter) => {
+  switch (filter) {
+    case 'account':
+      return !isMCPEvent(event) && !isAPIKeyEvent(event)
+    case 'api-key':
+      return isAPIKeyEvent(event)
+    case 'mcp':
+      return isMCPEvent(event)
+    case 'failures':
+      return isFailureEvent(event)
+    default:
+      return true
+  }
+}
 
 const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   const { username, expiresAt, logoutAll, changePassword } = useAuth()
   const [sessions, setSessions] = useState<AuthSessionInfo[]>([])
   const [events, setEvents] = useState<SecurityEventInfo[]>([])
+  const [eventFilter, setEventFilter] = useState<SecurityEventFilter>('all')
   const [loading, setLoading] = useState(true)
   const [feedback, setFeedback] = useState('')
   const [error, setError] = useState('')
@@ -89,7 +183,7 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   const [busyAction, setBusyAction] = useState('')
 
   const activeSessions = useMemo(
-    () => sessions.filter((session) => !session.revokedAt),
+    () => sessions.filter((session) => !isSessionInactive(session)),
     [sessions],
   )
   const currentSessions = useMemo(
@@ -100,23 +194,23 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     () => activeSessions.filter((session) => !session.current),
     [activeSessions],
   )
-  const revokedSessions = useMemo(
-    () => sessions.filter((session) => session.revokedAt).slice(0, 4),
+  const inactiveSessions = useMemo(
+    () => sessions.filter(isSessionInactive).slice(0, 4),
     [sessions],
   )
-  const mcpEvents = useMemo(
-    () => events.filter(isMCPEvent),
+  const eventCounts = useMemo(
+    () => Object.fromEntries(securityEventFilters.map((filter) => [
+      filter.id,
+      events.filter((event) => matchesEventFilter(event, filter.id)).length,
+    ])) as Record<SecurityEventFilter, number>,
     [events],
   )
-  const mcpFailureEvents = useMemo(
-    () => mcpEvents.filter(isMCPFailureEvent),
-    [mcpEvents],
-  )
-  const mcpDangerEvents = useMemo(
-    () => mcpEvents.filter(isMCPDangerEvent),
-    [mcpEvents],
+  const filteredEvents = useMemo(
+    () => events.filter((event) => matchesEventFilter(event, eventFilter)).slice(0, 20),
+    [eventFilter, events],
   )
   const passwordStrength = useMemo(() => getPasswordStrength(newPassword), [newPassword])
+
   const loadSecurityData = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -181,18 +275,98 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
     }
   }
 
-  const renderSessionRow = (session: AuthSessionInfo) => (
-    <div className="settings-security-row" key={session.id}>
-      <div>
-        <strong>{session.current ? '当前设备' : session.revokedAt ? '历史会话' : '其它设备'}</strong>
-        <span>{session.ip || '未知 IP'} · {session.userAgent || '未知客户端'}</span>
-      </div>
-      <div className="settings-security-row-meta">
-        <span>{session.revokedAt ? `失效 ${formatDateTime(session.revokedAt)}` : `到期 ${formatDateTime(session.expiresAt)}`}</span>
-        {session.current && <em>当前</em>}
-      </div>
-    </div>
-  )
+  const renderSessionRow = (session: AuthSessionInfo) => {
+    const client = describeUserAgent(session.userAgent)
+    const inactive = isSessionInactive(session)
+    const statusLabel = inactive ? '历史会话' : session.current ? '当前设备' : '登录设备'
+    const inactiveAt = session.revokedAt || session.expiresAt
+
+    return (
+      <details className={`settings-security-entry ${inactive ? 'is-muted' : ''}`} key={session.id}>
+        <summary className="settings-security-entry-summary">
+          <span className="settings-security-entry-icon" aria-hidden="true">
+            <AppIcon name="user" size={17} />
+          </span>
+          <span className="settings-security-entry-main">
+            <strong>{client.browser}</strong>
+            <span>{client.system} · {statusLabel}</span>
+          </span>
+          <span className="settings-security-entry-meta">
+            <strong>{inactive ? '已失效' : formatTimeRemaining(session.expiresAt)}</strong>
+            <small>{inactive ? `失效 ${formatDateTime(inactiveAt)}` : `到期 ${formatDateTime(session.expiresAt)}`}</small>
+          </span>
+          <AppIcon className="settings-security-entry-chevron" name="chevronDown" size={16} />
+        </summary>
+        <div className="settings-security-entry-details">
+          <div>
+            <span>IP 地址</span>
+            <strong>{session.ip || '未知'}</strong>
+          </div>
+          <div>
+            <span>创建时间</span>
+            <strong>{formatDateTime(session.createdAt)}</strong>
+          </div>
+          <div>
+            <span>最近活动</span>
+            <strong>{formatDateTime(session.lastSeenAt)}</strong>
+          </div>
+          <div className="settings-security-detail-wide">
+            <span>User-Agent</span>
+            <code>{session.userAgent || '未知客户端'}</code>
+          </div>
+        </div>
+      </details>
+    )
+  }
+
+  const renderEventRow = (event: SecurityEventInfo, index: number) => {
+    const failed = isFailureEvent(event)
+    const category = isMCPEvent(event) ? 'MCP' : isAPIKeyEvent(event) ? 'API Key' : '账户'
+
+    return (
+      <details
+        className={`settings-security-entry settings-event-entry ${failed ? 'is-failure' : ''}`}
+        key={`${event.id}-${event.createdAt}-${index}`}
+      >
+        <summary className="settings-security-entry-summary">
+          <span className="settings-security-entry-icon" aria-hidden="true">
+            <AppIcon name={failed ? 'alert' : 'shield'} size={17} />
+          </span>
+          <span className="settings-security-entry-main">
+            <strong>{eventLabelMap[event.type] || event.type}</strong>
+            <span>{event.message || `${category}事件已记录`}</span>
+          </span>
+          <span className="settings-security-entry-meta">
+            <strong>{category}</strong>
+            <small>{formatDateTime(event.createdAt)}</small>
+          </span>
+          <AppIcon className="settings-security-entry-chevron" name="chevronDown" size={16} />
+        </summary>
+        <div className="settings-security-entry-details">
+          <div>
+            <span>事件类型</span>
+            <code>{event.type}</code>
+          </div>
+          <div>
+            <span>账户</span>
+            <strong>{event.username || username || 'root'}</strong>
+          </div>
+          <div>
+            <span>IP 地址</span>
+            <strong>{event.ip || '未知'}</strong>
+          </div>
+          <div>
+            <span>发生时间</span>
+            <strong>{formatDateTime(event.createdAt)}</strong>
+          </div>
+          <div className="settings-security-detail-wide">
+            <span>User-Agent</span>
+            <code>{event.userAgent || '未记录'}</code>
+          </div>
+        </div>
+      </details>
+    )
+  }
 
   return (
     <>
@@ -202,79 +376,36 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
             <div>
               <span>Root 账户</span>
               <strong>{username || 'root'}</strong>
-              <p>管理网页登录、服务端会话和账户安全记录。</p>
+              <p>管理登录密码、设备会话和安全记录。</p>
             </div>
             <span className="settings-status-pill enabled">已认证</span>
           </div>
 
           <div className="settings-security-metrics">
             <div>
-              <span>会话到期</span>
+              <span>当前会话</span>
               <strong>{formatTimeRemaining(expiresAt)}</strong>
               <small>{formatDateTime(expiresAt)}</small>
             </div>
             <div>
-              <span>活跃会话</span>
+              <span>活跃设备</span>
               <strong>{activeSessions.length}</strong>
-              <small>含当前设备</small>
+              <small>含当前浏览器</small>
             </div>
             <div>
-              <span>安全记录</span>
-              <strong>{events.length}</strong>
-              <small>最近读取</small>
+              <span>最近记录</span>
+              <strong>{events[0] ? formatDateTime(events[0].createdAt) : '暂无'}</strong>
+              <small>{events[0] ? eventLabelMap[events[0].type] || events[0].type : '尚无安全事件'}</small>
             </div>
           </div>
 
           {(loading || feedback || error) && (
             <div className="settings-security-notices">
-              {loading && <div className="settings-inline-note">正在加载安全状态...</div>}
+              {loading && <div className="settings-inline-note">正在加载账户安全状态...</div>}
               {feedback && <div className="settings-inline-note success">{feedback}</div>}
               {error && <div className="settings-inline-note error">{error}</div>}
             </div>
           )}
-        </section>
-
-        <section className="settings-setting-section">
-          <div className="settings-setting-section-header">
-            <div>
-              <h3>MCP 审计</h3>
-              <p>最近 MCP 工具访问、失败和危险调用记录。</p>
-            </div>
-          </div>
-          <div className="settings-security-metrics settings-security-metrics-compact">
-            <div>
-              <span>最近访问</span>
-              <strong>{mcpEvents.length > 0 ? formatDateTime(mcpEvents[0].createdAt) : '暂无'}</strong>
-              <small>{mcpEvents.length} 条记录</small>
-            </div>
-            <div>
-              <span>最近失败</span>
-              <strong>{mcpFailureEvents.length}</strong>
-              <small>{mcpFailureEvents[0] ? formatDateTime(mcpFailureEvents[0].createdAt) : '暂无'}</small>
-            </div>
-            <div>
-              <span>危险调用</span>
-              <strong>{mcpDangerEvents.length}</strong>
-              <small>{mcpDangerEvents[0] ? formatDateTime(mcpDangerEvents[0].createdAt) : '暂无'}</small>
-            </div>
-          </div>
-          <div className="settings-security-list">
-            {mcpEvents.length === 0 && <div className="settings-empty-row">暂无 MCP 调用记录</div>}
-            {mcpEvents.slice(0, 6).map((event, index) => (
-              <div
-                className="settings-security-row"
-                key={`${event.id}-${event.createdAt}-${index}`}
-              >
-                <div>
-                  <strong>{eventLabelMap[event.type] || event.type}</strong>
-                  <span>{event.message || '无详情'}</span>
-                </div>
-                <div className="settings-security-row-meta">
-                  <span>{formatDateTime(event.createdAt)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
         </section>
 
         <section className="settings-setting-section">
@@ -307,19 +438,19 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
                   <div className="settings-form-group">
                     <label className="settings-form-label">当前密码</label>
                     <input
+                      autoComplete="current-password"
+                      onChange={(event) => setCurrentPassword(event.target.value)}
                       type="password"
                       value={currentPassword}
-                      onChange={(event) => setCurrentPassword(event.target.value)}
-                      autoComplete="current-password"
                     />
                   </div>
                   <div className="settings-form-group">
                     <label className="settings-form-label">新密码</label>
                     <input
+                      autoComplete="new-password"
+                      onChange={(event) => setNewPassword(event.target.value)}
                       type="password"
                       value={newPassword}
-                      onChange={(event) => setNewPassword(event.target.value)}
-                      autoComplete="new-password"
                     />
                     <div className={`settings-password-meter ${passwordStrength.tone}`}>
                       <span>{passwordStrength.label}</span>
@@ -329,10 +460,10 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
                   <div className="settings-form-group">
                     <label className="settings-form-label">确认新密码</label>
                     <input
+                      autoComplete="new-password"
+                      onChange={(event) => setConfirmPassword(event.target.value)}
                       type="password"
                       value={confirmPassword}
-                      onChange={(event) => setConfirmPassword(event.target.value)}
-                      autoComplete="new-password"
                     />
                   </div>
                   <div className="settings-form-group settings-security-action-cell">
@@ -353,47 +484,56 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
         <section className="settings-setting-section">
           <div className="settings-setting-section-header">
             <div>
-              <h3>服务端会话</h3>
-              <p>查看当前设备和其它浏览器登录态。</p>
+              <h3>设备会话</h3>
+              <p>按浏览器和系统识别登录设备，展开后可查看完整连接信息。</p>
             </div>
-            <button className="settings-action-btn" onClick={() => void loadSecurityData()} type="button">
-              刷新
+            <button
+              aria-label="刷新设备会话"
+              className="settings-action-btn settings-icon-action"
+              onClick={() => void loadSecurityData()}
+              title="刷新设备会话"
+              type="button"
+            >
+              <AppIcon name="refresh" size={16} />
             </button>
           </div>
-          <div className="settings-security-list">
-            {sessions.length === 0 && <div className="settings-empty-row">暂无会话记录</div>}
+          <div className="settings-security-list settings-security-entry-list">
+            {!loading && sessions.length === 0 && <div className="settings-empty-row">暂无会话记录</div>}
             {currentSessions.length > 0 && <div className="settings-list-group-label">当前设备</div>}
             {currentSessions.map(renderSessionRow)}
             {otherSessions.length > 0 && <div className="settings-list-group-label">其它设备</div>}
             {otherSessions.map(renderSessionRow)}
-            {revokedSessions.length > 0 && <div className="settings-list-group-label">最近失效</div>}
-            {revokedSessions.map(renderSessionRow)}
+            {inactiveSessions.length > 0 && <div className="settings-list-group-label">最近失效</div>}
+            {inactiveSessions.map(renderSessionRow)}
           </div>
         </section>
 
         <section className="settings-setting-section">
           <div className="settings-setting-section-header">
             <div>
-              <h3>安全事件</h3>
-              <p>记录登录、改密、API Key 变更等关键动作。</p>
+              <h3>安全记录</h3>
+              <p>统一查看登录、密码、API Key 和 MCP 调用事件。</p>
             </div>
           </div>
-          <div className="settings-security-list settings-event-list">
-            {events.length === 0 && <div className="settings-empty-row">暂无安全事件</div>}
-            {events.slice(0, 10).map((event, index) => (
-              <div
-                className="settings-security-row"
-                key={`${event.id}-${event.createdAt}-${index}`}
+
+          <div className="settings-record-filters" role="group" aria-label="安全记录筛选">
+            {securityEventFilters.map((filter) => (
+              <button
+                aria-pressed={eventFilter === filter.id}
+                className={eventFilter === filter.id ? 'active' : ''}
+                key={filter.id}
+                onClick={() => setEventFilter(filter.id)}
+                type="button"
               >
-                <div>
-                  <strong>{eventLabelMap[event.type] || event.type}</strong>
-                  <span>{event.message || '已记录'}{event.ip ? ` · ${event.ip}` : ''}</span>
-                </div>
-                <div className="settings-security-row-meta">
-                  <span>{formatDateTime(event.createdAt)}</span>
-                </div>
-              </div>
+                <span>{filter.label}</span>
+                <strong>{eventCounts[filter.id]}</strong>
+              </button>
             ))}
+          </div>
+
+          <div className="settings-security-list settings-security-entry-list settings-event-list">
+            {!loading && filteredEvents.length === 0 && <div className="settings-empty-row">当前筛选下暂无安全记录</div>}
+            {filteredEvents.map(renderEventRow)}
           </div>
         </section>
 
@@ -422,53 +562,25 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
         </section>
       </div>
 
-      {showLogoutConfirm && (
-        <div className="logout-confirm-overlay" onClick={() => setShowLogoutConfirm(false)}>
-          <div className="logout-confirm-dialog" onClick={(event) => event.stopPropagation()}>
-            <div className="logout-confirm-icon">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                <path d="M12 9V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <circle cx="12" cy="16" r="0.5" fill="currentColor"/>
-              </svg>
-            </div>
-            <h4>确认退出登录</h4>
-            <p>退出后需要重新输入 root 密码。</p>
-            <div className="logout-confirm-actions">
-              <button className="btn-secondary" onClick={() => setShowLogoutConfirm(false)} type="button">
-                取消
-              </button>
-              <button className="btn-danger" onClick={() => void handleLogout()} type="button">
-                确认退出
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        cancelText="取消"
+        confirmText="确认退出"
+        message="退出后需要重新输入 root 密码。"
+        onCancel={() => setShowLogoutConfirm(false)}
+        onConfirm={() => void handleLogout()}
+        open={showLogoutConfirm}
+        title="退出当前设备？"
+      />
 
-      {showLogoutAllConfirm && (
-        <div className="logout-confirm-overlay" onClick={() => setShowLogoutAllConfirm(false)}>
-          <div className="logout-confirm-dialog" onClick={(event) => event.stopPropagation()}>
-            <div className="logout-confirm-icon">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                <path d="M12 8V12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <path d="M12 16H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
-            </div>
-            <h4>退出所有设备</h4>
-            <p>所有浏览器会话都会失效，需要重新登录。</p>
-            <div className="logout-confirm-actions">
-              <button className="btn-secondary" onClick={() => setShowLogoutAllConfirm(false)} type="button">
-                取消
-              </button>
-              <button className="btn-danger" onClick={() => void handleLogoutAll()} type="button">
-                确认退出
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        cancelText="取消"
+        confirmText="退出所有设备"
+        message="所有浏览器会话都会立即失效，需要重新登录。"
+        onCancel={() => setShowLogoutAllConfirm(false)}
+        onConfirm={() => void handleLogoutAll()}
+        open={showLogoutAllConfirm}
+        title="撤销所有会话？"
+      />
     </>
   )
 }

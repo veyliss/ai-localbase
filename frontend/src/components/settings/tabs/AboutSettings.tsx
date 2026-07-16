@@ -5,12 +5,16 @@ const repositoryUrl = 'https://github.com/veyliss/ai-localbase'
 const releaseUrl = `${repositoryUrl}/releases`
 const licenseUrl = `${repositoryUrl}/blob/main/LICENSE`
 
-const AboutSettings: React.FC = () => {
+interface AboutSettingsProps {
+  embedded?: boolean
+}
+
+const AboutSettings: React.FC<AboutSettingsProps> = ({ embedded = false }) => {
   const buildStatus = IS_RELEASE_BUILD ? 'Release 构建' : '本地开发'
   const projectName = 'AI LocalBase'
 
   return (
-    <div className="settings-tab-content settings-about-page">
+    <div className={embedded ? 'settings-about-page settings-about-embedded' : 'settings-tab-content settings-about-page'}>
       <section className="settings-setting-section">
         <div className="settings-setting-section-header">
           <div>

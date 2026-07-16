@@ -7,9 +7,8 @@ import AISettings from './tabs/AISettings'
 import RetrievalSettings from './tabs/RetrievalSettings'
 import MCPSettings from './tabs/MCPSettings'
 import SystemSettings from './tabs/SystemSettings'
-import AboutSettings from './tabs/AboutSettings'
 
-type SettingsTab = 'general' | 'ai' | 'retrieval' | 'mcp' | 'system' | 'about'
+type SettingsTab = 'overview' | 'models' | 'retrieval' | 'access' | 'account'
 
 interface SettingsPanelProps {
   config: AppConfig
@@ -29,12 +28,11 @@ interface SettingsNavItem {
 }
 
 const navItems: SettingsNavItem[] = [
-  { id: 'system', label: '账户管理', description: '会话、密码与访问密钥', icon: 'user' },
-  { id: 'general', label: '系统设置', description: '当前模型、检索与运行状态', icon: 'settings' },
-  { id: 'mcp', label: '系统授权', description: 'MCP 工具调用与访问令牌', icon: 'shield' },
-  { id: 'ai', label: '模型', description: '接口与推理参数', icon: 'box' },
-  { id: 'retrieval', label: '检索策略', description: '召回、重排与上下文规模', icon: 'database' },
-  { id: 'about', label: '关于', description: '版本、发布与项目资源', icon: 'info' },
+  { id: 'overview', label: '概览', description: '运行状态与当前配置', icon: 'settings' },
+  { id: 'models', label: '模型', description: '聊天、推理与 Embedding', icon: 'brain' },
+  { id: 'retrieval', label: '检索', description: '召回质量与上下文规模', icon: 'database' },
+  { id: 'access', label: '接入与密钥', description: 'MCP、API Key 与客户端', icon: 'key' },
+  { id: 'account', label: '账户与安全', description: '密码、会话与安全记录', icon: 'shield' },
 ]
 
 const getTabButtonId = (tabId: SettingsTab) => `settings-tab-${tabId}`
@@ -102,7 +100,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onResetMcpToken,
   onLogout,
 }) => {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>('overview')
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const [baselineConfig, setBaselineConfig] = useState(config)
   const [draftConfig, setDraftConfig] = useState(config)
   const [baselineThinkModel, setBaselineThinkModel] = useState(chatModeSettings.thinkModel)
@@ -228,6 +227,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const handleTabChange = useCallback((nextTab: SettingsTab) => {
     setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab))
+    setMobileDetailOpen(true)
   }, [])
 
   const focusTab = useCallback((nextIndex: number) => {
@@ -265,9 +265,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const activePanel = useMemo(() => {
     switch (activeTab) {
-      case 'general':
+      case 'overview':
         return <GeneralSettings config={draftConfig} />
-      case 'ai':
+      case 'models':
         return (
           <AISettings
             config={draftConfig}
@@ -284,7 +284,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             onRetrievalConfigChange={handleRetrievalConfigChange}
           />
         )
-      case 'mcp':
+      case 'access':
         return (
           <MCPSettings
             config={draftConfig.mcp}
@@ -292,10 +292,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             onResetMcpToken={onResetMcpToken}
           />
         )
-      case 'system':
+      case 'account':
         return <SystemSettings config={draftConfig} onLogout={onLogout} />
-      case 'about':
-        return <AboutSettings />
       default:
         return null
     }
@@ -332,13 +330,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </button>
       </header>
 
-      <div className="settings-layout">
+      <div className={`settings-layout ${mobileDetailOpen ? 'mobile-detail-open' : ''}`}>
         <aside className="settings-sidebar" aria-label="设置分类">
+          <div className="settings-mobile-list-header">
+            <strong>设置分类</strong>
+            <span>选择一项进行查看和修改</span>
+          </div>
           <nav
             aria-label="设置分类"
             className="settings-nav"
             onKeyDown={handleNavKeyDown}
-            role="tablist"
           >
             {navItems.map((item) => {
               const isActive = activeTab === item.id
@@ -346,13 +347,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               return (
                 <button
                   aria-controls={getTabPanelId(item.id)}
-                  aria-selected={isActive}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`settings-nav-item ${isActive ? 'active' : ''}`}
                   id={getTabButtonId(item.id)}
                   key={item.id}
                   onClick={() => handleTabChange(item.id)}
-                  role="tab"
-                  tabIndex={isActive ? 0 : -1}
+                  tabIndex={0}
                   type="button"
                 >
                   <span className="settings-nav-icon" aria-hidden="true">
@@ -362,6 +362,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     <span className="settings-nav-label">{item.label}</span>
                     <span className="settings-nav-description">{item.description}</span>
                   </span>
+                  <span className="settings-nav-trailing" aria-hidden="true">
+                    <AppIcon name="chevronRight" size={16} />
+                  </span>
                 </button>
               )
             })}
@@ -370,6 +373,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
         <main className="settings-main">
           <header className="settings-main-header">
+            <button
+              aria-label="返回设置分类"
+              className="settings-mobile-back"
+              onClick={() => setMobileDetailOpen(false)}
+              title="返回设置分类"
+              type="button"
+            >
+              <AppIcon name="chevronLeft" size={18} />
+            </button>
             <div>
               <h3>{activeNavItem.label}</h3>
               <p className="settings-main-visible-description">{activeNavItem.description}</p>
@@ -381,7 +393,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
             className="settings-content-scroll"
             id={getTabPanelId(activeTab)}
             key={activeTab}
-            role="tabpanel"
+            role="region"
             tabIndex={0}
           >
             {activePanel}

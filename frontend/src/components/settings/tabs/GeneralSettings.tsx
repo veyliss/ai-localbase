@@ -1,5 +1,7 @@
 import React from 'react'
 import type { AppConfig } from '../../../App'
+import AppIcon, { type AppIconName } from '../../common/AppIcon'
+import AboutSettings from './AboutSettings'
 
 interface GeneralSettingsProps {
   config: AppConfig
@@ -13,6 +15,14 @@ interface PreferenceRow {
   status?: 'enabled' | 'disabled' | 'neutral'
 }
 
+interface OverviewMetric {
+  label: string
+  value: string
+  detail: string
+  icon: AppIconName
+  status?: 'enabled' | 'disabled'
+}
+
 const GeneralSettings: React.FC<GeneralSettingsProps> = ({ config }) => {
   const chatProviderLabel = config.chat.provider === 'ollama' ? 'Ollama' : 'OpenAI Compatible'
   const embeddingProviderLabel = config.embedding.provider === 'ollama' ? 'Ollama' : 'OpenAI Compatible'
@@ -21,6 +31,30 @@ const GeneralSettings: React.FC<GeneralSettingsProps> = ({ config }) => {
   const queryRewriteLabel = config.retrieval.enableQueryRewrite ? '已启用' : '未启用'
   const lowConfidenceBoostLabel = config.retrieval.enableLowConfidenceBoost ? '已启用' : '未启用'
   const mcpWarnings = config.mcp.deploymentWarnings ?? []
+
+  const overviewMetrics: OverviewMetric[] = [
+    {
+      label: '聊天模型',
+      value: config.chat.model || '未配置',
+      detail: chatProviderLabel,
+      icon: 'brain',
+      status: config.chat.model ? 'enabled' : 'disabled',
+    },
+    {
+      label: '默认检索',
+      value: searchModeLabel,
+      detail: config.retrieval.hybridSearchEnabled ? '混合召回可用' : '向量召回优先',
+      icon: 'database',
+      status: 'enabled',
+    },
+    {
+      label: 'MCP 服务',
+      value: config.mcp.enabled ? '已启用' : '未启用',
+      detail: config.mcp.basePath || '未配置路径',
+      icon: 'key',
+      status: config.mcp.enabled ? 'enabled' : 'disabled',
+    },
+  ]
 
   const preferenceRows: PreferenceRow[] = [
     {
@@ -59,37 +93,57 @@ const GeneralSettings: React.FC<GeneralSettingsProps> = ({ config }) => {
   ]
 
   return (
-    <div className="settings-tab-content settings-preferences-page">
-      {mcpWarnings.length > 0 && (
-        <section className="settings-preference-row settings-preference-warning" aria-label="部署提醒">
-          <div className="settings-preference-copy">
-            <h3>部署提醒</h3>
-            <p>{mcpWarnings.join('；')}</p>
+    <div className="settings-tab-content settings-overview-page">
+      <section className="settings-overview-summary" aria-label="当前运行状态">
+        {overviewMetrics.map((metric) => (
+          <div className="settings-overview-metric" key={metric.label}>
+            <span className="settings-overview-metric-icon" aria-hidden="true">
+              <AppIcon name={metric.icon} size={17} />
+            </span>
+            <div>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+              <small>{metric.detail}</small>
+            </div>
+            <span className={`settings-overview-dot ${metric.status ?? ''}`} aria-hidden="true" />
           </div>
-          <div className="settings-preference-control">
-            <span className="settings-select-like settings-status-like disabled">需处理</span>
-            <small>{config.mcp.recommendedAuthMode === 'api_key_scopes' ? 'MCP 建议继续使用 API Key Scope' : '检查鉴权配置'}</small>
+        ))}
+      </section>
+
+      {mcpWarnings.length > 0 && (
+        <section className="settings-overview-warning" aria-label="部署提醒">
+          <span aria-hidden="true"><AppIcon name="alert" size={17} /></span>
+          <div>
+            <strong>部署配置需要检查</strong>
+            <p>{mcpWarnings.join('；')}</p>
           </div>
         </section>
       )}
-      {preferenceRows.map((row) => (
-        <section className="settings-preference-row" key={row.title}>
-          <div className="settings-preference-copy">
-            <h3>{row.title}</h3>
-            <p>{row.description}</p>
-          </div>
-          <div className="settings-preference-control">
-            {row.status ? (
-              <span className={`settings-select-like settings-status-like ${row.status}`}>
-                {row.value}
-              </span>
-            ) : (
-              <span className="settings-select-like">{row.value}</span>
-            )}
-            {row.meta ? <small>{row.meta}</small> : null}
-          </div>
-        </section>
-      ))}
+
+      <section className="settings-overview-section">
+        <header>
+          <h3>当前配置</h3>
+          <p>快速确认模型、检索和接入状态。</p>
+        </header>
+        <div className="settings-overview-config-list">
+          {preferenceRows.map((row) => (
+            <div className="settings-overview-config-row" key={row.title}>
+              <div>
+                <strong>{row.title}</strong>
+                <p>{row.description}</p>
+              </div>
+              <div className="settings-overview-config-value">
+                <span className={row.status ? `settings-status-like ${row.status}` : undefined}>
+                  {row.value}
+                </span>
+                {row.meta ? <small>{row.meta}</small> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <AboutSettings embedded />
     </div>
   )
 }

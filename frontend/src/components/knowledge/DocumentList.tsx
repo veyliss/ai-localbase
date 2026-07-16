@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { DocumentItem } from '../../App'
 import type { KnowledgeBaseDocumentHealth } from '../../services/api'
 import AppIcon, { type AppIconName } from '../common/AppIcon'
+import { DOCUMENTS_PER_PAGE, getDocumentPage } from './documentListPagination'
+import DocumentScopePicker from './DocumentScopePicker'
 import { documentStatusLabel } from './knowledgeLabels'
 
 interface DocumentListProps {
@@ -45,11 +47,16 @@ const DocumentList: React.FC<DocumentListProps> = ({
   const [sortField, setSortField] = useState<SortField>('uploadedAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [searchQuery, setSearchQuery] = useState('')
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+  const [currentPage, setCurrentPage] = useState(1)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
   const [actionMenuId, setActionMenuId] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
-  const documentIdsKey = documents.map((document) => document.id).join('|')
+  const documentIdsKey = useMemo(
+    () => documents.map((document) => document.id).join('|'),
+    [documents],
+  )
 
   const healthByDocumentId = useMemo(
     () => new Map(healthDocuments.map((item) => [item.documentId, item])),
@@ -87,7 +94,7 @@ const DocumentList: React.FC<DocumentListProps> = ({
   }, [actionMenuId])
 
   const filteredAndSortedDocuments = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
+    const query = deferredSearchQuery.trim().toLowerCase()
     const filtered = query
       ? documents.filter((document) => (
         document.name.toLowerCase().includes(query) ||
@@ -104,7 +111,23 @@ const DocumentList: React.FC<DocumentListProps> = ({
       }
       return sortOrder === 'asc' ? comparison : -comparison
     })
-  }, [documents, searchQuery, sortField, sortOrder])
+  }, [deferredSearchQuery, documents, sortField, sortOrder])
+
+  const documentPage = useMemo(
+    () => getDocumentPage(filteredAndSortedDocuments, currentPage),
+    [currentPage, filteredAndSortedDocuments],
+  )
+  const pageCount = documentPage.pageCount
+  const visiblePage = documentPage.page
+  const pageDocuments = documentPage.items
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [deferredSearchQuery, documentIdsKey, sortField, sortOrder])
+
+  useEffect(() => {
+    if (currentPage > pageCount) setCurrentPage(pageCount)
+  }, [currentPage, pageCount])
 
   const handleSortChange = (value: string) => {
     const [field, order] = value.split(':') as [SortField, SortOrder]
@@ -113,11 +136,16 @@ const DocumentList: React.FC<DocumentListProps> = ({
   }
 
   const handleToggleSelectAll = () => {
-    if (selectedIds.size === filteredAndSortedDocuments.length) {
-      setSelectedIds(new Set())
-      return
-    }
-    setSelectedIds(new Set(filteredAndSortedDocuments.map((document) => document.id)))
+    const pageIds = pageDocuments.map((document) => document.id)
+    const allPageSelected = pageIds.every((documentId) => selectedIds.has(documentId))
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      pageIds.forEach((documentId) => {
+        if (allPageSelected) next.delete(documentId)
+        else next.add(documentId)
+      })
+      return next
+    })
   }
 
   const handleToggleSelect = (documentId: string) => {
@@ -136,7 +164,7 @@ const DocumentList: React.FC<DocumentListProps> = ({
     setShowBulkConfirm(false)
   }
 
-  const allSelected = filteredAndSortedDocuments.length > 0 && selectedIds.size === filteredAndSortedDocuments.length
+  const allSelected = pageDocuments.length > 0 && pageDocuments.every((document) => selectedIds.has(document.id))
 
   return (
     <section className="kb-docs-panel">
@@ -160,19 +188,11 @@ const DocumentList: React.FC<DocumentListProps> = ({
           />
         </div>
 
-        <label className="kb-document-select">
-          <span>检索范围</span>
-          <select
-            aria-label="检索范围"
-            onChange={(event) => onSelectDocument(event.target.value || null)}
-            value={selectedDocumentId ?? ''}
-          >
-            <option value="">全部文档</option>
-            {documents.map((document) => (
-              <option key={document.id} value={document.id}>{document.name}</option>
-            ))}
-          </select>
-        </label>
+        <DocumentScopePicker
+          documents={documents}
+          onSelectDocument={onSelectDocument}
+          selectedDocumentId={selectedDocumentId}
+        />
 
         <label className="kb-document-select kb-document-select--sort">
           <span>排序</span>
@@ -193,7 +213,7 @@ const DocumentList: React.FC<DocumentListProps> = ({
         {filteredAndSortedDocuments.length > 0 && (
           <label className="kb-bulk-checkbox">
             <input checked={allSelected} onChange={handleToggleSelectAll} type="checkbox" />
-            <span>全选</span>
+            <span>{pageCount > 1 ? '全选本页' : '全选'}</span>
           </label>
         )}
       </div>
@@ -223,7 +243,7 @@ const DocumentList: React.FC<DocumentListProps> = ({
             <strong>{searchQuery ? '没有匹配的文档' : '还没有文档'}</strong>
             <span>{searchQuery ? '尝试调整搜索关键词' : '使用右上角上传入口添加资料'}</span>
           </div>
-        ) : filteredAndSortedDocuments.map((document) => {
+        ) : pageDocuments.map((document) => {
           const badge = documentStatusLabel(document.status)
           const health = healthByDocumentId.get(document.id)
           const needsReindex = Boolean(health?.needsReindex || document.status === 'failed')
@@ -371,6 +391,33 @@ const DocumentList: React.FC<DocumentListProps> = ({
           )
         })}
       </div>
+
+      {filteredAndSortedDocuments.length > DOCUMENTS_PER_PAGE && (
+        <div className="kb-document-pagination" aria-label="文档分页">
+          <span>共 {filteredAndSortedDocuments.length} 份文档</span>
+          <div>
+            <button
+              aria-label="上一页"
+              disabled={visiblePage === 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              title="上一页"
+              type="button"
+            >
+              <AppIcon name="chevronLeft" size={15} />
+            </button>
+            <strong>第 {visiblePage} / {pageCount} 页</strong>
+            <button
+              aria-label="下一页"
+              disabled={visiblePage === pageCount}
+              onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
+              title="下一页"
+              type="button"
+            >
+              <AppIcon name="chevronRight" size={15} />
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

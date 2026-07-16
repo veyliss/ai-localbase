@@ -1,5 +1,6 @@
 import React from 'react'
 import type { RetrievalDebugResponse, RetrievalSearchMode } from '../../services/api'
+import AppIcon from '../common/AppIcon'
 import { chunkKindLabel, structuredIntentLabel } from './knowledgeLabels'
 
 interface RetrievalDebugPanelProps {
@@ -27,13 +28,12 @@ const searchModeOptions: Array<{ value: RetrievalSearchMode; label: string }> = 
 const resolvedSearchModeLabel = (mode?: string) => {
   if (mode === 'hybrid') return '混合检索'
   if (mode === 'dense') return '向量检索'
-  return '等待检索'
+  return '自动检索'
 }
 
-const rerankStrategyLabel = (strategy?: string) => {
-  if (strategy === 'semantic') return '语义重排'
-  return '关键词重排'
-}
+const rerankStrategyLabel = (strategy?: string) => (
+  strategy === 'semantic' ? '语义重排' : '关键词重排'
+)
 
 const retrievalChannelLabel = (channel: string) => {
   if (channel === 'dense') return '向量'
@@ -59,16 +59,8 @@ const retrievalContributionSummary = (result: RetrievalDebugResponse) => {
     { both: 0, denseOnly: 0, sparseOnly: 0, lexicalOnly: 0, unknown: 0 },
   )
 
-  if (result.searchMode !== 'hybrid') {
-    return [
-      `向量召回 ${counts.denseOnly + counts.both + counts.unknown}`,
-      counts.lexicalOnly > 0 ? `词法兜底 ${counts.lexicalOnly}` : '',
-      '当前模式未启用关键词召回融合',
-    ].filter(Boolean)
-  }
-
   return [
-    `双路共同命中 ${counts.both}`,
+    `双路命中 ${counts.both}`,
     `向量独有 ${counts.denseOnly}`,
     `关键词独有 ${counts.sparseOnly}`,
     counts.lexicalOnly > 0 ? `词法兜底 ${counts.lexicalOnly}` : '',
@@ -91,6 +83,22 @@ const formatDiagnosticPercent = (value?: number) => (
   typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-'
 )
 
+const highlightMatches = (text: string, query: string) => {
+  const term = query.trim()
+  if (term.length < 2) return text
+
+  const matchIndex = text.toLocaleLowerCase().indexOf(term.toLocaleLowerCase())
+  if (matchIndex < 0) return text
+
+  return (
+    <>
+      {text.slice(0, matchIndex)}
+      <mark>{text.slice(matchIndex, matchIndex + term.length)}</mark>
+      {text.slice(matchIndex + term.length)}
+    </>
+  )
+}
+
 const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
   scopeLabel,
   query,
@@ -107,23 +115,42 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
   onAddEvalCandidate,
 }) => (
   <section className="kb-retrieval-debug">
-    <div className="kb-panel-section-head">
+    <div className="kb-panel-section-head kb-retrieval-heading">
       <div>
-        <h3>检索调试台</h3>
-        <p>当前范围：{scopeLabel}</p>
+        <h3>检索测试</h3>
+        <p>验证问题会命中哪些文档和 Chunk，当前范围：{scopeLabel}</p>
       </div>
-      <div className="kb-retrieval-mode-block">
-        <span className="kb-retrieval-mode">
-          {resolvedSearchModeLabel(result?.searchMode)}
-        </span>
-        <div className="kb-retrieval-mode-tabs" role="tablist" aria-label="检索模式">
+      {result && <span className="kb-retrieval-resolved-mode">{resolvedSearchModeLabel(result.searchMode)}</span>}
+    </div>
+
+    <div className="kb-retrieval-composer">
+      <div className="kb-retrieval-input-row">
+        <AppIcon name="search" size={17} />
+        <input
+          aria-label="检索测试问题"
+          className="kb-retrieval-input"
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') onRun()
+          }}
+          placeholder="输入一个问题，例如：武汉大学创办于哪一年？"
+          value={query}
+        />
+        <button className="kb-retrieval-run" disabled={loading || !query.trim()} onClick={onRun} type="button">
+          {loading ? '检索中' : '运行检索'}
+        </button>
+      </div>
+      <div className="kb-retrieval-options">
+        <span>检索模式</span>
+        <div aria-label="检索模式" className="kb-retrieval-mode-tabs" role="group">
           {searchModeOptions.map((option) => (
             <button
-              key={option.value}
-              type="button"
+              aria-pressed={searchMode === option.value}
               className={searchMode === option.value ? 'active' : ''}
-              onClick={() => onSearchModeChange(option.value)}
               disabled={loading}
+              key={option.value}
+              onClick={() => onSearchModeChange(option.value)}
+              type="button"
             >
               {option.label}
             </button>
@@ -131,44 +158,32 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
         </div>
       </div>
     </div>
-    <div className="kb-retrieval-input-row">
-      <input
-        className="kb-retrieval-input"
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') onRun()
-        }}
-        placeholder="输入一个问题，查看实际命中的 chunk"
-      />
-      <button className="kb-retrieval-run" onClick={onRun} disabled={loading}>
-        {loading ? '检索中' : '运行'}
-      </button>
-    </div>
 
     {error && <div className="kb-retrieval-error">{error}</div>}
 
+    {!result && !error && (
+      <div className="kb-retrieval-idle">
+        <AppIcon name="search" size={24} />
+        <strong>{loading ? '正在检索' : '等待检索问题'}</strong>
+        <span>{loading ? '正在召回和重排候选 Chunk' : '运行后将在这里显示命中排名和诊断信息'}</span>
+      </div>
+    )}
+
     {result && (
       <div className="kb-retrieval-result">
-        <div className="kb-retrieval-summary">
-          <span>{result.count} 个命中</span>
-          <span>{result.elapsedMs} ms</span>
-          <span>{result.lowConfidence ? '低置信' : '置信正常'}</span>
-          <span>{result.deterministicUsed ? '确定性补全' : '向量优先'}</span>
-          <span>{rerankStrategyLabel(result.rerankStrategy)}</span>
-          <span>{result.queryRewriteUsed ? '已改写查询' : '未改写查询'}</span>
-          {structuredIntentLabel(result.structuredIntent) && (
-            <span>
-              {structuredIntentLabel(result.structuredIntent)}
-              {result.targetField ? `：${result.targetField}` : ''}
-            </span>
-          )}
-        </div>
+        <dl className="kb-retrieval-summary-grid">
+          <div><dt>命中数量</dt><dd>{result.count}</dd></div>
+          <div><dt>检索耗时</dt><dd>{result.elapsedMs} ms</dd></div>
+          <div data-status={result.lowConfidence ? 'warning' : 'normal'}>
+            <dt>置信状态</dt><dd>{result.lowConfidence ? '需要复核' : '正常'}</dd>
+          </div>
+          <div><dt>排序策略</dt><dd>{rerankStrategyLabel(result.rerankStrategy)}</dd></div>
+        </dl>
 
         {result.confidence && (
           <div className={`kb-retrieval-confidence kb-retrieval-confidence--${result.confidence.status === 'low' ? 'low' : 'normal'}`}>
             <div>
-              <strong>置信诊断</strong>
+              <strong>{result.confidence.status === 'low' ? '结果需要复核' : '置信诊断正常'}</strong>
               <p>{result.confidence.summary}</p>
             </div>
             <div className="kb-retrieval-confidence-metrics">
@@ -178,133 +193,122 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
             </div>
             {result.confidence.reasons && result.confidence.reasons.length > 0 && (
               <ul>
-                {result.confidence.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
+                {result.confidence.reasons.map((reason) => <li key={reason}>{reason}</li>)}
               </ul>
             )}
-            {result.confidence.suggestions && result.confidence.suggestions.length > 0 && (
-              <div className="kb-retrieval-confidence-actions">
-                {result.confidence.suggestions.map((suggestion) => (
-                  <span key={suggestion}>{suggestion}</span>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
-        <div className="kb-retrieval-contribution">
-          <strong>召回贡献</strong>
+        <div className="kb-retrieval-results-head">
           <div>
-            {retrievalContributionSummary(result).map((item) => (
-              <span key={item}>{item}</span>
-            ))}
+            <h4>命中结果</h4>
+            <p>按最终排序分数展示，共 {result.items.length} 个 Chunk</p>
           </div>
+          <span>{result.queryRewriteUsed ? '查询已改写' : '原始查询'} · {result.deterministicUsed ? '确定性补全' : '向量优先'}</span>
         </div>
 
-        {result.evidenceGate && (
-          <details className="kb-retrieval-trace" open={result.evidenceGate.enabled}>
-            <summary>证据门控诊断</summary>
-            <div>
-              <span>{result.evidenceGate.reason || (result.evidenceGate.enabled ? '已启用' : '未启用')}</span>
-              {result.evidenceGate.enabled && (
-                <>
-                  <span>候选 {result.evidenceGate.candidateCount}</span>
-                  <span>保留 {result.evidenceGate.selectedCount}</span>
-                  <span>直接证据 {result.evidenceGate.directEvidenceCount}</span>
-                  <span>弱证据 {result.evidenceGate.weakEvidenceCount}</span>
-                  <span>过滤 {result.evidenceGate.removedCount}</span>
-                </>
-              )}
-            </div>
-            {result.evidenceGate.enabled && (
-              <div className="kb-retrieval-gate-columns">
+        <div className="kb-retrieval-hits">
+          {result.items.length === 0 ? (
+            <div className="kb-docs-empty">没有命中 Chunk</div>
+          ) : result.items.map((item, index) => (
+            <article className="kb-retrieval-hit" key={item.id}>
+              <div className="kb-retrieval-hit-head">
+                <span className="kb-retrieval-rank">{index + 1}</span>
                 <div>
-                  <strong>门控前 Top 候选</strong>
-                  {(result.evidenceGate.topBefore ?? []).map((item) => (
-                    <p key={`before-${item.id || `${item.documentId}-${item.index}`}`}>
-                      {item.documentName} #{item.index + 1} · {item.score.toFixed(4)}
-                    </p>
-                  ))}
+                  <strong>{item.documentName}</strong>
+                  <span>{chunkKindLabel(item.kind)} · Chunk #{item.index + 1}</span>
                 </div>
-                <div>
-                  <strong>门控后 Top 候选</strong>
-                  {(result.evidenceGate.topAfter ?? []).map((item) => (
-                    <p key={`after-${item.id || `${item.documentId}-${item.index}`}`}>
-                      {item.documentName} #{item.index + 1} · {item.score.toFixed(4)}
-                    </p>
-                  ))}
+                <div className="kb-retrieval-score">
+                  <strong>{item.score.toFixed(4)}</strong>
+                  <span>排序分数</span>
                 </div>
               </div>
-            )}
-          </details>
-        )}
+              <div className="kb-retrieval-hit-tags">
+                {item.retrievalChannels?.map((channel) => (
+                  <span key={channel}>{retrievalChannelLabel(channel)}</span>
+                ))}
+                {retrievalChannelRankLabel(item) && <span>{retrievalChannelRankLabel(item)}</span>}
+                {item.matchReasons?.map((reason) => <span key={reason}>{reason}</span>)}
+              </div>
+              <p className="kb-retrieval-hit-text">{highlightMatches(item.text, query)}</p>
+            </article>
+          ))}
+        </div>
 
         {result.evalCandidate && (
           <div className="kb-retrieval-eval">
             <div>
-              <strong>低置信评测候选</strong>
-              <p>当前问题可沉淀为后续检索评测样本，下载后建议人工复核答案片段。</p>
+              <strong>可沉淀为评估样本</strong>
+              <p>当前问题置信度较低，建议加入待审核评估集并人工复核答案证据。</p>
               {evalCandidateSaveMessage && <span>{evalCandidateSaveMessage}</span>}
             </div>
             <div className="kb-retrieval-eval-actions">
-              <button onClick={onAddEvalCandidate} disabled={savingEvalCandidate}>
+              <button disabled={savingEvalCandidate} onClick={onAddEvalCandidate} type="button">
+                <AppIcon name="plus" size={15} />
                 {savingEvalCandidate ? '加入中' : '加入待审核'}
               </button>
-              <button onClick={onDownloadEvalCandidate}>下载样本</button>
+              <button onClick={onDownloadEvalCandidate} type="button">
+                <AppIcon name="download" size={15} />
+                下载样本
+              </button>
             </div>
           </div>
         )}
 
-        {result.contextPreview && (
-          <details className="kb-retrieval-context">
-            <summary>上下文预览</summary>
-            <pre>{result.contextPreview}</pre>
-          </details>
-        )}
+        <details className="kb-retrieval-advanced">
+          <summary>查看高级诊断</summary>
+          <div className="kb-retrieval-advanced-body">
+            <section>
+              <h4>召回贡献</h4>
+              <div className="kb-retrieval-contribution-list">
+                {retrievalContributionSummary(result).map((item) => <span key={item}>{item}</span>)}
+              </div>
+            </section>
 
-        {result.trace && result.trace.length > 0 && (
-          <details className="kb-retrieval-trace">
-            <summary>检索处理说明</summary>
-            <div>
-              {result.trace.map((step, index) => (
-                <span key={`${step.stage}-${index}`}>
-                  {step.stage}：{step.reason || step.status}
-                  {(step.inputCount || step.outputCount) ? `（${step.inputCount ?? '-'} -> ${step.outputCount ?? '-'}）` : ''}
-                </span>
-              ))}
-            </div>
-          </details>
-        )}
+            {structuredIntentLabel(result.structuredIntent) && (
+              <section>
+                <h4>结构化意图</h4>
+                <p>{structuredIntentLabel(result.structuredIntent)}{result.targetField ? `：${result.targetField}` : ''}</p>
+              </section>
+            )}
 
-        <div className="kb-retrieval-hits">
-          {result.items.length === 0 ? (
-            <div className="kb-docs-empty">没有命中 chunk</div>
-          ) : (
-            result.items.map((item) => (
-              <div key={item.id} className="kb-retrieval-hit">
-                <div className="kb-retrieval-hit-head">
-                  <strong>{item.documentName}</strong>
-                  <span>{chunkKindLabel(item.kind)}</span>
-                  <span>#{item.index + 1}</span>
-                  <span>{item.score.toFixed(4)}</span>
-                  {item.retrievalChannels?.map((channel) => (
-                    <span key={channel}>{retrievalChannelLabel(channel)}</span>
-                  ))}
-                  {retrievalChannelRankLabel(item) && <span>{retrievalChannelRankLabel(item)}</span>}
-                </div>
-                {item.matchReasons && item.matchReasons.length > 0 && (
-                  <div className="kb-retrieval-reasons">
-                    {item.matchReasons.map((reason) => (
-                      <span key={reason}>{reason}</span>
-                    ))}
+            {result.evidenceGate && (
+              <section>
+                <h4>证据门控</h4>
+                <p>{result.evidenceGate.reason || (result.evidenceGate.enabled ? '已启用' : '未启用')}</p>
+                {result.evidenceGate.enabled && (
+                  <div className="kb-retrieval-gate-metrics">
+                    <span>候选 {result.evidenceGate.candidateCount}</span>
+                    <span>保留 {result.evidenceGate.selectedCount}</span>
+                    <span>直接证据 {result.evidenceGate.directEvidenceCount}</span>
+                    <span>过滤 {result.evidenceGate.removedCount}</span>
                   </div>
                 )}
-                <pre>{item.text}</pre>
-              </div>
-            ))
-          )}
-        </div>
+              </section>
+            )}
+
+            {result.contextPreview && (
+              <section>
+                <h4>上下文预览</h4>
+                <pre>{result.contextPreview}</pre>
+              </section>
+            )}
+
+            {result.trace && result.trace.length > 0 && (
+              <section>
+                <h4>处理说明</h4>
+                <div className="kb-retrieval-trace-list">
+                  {result.trace.map((step, index) => (
+                    <span key={`${step.stage}-${index}`}>
+                      {step.stage}：{step.reason || step.status}
+                      {(step.inputCount || step.outputCount) ? `（${step.inputCount ?? '-'} -> ${step.outputCount ?? '-'}）` : ''}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        </details>
       </div>
     )}
   </section>

@@ -173,6 +173,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }))
   }, [markDraftChanged])
 
+  const handleRetrievalConfigPatch = useCallback((patch: Partial<RetrievalConfig>) => {
+    markDraftChanged()
+    setDraftConfig((current) => ({
+      ...current,
+      retrieval: { ...current.retrieval, ...patch },
+    }))
+  }, [markDraftChanged])
+
   const handleThinkModelChange = useCallback((value: string) => {
     markDraftChanged()
     setDraftThinkModel(value)
@@ -282,6 +290,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <RetrievalSettings
             config={draftConfig.retrieval}
             onRetrievalConfigChange={handleRetrievalConfigChange}
+            onRetrievalConfigPatch={handleRetrievalConfigPatch}
           />
         )
       case 'access':
@@ -305,6 +314,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     handleChatConfigChange,
     handleEmbeddingConfigChange,
     handleRetrievalConfigChange,
+    handleRetrievalConfigPatch,
     handleThinkModelChange,
     onCopyMcpToken,
     onLogout,

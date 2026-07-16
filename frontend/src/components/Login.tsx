@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { APP_VERSION } from '../utils/appInfo'
+import AppIcon from './common/AppIcon'
 import '../styles/Login.css'
 
 const getPasswordStrength = (password: string) => {
@@ -24,26 +25,6 @@ const getPasswordStrength = (password: string) => {
   return { label: '偏弱', tone: 'weak', hint: '至少 8 位，推荐 16 位以上' }
 }
 
-const colorWithAlpha = (color: string, alpha: number) => {
-  const normalized = color.trim()
-  const hexMatch = normalized.match(/^#([0-9a-f]{6})$/i)
-
-  if (hexMatch) {
-    const value = hexMatch[1]
-    const red = Number.parseInt(value.slice(0, 2), 16)
-    const green = Number.parseInt(value.slice(2, 4), 16)
-    const blue = Number.parseInt(value.slice(4, 6), 16)
-    return `rgba(${red}, ${green}, ${blue}, ${alpha})`
-  }
-
-  const rgbMatch = normalized.match(/^rgb\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\)$/i)
-  if (rgbMatch) {
-    return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`
-  }
-
-  return `rgba(0, 92, 230, ${alpha})`
-}
-
 const Login: React.FC = () => {
   const {
     login,
@@ -65,7 +46,6 @@ const Login: React.FC = () => {
   const [showResetHelp, setShowResetHelp] = useState(false)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const passwordStrength = useMemo(() => getPasswordStrength(password), [password])
 
   useEffect(() => {
@@ -79,133 +59,6 @@ const Login: React.FC = () => {
     }
     passwordRef.current?.focus()
   }, [setupRequired])
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const ctx = canvas.getContext('2d', { alpha: true })
-    if (!ctx) return
-
-    let animationFrameId: number
-    const particles: Particle[] = []
-    const mouse: { x: number; y: number } = { x: -1000, y: -1000 }
-    const primaryColor = getComputedStyle(document.documentElement)
-      .getPropertyValue('--color-primary') || 'rgb(0, 92, 230)'
-
-    const resize = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
-    }
-    resize()
-    window.addEventListener('resize', resize)
-
-    const handleMouseMove = (e: MouseEvent) => {
-      mouse.x = e.clientX
-      mouse.y = e.clientY
-    }
-    window.addEventListener('mousemove', handleMouseMove)
-
-    class Particle {
-      x: number
-      y: number
-      vx: number
-      vy: number
-      size: number
-      baseSize: number
-      opacity: number
-      canvasWidth: number
-      canvasHeight: number
-
-      constructor(width: number, height: number) {
-        this.canvasWidth = width
-        this.canvasHeight = height
-        this.x = Math.random() * width
-        this.y = Math.random() * height
-        this.vx = (Math.random() - 0.5) * 0.5
-        this.vy = (Math.random() - 0.5) * 0.5
-        this.baseSize = Math.random() * 2 + 1
-        this.size = this.baseSize
-        this.opacity = Math.random() * 0.5 + 0.2
-      }
-
-      update() {
-        this.x += this.vx
-        this.y += this.vy
-
-        const dx = mouse.x - this.x
-        const dy = mouse.y - this.y
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist > 0 && dist < 150) {
-          const force = (150 - dist) / 150
-          this.vx -= (dx / dist) * force * 0.02
-          this.vy -= (dy / dist) * force * 0.02
-        }
-
-        this.vx *= 0.99
-        this.vy *= 0.99
-
-        if (this.x < 0) this.x = this.canvasWidth
-        if (this.x > this.canvasWidth) this.x = 0
-        if (this.y < 0) this.y = this.canvasHeight
-        if (this.y > this.canvasHeight) this.y = 0
-
-        this.size = this.baseSize + Math.sin(Date.now() * 0.001 + this.x) * 0.5
-      }
-
-      draw(nextCtx: CanvasRenderingContext2D) {
-        nextCtx.beginPath()
-        nextCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2)
-        nextCtx.fillStyle = colorWithAlpha(primaryColor, this.opacity)
-        nextCtx.fill()
-      }
-    }
-
-    const particleCount = Math.min(Math.floor((canvas.width * canvas.height) / 15000), 100)
-    for (let i = 0; i < particleCount; i += 1) {
-      particles.push(new Particle(canvas.width, canvas.height))
-    }
-
-    const drawConnections = () => {
-      for (let i = 0; i < particles.length; i += 1) {
-        for (let j = i + 1; j < particles.length; j += 1) {
-          const dx = particles[i].x - particles[j].x
-          const dy = particles[i].y - particles[j].y
-          const dist = Math.sqrt(dx * dx + dy * dy)
-
-          if (dist < 120) {
-            const opacity = (1 - dist / 120) * 0.15
-            ctx.beginPath()
-            ctx.moveTo(particles[i].x, particles[i].y)
-            ctx.lineTo(particles[j].x, particles[j].y)
-            ctx.strokeStyle = colorWithAlpha(primaryColor, opacity)
-            ctx.lineWidth = 0.5
-            ctx.stroke()
-          }
-        }
-      }
-    }
-
-    const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-      particles.forEach((particle) => {
-        particle.update()
-        particle.draw(ctx)
-      })
-
-      drawConnections()
-      animationFrameId = requestAnimationFrame(animate)
-    }
-
-    animate()
-
-    return () => {
-      cancelAnimationFrame(animationFrameId)
-      window.removeEventListener('resize', resize)
-      window.removeEventListener('mousemove', handleMouseMove)
-    }
-  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -245,25 +98,13 @@ const Login: React.FC = () => {
     || (setupRequired && (!confirmPassword || (setupTokenRequired && !setupToken.trim())))
 
   return (
-    <div className="login-page">
-      <canvas
-        ref={canvasRef}
-        className="login-canvas"
-        aria-hidden="true"
-      />
-
-      <div className="login-overlay"></div>
-
+    <main className="login-page">
       <div className="login-content">
         <div className="login-card">
           <div className="login-header">
             <div className="login-logo-wrapper">
               <div className="login-logo-icon">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
+                <AppIcon name="database" size={24} />
               </div>
             </div>
             <span className={`login-mode-pill ${setupRequired ? 'setup' : ''}`}>
@@ -284,10 +125,7 @@ const Login: React.FC = () => {
             )}
 
             <div className={`input-wrapper ${focusedField === 'username' ? 'focused' : ''}`}>
-              <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M20 21a8 8 0 0 0-16 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.5"/>
-              </svg>
+              <AppIcon className="input-icon" name="user" size={18} />
               <input
                 ref={usernameRef}
                 type="text"
@@ -305,10 +143,7 @@ const Login: React.FC = () => {
             </div>
 
             <div className={`input-wrapper ${focusedField === 'password' ? 'focused' : ''}`}>
-              <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" strokeWidth="1.5"/>
-                <path d="M7 11V7C7 4.23858 9.23858 2 12 2C14.7614 2 17 4.23858 17 7V11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
+              <AppIcon className="input-icon" name="lock" size={18} />
               <input
                 ref={passwordRef}
                 type={showPassword ? 'text' : 'password'}
@@ -330,17 +165,7 @@ const Login: React.FC = () => {
                 disabled={isLoading}
                 aria-label={showPassword ? '隐藏密码' : '显示密码'}
               >
-                {showPassword ? (
-                  <svg className="eye-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M1 12C1 12 5 4 12 4C19 4 23 12 23 12C23 12 19 20 12 20C5 20 1 12 1 12Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
-                  </svg>
-                ) : (
-                  <svg className="eye-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C7.78 20 3.4 17.12 1 12C3.4 6.88 7.78 4 12 4C13.42 4 14.8 4.3 16.04 4.84" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    <path d="M1 1L23 23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  </svg>
-                )}
+                <AppIcon className="eye-icon" name={showPassword ? 'eyeOff' : 'eye'} size={17} />
               </button>
             </div>
 
@@ -355,9 +180,7 @@ const Login: React.FC = () => {
                 </div>
 
                 <div className={`input-wrapper ${focusedField === 'confirm' ? 'focused' : ''}`}>
-                  <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                  <AppIcon className="input-icon" name="check" size={18} />
                   <input
                     type={showPassword ? 'text' : 'password'}
                     placeholder="确认 root 密码"
@@ -375,9 +198,7 @@ const Login: React.FC = () => {
 
                 {setupTokenRequired && (
                   <div className={`input-wrapper ${focusedField === 'setupToken' ? 'focused' : ''}`}>
-                    <svg className="input-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M15 7h.01M11 11h.01M7 15h.01M9.4 21H5a2 2 0 0 1-2-2v-4.4a2 2 0 0 1 .59-1.42L13.17 3.6a2 2 0 0 1 2.82 0l4.41 4.41a2 2 0 0 1 0 2.82l-9.58 9.58A2 2 0 0 1 9.4 21Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                    </svg>
+                    <AppIcon className="input-icon" name="key" size={18} />
                     <input
                       type="password"
                       placeholder="初始化 Token"
@@ -397,11 +218,7 @@ const Login: React.FC = () => {
 
             {displayError && (
               <div className="login-error" role="alert">
-                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/>
-                  <path d="M12 8V12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                  <circle cx="12" cy="16" r="0.5" fill="currentColor"/>
-                </svg>
+                <AppIcon name="alert" size={17} />
                 <span>{displayError}</span>
               </div>
             )}
@@ -443,10 +260,7 @@ const Login: React.FC = () => {
         <div className="login-help-overlay" onClick={() => setShowResetHelp(false)}>
           <div className="login-help-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="login-reset-title">
             <div className="login-help-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M12 3L4 6.5V12C4 16.4 7.4 20.1 12 21C16.6 20.1 20 16.4 20 12V6.5L12 3Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
-                <path d="M9.2 12.2L11.1 14.1L15.2 9.9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+              <AppIcon name="shield" size={24} />
             </div>
             <h2 id="login-reset-title">重置 root 密码</h2>
             <p>自部署环境需要在服务器侧重置密码。设置一次性重置变量并重启后端，登录成功后删除变量再重启。</p>
@@ -473,7 +287,7 @@ const Login: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </main>
   )
 }
 

@@ -15,7 +15,7 @@ import type {
   UpdateEvalDatasetItemResponse,
   DeleteEvalDatasetItemResponse,
 } from '../../services/api'
-import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
+import AppIcon from '../common/AppIcon'
 import CreateKnowledgeBaseDialog from './CreateKnowledgeBaseDialog'
 import DocumentDetailDialog from './DocumentDetailDialog'
 import EvalDatasetDialog from './EvalDatasetDialog'
@@ -141,14 +141,6 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
     onConfirm: () => {},
   })
   const directoryInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
-  const backdropRef = useRef<HTMLDivElement | null>(null)
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
-
-  useModalFocusTrap(backdropRef, {
-    enabled: open,
-    initialFocusRef: closeButtonRef,
-    onClose,
-  })
 
   const selectedKnowledgeBase = useMemo(
     () => knowledgeBases.find((item) => item.id === selectedKnowledgeBaseId) ?? knowledgeBases[0] ?? null,
@@ -378,47 +370,39 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
   return (
     <>
       {open && (
-        <div className="kb-modal-backdrop" onClick={onClose} ref={backdropRef}>
-          <aside
-            aria-describedby="knowledge-panel-description"
-            aria-labelledby="knowledge-panel-title"
-            aria-modal="true"
-            className="kb-slide-in"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-          >
-            <header className="kb-header">
-              <div className="kb-header-left">
-                <div>
-                  <h2 className="kb-header-title" id="knowledge-panel-title">知识库管理</h2>
-                  <p className="kb-header-sub" id="knowledge-panel-description">
-                    共 {knowledgeBases.length} 个知识库 · {totalDocuments} 份文档
-                  </p>
-                </div>
+        <section className="knowledge-workspace-page app-workspace" aria-labelledby="knowledge-panel-title">
+          <header className="workspace-page-header kb-header">
+            <div className="kb-header-left">
+              <div>
+                <span className="workspace-page-kicker">本地资料工作区</span>
+                <h2 className="kb-header-title" id="knowledge-panel-title">知识库</h2>
+                <p className="kb-header-sub" id="knowledge-panel-description">
+                  {knowledgeBases.length} 个知识库 · {totalDocuments} 份文档
+                </p>
               </div>
-              <div className="kb-header-actions">
-                <button
-                  className="kb-create-btn"
-                  onClick={handleOpenCreate}
-                  type="button"
-                  aria-label="新建知识库"
-                  title="新建知识库"
-                >
-                  <KnowledgeIcon name="plus" />
-                  <span>新建</span>
-                </button>
-                <button
-                  className="kb-close-btn"
-                  onClick={onClose}
-                  ref={closeButtonRef}
-                  type="button"
-                  aria-label="关闭知识库管理"
-                  title="关闭知识库管理"
-                >
-                  <KnowledgeIcon name="x" />
-                </button>
-              </div>
-            </header>
+            </div>
+            <div className="kb-header-actions">
+              <button
+                className="kb-create-btn"
+                onClick={handleOpenCreate}
+                type="button"
+                aria-label="新建知识库"
+                title="新建知识库"
+              >
+                <KnowledgeIcon name="plus" />
+                <span>新建知识库</span>
+              </button>
+              <button
+                className="workspace-page-back"
+                onClick={onClose}
+                type="button"
+                aria-label="返回聊天"
+                title="返回聊天"
+              >
+                <AppIcon name="chevronLeft" size={20} />
+              </button>
+            </div>
+          </header>
 
           {knowledgeBases.length === 0 ? (
             <div className="kb-empty">
@@ -514,8 +498,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
               </main>
             </div>
           )}
-          </aside>
-        </div>
+        </section>
       )}
 
       {showCreateModal && (

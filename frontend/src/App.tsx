@@ -2,6 +2,8 @@ import './App.css'
 import ChatArea from './components/ChatArea'
 import Sidebar from './components/Sidebar'
 import Login from './components/Login'
+import KnowledgePanelWrapper from './components/knowledge/KnowledgePanelWrapper'
+import SettingsPanel from './components/settings/SettingsPanel'
 import { ToastProvider, useToast } from './components/common/Toast'
 import LoadingBar from './components/common/LoadingBar'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -176,6 +178,7 @@ export interface AppConfig {
 }
 
 export type ChatMode = 'fast' | 'think'
+export type WorkspaceView = 'chat' | 'knowledge' | 'settings'
 
 export interface ChatModeSettings {
   fastModel: string
@@ -507,7 +510,9 @@ function AppContent() {
   const { showToast } = useToast()
   const [authCheckDone, setAuthCheckDone] = useState(false)
   const [authRequired, setAuthRequired] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    typeof window === 'undefined' ? true : window.innerWidth > 768,
+  )
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
   const [backendReady, setBackendReady] = useState(false)
@@ -521,8 +526,8 @@ function AppContent() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string | null>(null)
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null)
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [isKnowledgePanelOpen, setIsKnowledgePanelOpen] = useState(false)
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceView>('chat')
+  const [collapsedKnowledgeBases, setCollapsedKnowledgeBases] = useState<Record<string, boolean>>({})
   const [citationNavigationTarget, setCitationNavigationTarget] =
     useState<CitationNavigationTarget | null>(null)
   const [directoryUploadTask, setDirectoryUploadTask] = useState<DirectoryUploadTask>(
@@ -2120,24 +2125,18 @@ function AppContent() {
     }
   }
 
-  const handleToggleSettings = () => {
-    setIsSettingsOpen((prev) => {
-      const next = !prev
-      if (next) {
-        setIsKnowledgePanelOpen(false)
-      }
-      return next
-    })
+  const handleChangeWorkspace = (workspace: WorkspaceView) => {
+    setActiveWorkspace(workspace)
+    if (workspace !== 'chat') {
+      setSidebarOpen(false)
+    }
   }
 
-  const handleToggleKnowledgePanel = () => {
-    setIsKnowledgePanelOpen((prev) => {
-      const next = !prev
-      if (next) {
-        setIsSettingsOpen(false)
-      }
-      return next
-    })
+  const handleToggleKnowledgeBaseCollapse = (knowledgeBaseId: string) => {
+    setCollapsedKnowledgeBases((current) => ({
+      ...current,
+      [knowledgeBaseId]: !current[knowledgeBaseId],
+    }))
   }
 
   const handleOpenCitationSource = (source: ChatSourceMetadata) => {
@@ -2151,8 +2150,8 @@ function AppContent() {
       documentId: source.documentId,
       chunkId: source.chunkId,
     })
-    setIsSettingsOpen(false)
-    setIsKnowledgePanelOpen(true)
+    setActiveWorkspace('knowledge')
+    setSidebarOpen(false)
   }
 
   useEffect(() => {
@@ -2218,92 +2217,99 @@ function AppContent() {
   return (
     <>
       <LoadingBar loading={globalLoading} />
-      <div className="chat-page">
+      <div
+        className={`chat-page workspace-${activeWorkspace} ${
+          activeWorkspace === 'chat' && sidebarOpen ? 'context-open' : 'context-closed'
+        }`}
+      >
         <Sidebar
           isOpen={sidebarOpen}
           onToggle={() => setSidebarOpen(!sidebarOpen)}
-          knowledgeBases={knowledgeBases}
-          selectedKnowledgeBaseId={selectedKnowledgeBase?.id ?? null}
-          selectedDocumentId={selectedDocumentId}
-          onSelectKnowledgeBase={handleSelectKnowledgeBase}
-          onSelectDocument={handleSelectDocument}
-          onCreateKnowledgeBase={handleCreateKnowledgeBase}
-          onDeleteKnowledgeBase={handleDeleteKnowledgeBase}
-          onUploadFiles={handleUploadFiles}
-          onUploadDirectory={handleUploadDirectory}
-          onGenerateEvalDataset={handleGenerateEvalDataset}
-          onListEvalDatasets={handleListEvalDatasets}
-          onListEvalRuns={handleListEvalRuns}
-          onFetchEvalDataset={handleFetchEvalDataset}
-          onDeleteEvalDataset={handleDeleteEvalDataset}
-          onAddEvalDatasetCandidate={handleAddEvalDatasetCandidate}
-          onUpdateEvalDatasetItem={handleUpdateEvalDatasetItem}
-          onDeleteEvalDatasetItem={handleDeleteEvalDatasetItem}
-          onRunEvalDataset={handleRunEvalDataset}
-          directoryUploadTask={directoryUploadTask}
-        onCancelDirectoryUpload={handleCancelDirectoryUpload}
-        onContinueDirectoryUpload={handleContinueDirectoryUpload}
-        onRemoveDocument={handleRemoveDocument}
-        onFetchKnowledgeBaseHealth={handleFetchKnowledgeBaseHealth}
-        onFetchDocumentDetail={handleFetchDocumentDetail}
-        onReindexDocument={handleReindexDocument}
-        onDebugRetrieval={handleDebugRetrieval}
-        conversations={conversations}
-        activeConversationId={activeConversation?.id ?? null}
-        onSelectConversation={handleSelectConversation}
-        onCreateConversation={handleCreateConversation}
-        onRenameConversation={handleRenameConversation}
-        onDeleteConversation={handleDeleteConversation}
-        config={config}
-        isSettingsOpen={isSettingsOpen}
-        isKnowledgePanelOpen={isKnowledgePanelOpen}
-        citationNavigationTarget={citationNavigationTarget}
-        onToggleSettings={handleToggleSettings}
-        onToggleKnowledgePanel={handleToggleKnowledgePanel}
-        onCitationNavigationHandled={() => setCitationNavigationTarget(null)}
-        onChatConfigChange={handleChatConfigChange}
-        onEmbeddingConfigChange={handleEmbeddingConfigChange}
-        onRetrievalConfigChange={handleRetrievalConfigChange}
-        chatModeSettings={chatModeSettings}
-        onThinkModelChange={handleThinkModelChange}
-        onCopyMcpToken={handleCopyMcpToken}
-        onResetMcpToken={handleResetMcpToken}
-        onLogout={logout}
-      />
-      {!sidebarOpen && (
-        <button
-          type="button"
-          className="sidebar-reopen-btn"
-          onClick={() => setSidebarOpen(true)}
-          aria-label="展开侧边栏"
-          title="展开侧边栏"
-        >
-          <svg viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true">
-            <path d="M9 6L15 12L9 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-      )}
-      <ChatArea
-        sidebarOpen={sidebarOpen}
-        activeConversation={activeConversation}
-        selectedKnowledgeBase={selectedKnowledgeBase}
-        selectedDocument={selectedDocument}
-        config={config}
-        chatMode={chatMode}
-        chatModeSettings={chatModeSettings}
-        isLoading={streamingConversationId === activeConversation?.id}
-        isGlobalGenerating={Boolean(streamingConversationId)}
-        generatingConversationTitle={generatingConversationTitle}
-        enforceSingleFlight={isOllamaSingleFlightMode}
-        onChatModeChange={setChatMode}
-        onSendMessage={handleSendMessage}
-        onClearConversation={handleClearConversation}
-        onEditMessage={handleEditMessage}
-        onDeleteMessage={handleDeleteMessage}
-        onRegenerateMessage={handleRegenerateMessage}
-        onExportConversation={handleExportConversation}
-        onOpenCitationSource={handleOpenCitationSource}
-      />
+          activeWorkspace={activeWorkspace}
+          onChangeWorkspace={handleChangeWorkspace}
+          conversations={conversations}
+          activeConversationId={activeConversation?.id ?? null}
+          onSelectConversation={handleSelectConversation}
+          onCreateConversation={handleCreateConversation}
+          onRenameConversation={handleRenameConversation}
+          onDeleteConversation={handleDeleteConversation}
+        />
+
+        {activeWorkspace === 'chat' && (
+          <ChatArea
+            sidebarOpen={sidebarOpen}
+            activeConversation={activeConversation}
+            selectedKnowledgeBase={selectedKnowledgeBase}
+            selectedDocument={selectedDocument}
+            config={config}
+            chatMode={chatMode}
+            chatModeSettings={chatModeSettings}
+            isLoading={streamingConversationId === activeConversation?.id}
+            isGlobalGenerating={Boolean(streamingConversationId)}
+            generatingConversationTitle={generatingConversationTitle}
+            enforceSingleFlight={isOllamaSingleFlightMode}
+            onChatModeChange={setChatMode}
+            onSendMessage={handleSendMessage}
+            onClearConversation={handleClearConversation}
+            onEditMessage={handleEditMessage}
+            onDeleteMessage={handleDeleteMessage}
+            onRegenerateMessage={handleRegenerateMessage}
+            onExportConversation={handleExportConversation}
+            onOpenCitationSource={handleOpenCitationSource}
+          />
+        )}
+
+        {activeWorkspace === 'knowledge' && (
+          <KnowledgePanelWrapper
+            open
+            knowledgeBases={knowledgeBases}
+            collapsedKnowledgeBases={collapsedKnowledgeBases}
+            onToggleCollapse={handleToggleKnowledgeBaseCollapse}
+            selectedKnowledgeBaseId={selectedKnowledgeBase?.id ?? null}
+            selectedDocumentId={selectedDocumentId}
+            onSelectKnowledgeBase={handleSelectKnowledgeBase}
+            onSelectDocument={handleSelectDocument}
+            onCreateKnowledgeBase={handleCreateKnowledgeBase}
+            onDeleteKnowledgeBase={handleDeleteKnowledgeBase}
+            onUploadFiles={handleUploadFiles}
+            onUploadDirectory={handleUploadDirectory}
+            onGenerateEvalDataset={handleGenerateEvalDataset}
+            onListEvalDatasets={handleListEvalDatasets}
+            onListEvalRuns={handleListEvalRuns}
+            onFetchEvalDataset={handleFetchEvalDataset}
+            onDeleteEvalDataset={handleDeleteEvalDataset}
+            onAddEvalDatasetCandidate={handleAddEvalDatasetCandidate}
+            onUpdateEvalDatasetItem={handleUpdateEvalDatasetItem}
+            onDeleteEvalDatasetItem={handleDeleteEvalDatasetItem}
+            onRunEvalDataset={handleRunEvalDataset}
+            directoryUploadTask={directoryUploadTask}
+            onCancelDirectoryUpload={handleCancelDirectoryUpload}
+            onContinueDirectoryUpload={handleContinueDirectoryUpload}
+            onRemoveDocument={handleRemoveDocument}
+            onFetchKnowledgeBaseHealth={handleFetchKnowledgeBaseHealth}
+            onFetchDocumentDetail={handleFetchDocumentDetail}
+            onReindexDocument={handleReindexDocument}
+            onDebugRetrieval={handleDebugRetrieval}
+            citationNavigationTarget={citationNavigationTarget}
+            onCitationNavigationHandled={() => setCitationNavigationTarget(null)}
+            onClose={() => handleChangeWorkspace('chat')}
+          />
+        )}
+
+        {activeWorkspace === 'settings' && (
+          <SettingsPanel
+            config={config}
+            onClose={() => handleChangeWorkspace('chat')}
+            onChatConfigChange={handleChatConfigChange}
+            onEmbeddingConfigChange={handleEmbeddingConfigChange}
+            onRetrievalConfigChange={handleRetrievalConfigChange}
+            chatModeSettings={chatModeSettings}
+            onThinkModelChange={handleThinkModelChange}
+            onCopyMcpToken={handleCopyMcpToken}
+            onResetMcpToken={handleResetMcpToken}
+            onLogout={logout}
+          />
+        )}
       </div>
     </>
   )

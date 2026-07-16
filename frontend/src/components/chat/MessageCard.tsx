@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import type { ChatMessage, ChatSourceMetadata } from '../../App'
 import MarkdownRenderer from './MarkdownRenderer'
 import MessageCitations from './MessageCitations'
+import AppIcon, { type AppIconName } from '../common/AppIcon'
 
 interface MessageCardProps {
   message: ChatMessage
@@ -24,62 +25,20 @@ const formatTime = (value: string) =>
 type MessageActionIconName = 'alert' | 'check' | 'copy' | 'edit' | 'refresh' | 'spinner' | 'x'
 
 const MessageActionIcon: React.FC<{ name: MessageActionIconName }> = ({ name }) => {
-  const commonProps = {
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    'aria-hidden': true,
+  const iconMap: Record<MessageActionIconName, AppIconName> = {
+    alert: 'alert',
+    check: 'check',
+    copy: 'copy',
+    edit: 'pencil',
+    refresh: 'refresh',
+    spinner: 'loader',
+    x: 'trash',
   }
-
-  if (name === 'copy') {
-    return (
-      <svg {...commonProps}>
-        <path d="M8.5 8H6.75C5.78 8 5 8.78 5 9.75V18.25C5 19.22 5.78 20 6.75 20H15.25C16.22 20 17 19.22 17 18.25V16.5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M10.75 4H17.25C18.22 4 19 4.78 19 5.75V12.25C19 13.22 18.22 14 17.25 14H10.75C9.78 14 9 13.22 9 12.25V5.75C9 4.78 9.78 4 10.75 4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'check') {
-    return (
-      <svg {...commonProps}>
-        <path d="M5 12.5L9.25 16.75L19 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'edit') {
-    return (
-      <svg {...commonProps}>
-        <path d="M5 19H9.25L18.5 9.75C19.33 8.92 19.33 7.58 18.5 6.75L17.25 5.5C16.42 4.67 15.08 4.67 14.25 5.5L5 14.75V19Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M13 6.75L17.25 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'refresh' || name === 'spinner') {
-    return (
-      <svg {...commonProps} className={name === 'spinner' ? 'message-action-spin' : undefined}>
-        <path d="M19 12A7 7 0 0 1 7.1 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M5 12A7 7 0 0 1 16.9 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="M16.75 3.75V7.25H20.25" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M7.25 20.25V16.75H3.75" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'alert') {
-    return (
-      <svg {...commonProps}>
-        <path d="M12 4.25L21 19.75H3L12 4.25Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M12 9.5V13.25M12 16.5H12.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    )
-  }
-
   return (
-    <svg {...commonProps}>
-      <path d="M6.5 6.5L17.5 17.5M17.5 6.5L6.5 17.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
+    <AppIcon
+      className={name === 'spinner' ? 'message-action-spin' : undefined}
+      name={iconMap[name]}
+    />
   )
 }
 

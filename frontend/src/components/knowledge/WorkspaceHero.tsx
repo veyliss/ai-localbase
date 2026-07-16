@@ -61,14 +61,6 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
             <strong>{metrics?.chunkCount ?? '-'}</strong>
           </div>
           <div>
-            <span>向量</span>
-            <strong>{metrics?.vectorCount ?? '-'}</strong>
-          </div>
-          <div>
-            <span>结构化</span>
-            <strong>{metrics?.structuredRowCount ?? '-'}</strong>
-          </div>
-          <div>
             <span>范围</span>
             <strong>{selectedScopeLabel}</strong>
           </div>

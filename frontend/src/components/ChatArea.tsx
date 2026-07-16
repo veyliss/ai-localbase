@@ -11,6 +11,7 @@ import type {
 import MessageCard from './chat/MessageCard'
 import ConversationExportDialog from './chat/ConversationExportDialog'
 import ConfirmDialog from './common/ConfirmDialog'
+import AppIcon, { type AppIconName } from './common/AppIcon'
 
 interface ChatAreaProps {
   sidebarOpen: boolean
@@ -40,89 +41,20 @@ const suggestedPrompts = [
   '如果基于当前资料开始实现，下一步建议是什么？',
 ]
 
-const formatTime = (value: string) =>
-  new Date(value).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
 type ChatIconName = 'bolt' | 'brain' | 'clock' | 'database' | 'file' | 'message' | 'send' | 'user'
 
 const ChatIcon: React.FC<{ name: ChatIconName }> = ({ name }) => {
-  const commonProps = {
-    viewBox: '0 0 24 24',
-    fill: 'none',
-    'aria-hidden': true,
+  const iconMap: Record<ChatIconName, AppIconName> = {
+    bolt: 'zap',
+    brain: 'brain',
+    clock: 'clock',
+    database: 'database',
+    file: 'file',
+    message: 'message',
+    send: 'send',
+    user: 'user',
   }
-
-  if (name === 'database') {
-    return (
-      <svg {...commonProps}>
-        <ellipse cx="12" cy="5.75" rx="6.5" ry="2.75" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M5.5 5.75V12C5.5 13.52 8.41 14.75 12 14.75C15.59 14.75 18.5 13.52 18.5 12V5.75" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M5.5 12V18.25C5.5 19.77 8.41 21 12 21C15.59 21 18.5 19.77 18.5 18.25V12" stroke="currentColor" strokeWidth="1.8" />
-      </svg>
-    )
-  }
-
-  if (name === 'file') {
-    return (
-      <svg {...commonProps}>
-        <path d="M7 3.75H13.25L18 8.5V20.25H7V3.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M13 3.75V8.75H18" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M9.5 13H14.5M9.5 16H13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'brain') {
-    return (
-      <svg {...commonProps}>
-        <path d="M8.4 8.2A3 3 0 0 1 11.2 4A3 3 0 0 1 14 6.1A3.2 3.2 0 0 1 18.4 9.1A3 3 0 0 1 18 14.9A3.2 3.2 0 0 1 14 18.7A3 3 0 0 1 9.8 18.1A3.1 3.1 0 0 1 6 14.8A3.2 3.2 0 0 1 5.6 8.7A3 3 0 0 1 8.4 8.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M12 6.25V18M8.5 10.25H12M12 13.75H15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'bolt') {
-    return (
-      <svg {...commonProps}>
-        <path d="M13.25 3.75L5.75 13H11.25L10.75 20.25L18.25 10.75H12.75L13.25 3.75Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'message') {
-    return (
-      <svg {...commonProps}>
-        <path d="M5 6.5C5 5.4 5.9 4.5 7 4.5H17C18.1 4.5 19 5.4 19 6.5V13.5C19 14.6 18.1 15.5 17 15.5H11L6.75 19V15.5H7C5.9 15.5 5 14.6 5 13.5V6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'user') {
-    return (
-      <svg {...commonProps}>
-        <path d="M12 12.25A3.75 3.75 0 1 0 12 4.75A3.75 3.75 0 0 0 12 12.25Z" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M5.75 20C6.55 16.95 8.75 15.25 12 15.25C15.25 15.25 17.45 16.95 18.25 20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-    )
-  }
-
-  if (name === 'clock') {
-    return (
-      <svg {...commonProps}>
-        <path d="M12 21A9 9 0 1 0 12 3A9 9 0 0 0 12 21Z" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M12 7.5V12L15 14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
-
-  return (
-    <svg {...commonProps}>
-      <path d="M12 5V19M12 5L6.75 10.25M12 5L17.25 10.25" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
+  return <AppIcon name={iconMap[name]} />
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
@@ -299,19 +231,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             )}
           </div>
 
-          <div className="chat-topbar-badges">
-            <span className="topbar-badge topbar-badge-kb" title={`当前知识库：${knowledgeBaseBadgeText}`}>
-              <ChatIcon name="database" />
-              <span>{knowledgeBaseBadgeText}</span>
-            </span>
-            <span className="topbar-badge topbar-badge-scope" title={retrievalScopeTitle}>
-              <ChatIcon name="file" />
-              <span>{retrievalScopeText}</span>
-            </span>
-            <span className="topbar-badge" title={`${chatMode === 'think' ? '思考模式' : '快速模式'} · ${activeModeModel}`}>
-              <ChatIcon name={chatMode === 'think' ? 'brain' : 'bolt'} />
-              <span>{activeModeModel}</span>
-            </span>
+          <div className="chat-context-summary" title={retrievalScopeTitle}>
+            <ChatIcon name="database" />
+            <span>{knowledgeBaseBadgeText}</span>
+            <span className="chat-context-separator">/</span>
+            <span>{retrievalScopeText}</span>
           </div>
 
           <div className="chat-topbar-right">
@@ -320,6 +244,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 生成中：{generatingConversationTitle}
               </span>
             )}
+            <span
+              className="chat-model-status"
+              title={`${chatMode === 'think' ? '思考模式' : '快速模式'} · ${activeModeModel}`}
+            >
+              <ChatIcon name={chatMode === 'think' ? 'brain' : 'bolt'} />
+              <span>{activeModeModel}</span>
+            </span>
             <div className="chat-topbar-actions" aria-label="对话操作">
               <button
                 type="button"
@@ -329,7 +260,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 title={canExportConversation ? '导出对话' : '暂无可导出的对话'}
                 aria-label="导出对话"
               >
-                <span className="chat-topbar-export-icon" aria-hidden="true" />
+                <AppIcon name="download" size={17} />
               </button>
               <button
                 type="button"
@@ -339,33 +270,19 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 title="清空对话"
                 aria-label="清空对话"
               >
-                <span className="chat-topbar-clear-icon" aria-hidden="true" />
+                <AppIcon name="trash" size={17} />
               </button>
             </div>
           </div>
-        </div>
-
-        <div className="chat-topbar-sub" aria-label="对话统计">
-          <span className="topbar-sub-stat">
-            <ChatIcon name="message" />
-            {conversationStats.totalCount} 条消息
-          </span>
-          <span className="topbar-sub-stat">
-            <ChatIcon name="user" />
-            {conversationStats.userCount} 条提问
-          </span>
-          <span className="topbar-sub-stat">
-            <ChatIcon name="clock" />
-            {formatTime(activeConversation.updatedAt)}
-          </span>
         </div>
       </div>
 
       <div className="messages-container">
         {activeConversation.messages.length === 0 ? (
           <div className="welcome-message">
-            <h2>欢迎使用 AI LocalBase</h2>
-            <p>先选择知识库，或者指定知识库中的单个文档后再进行问答</p>
+            <span className="welcome-mark"><AppIcon name="sparkles" size={22} /></span>
+            <h2>开始本地对话</h2>
+            <p>选择知识范围后直接提问，回答与引用会保留在当前会话中。</p>
           </div>
         ) : (
           activeConversation.messages.map((message, index) => {
@@ -519,7 +436,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             className={`send-btn ${canSend ? 'send-btn-active' : ''}`}
             aria-label="发送消息"
           >
-            {isLoading ? <span className="send-loading-dot" /> : <ChatIcon name="send" />}
+            {isLoading ? <span className="send-loading-dot" /> : <AppIcon name="send" size={18} />}
           </button>
         </div>
       </div>

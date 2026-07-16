@@ -1471,8 +1471,77 @@
 
 .kb-workspace-side {
   display: grid;
-  gap: 20px;
+  gap: 12px;
   align-content: start;
+}
+
+.kb-workspace-view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.kb-workspace-view-tabs button {
+  position: relative;
+  min-height: 38px;
+  padding: 0 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.kb-workspace-view-tabs button::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--color-primary);
+  content: '';
+  opacity: 0;
+  transform: scaleX(0.55);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.kb-workspace-view-tabs button:hover {
+  color: var(--text-primary);
+}
+
+.kb-workspace-view-tabs button:focus-visible {
+  border-radius: var(--radius-sm);
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.kb-workspace-view-tabs button.active {
+  color: var(--text-primary);
+}
+
+.kb-workspace-view-tabs button.active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.kb-workspace-view-panel,
+.kb-evaluation-panel {
+  min-width: 0;
+}
+
+.kb-evaluation-shell {
+  display: grid;
+  gap: 14px;
+  margin-top: 24px;
+}
+
+.kb-evaluation-shell .kb-eval-history-panel,
+.kb-evaluation-shell .kb-eval-trend-panel {
+  padding-top: 4px;
+  border-top: 0;
 }
 
 .kb-workspace-side .kb-panel-section-head,
@@ -1530,6 +1599,11 @@
   padding: 0 0 12px;
   background: transparent;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.kb-scope-scroll {
+  position: relative;
+  min-width: 0;
 }
 
 .kb-docs-panel .kb-docs {
@@ -2315,7 +2389,7 @@
 
 .kb-modal-backdrop .kb-workspace-side {
   display: grid;
-  gap: 22px;
+  gap: 12px;
   align-content: start;
   padding-left: 28px;
   border-left: 1px solid var(--kb-border-soft);
@@ -2372,7 +2446,7 @@
   justify-content: center;
 }
 
-.kb-modal-backdrop .kb-eval-grid {
+.kb-modal-backdrop .kb-evaluation-shell {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 28px;
@@ -2381,8 +2455,8 @@
   border-top: 1px solid var(--kb-border-soft);
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-history-panel,
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-panel {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-history-panel,
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-panel {
   margin: 0;
   padding: 0;
   border-top: 0;
@@ -2401,7 +2475,7 @@
 
   .kb-modal-backdrop .kb-workspace-grid,
   .kb-modal-backdrop .kb-workspace-layout,
-  .kb-modal-backdrop .kb-eval-grid {
+  .kb-modal-backdrop .kb-evaluation-shell {
     grid-template-columns: 1fr;
   }
 
@@ -2452,17 +2526,17 @@
   overflow-x: hidden;
 }
 
-.kb-modal-backdrop .kb-eval-grid {
+.kb-modal-backdrop .kb-evaluation-shell {
   grid-template-columns: 1fr;
   gap: 24px;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-history-panel,
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-panel {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-history-panel,
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-panel {
   min-width: 0;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 0;
@@ -2471,33 +2545,33 @@
   border-bottom: 1px solid var(--kb-border-soft);
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary div {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary div {
   min-width: 0;
   padding: 0 16px;
   border-left: 1px solid var(--kb-border-soft);
   background: transparent;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary div:nth-child(4n + 1) {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary div:nth-child(4n + 1) {
   padding-left: 0;
   border-left: 0;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary div:nth-child(n + 5) {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary div:nth-child(n + 5) {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--kb-border-soft);
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary strong,
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary span,
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary em {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary strong,
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary span,
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary em {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-list {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-list {
   border-top: 0;
 }
 
@@ -2518,7 +2592,7 @@
   line-height: 1.45;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-item {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-item {
   display: grid;
   grid-template-columns: minmax(240px, 0.9fr) minmax(0, 1.35fr);
   align-items: start;
@@ -2528,50 +2602,50 @@
   background: transparent;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-item > div:first-child {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-item > div:first-child {
   min-width: 0;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-item strong,
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-item div:first-child > span {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-item strong,
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-item div:first-child > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-metrics {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-metrics {
   min-width: 0;
   justify-content: flex-end;
 }
 
-.kb-modal-backdrop .kb-eval-grid .kb-eval-trend-metrics span {
+.kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-metrics span {
   flex: 0 1 auto;
   max-width: 100%;
   white-space: nowrap;
 }
 
 @media (max-width: 900px) {
-  .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary {
+  .kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary div:nth-child(odd) {
+  .kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary div:nth-child(odd) {
     padding-left: 0;
     border-left: 0;
   }
 
-  .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-summary div:nth-child(n + 3) {
+  .kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-summary div:nth-child(n + 3) {
     margin-top: 14px;
     padding-top: 14px;
     border-top: 1px solid var(--kb-border-soft);
   }
 
-  .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-item {
+  .kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-item {
     grid-template-columns: 1fr;
     gap: 8px;
   }
 
-  .kb-modal-backdrop .kb-eval-grid .kb-eval-trend-metrics {
+  .kb-modal-backdrop .kb-evaluation-shell .kb-eval-trend-metrics {
     justify-content: flex-start;
   }
 }
@@ -2729,7 +2803,7 @@
 
   .kb-modal-backdrop .kb-workspace-grid,
   .kb-modal-backdrop .kb-workspace-layout,
-  .kb-modal-backdrop .kb-eval-grid {
+  .kb-modal-backdrop .kb-evaluation-shell {
     display: grid;
     grid-template-columns: 1fr;
     gap: var(--space-4);
@@ -2747,7 +2821,36 @@
   .kb-modal-backdrop .kb-docs-panel .kb-scope-bar {
     overflow-x: auto;
     padding-bottom: 8px;
+    scroll-padding-inline: 24px;
     scrollbar-width: none;
+  }
+
+  .kb-modal-backdrop .kb-scope-scroll::before,
+  .kb-modal-backdrop .kb-scope-scroll::after {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    bottom: 9px;
+    width: 30px;
+    content: '';
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-fast);
+  }
+
+  .kb-modal-backdrop .kb-scope-scroll::before {
+    left: 0;
+    background: linear-gradient(90deg, var(--kb-surface) 22%, transparent);
+  }
+
+  .kb-modal-backdrop .kb-scope-scroll::after {
+    right: 0;
+    background: linear-gradient(270deg, var(--kb-surface) 22%, transparent);
+  }
+
+  .kb-modal-backdrop .kb-scope-scroll--left::before,
+  .kb-modal-backdrop .kb-scope-scroll--right::after {
+    opacity: 1;
   }
 
   .kb-modal-backdrop .kb-docs-panel .kb-scope-bar::-webkit-scrollbar {

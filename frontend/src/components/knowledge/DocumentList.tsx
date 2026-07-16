@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DocumentItem } from '../../App'
 import type { KnowledgeBaseDocumentHealth } from '../../services/api'
 import KnowledgeIcon from './KnowledgeIcon'
@@ -44,6 +44,8 @@ const DocumentList: React.FC<DocumentListProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  const [scopeScrollEdges, setScopeScrollEdges] = useState({ left: false, right: false })
+  const scopeBarRef = useRef<HTMLDivElement | null>(null)
 
   const healthByDocumentId = new Map(healthDocuments.map((item) => [item.documentId, item]))
 
@@ -117,6 +119,38 @@ const DocumentList: React.FC<DocumentListProps> = ({
 
   const allSelected = filteredAndSortedDocuments.length > 0 && selectedIds.size === filteredAndSortedDocuments.length
 
+  const updateScopeScrollEdges = useCallback(() => {
+    const node = scopeBarRef.current
+    if (!node) return
+
+    const threshold = 4
+    const left = node.scrollLeft > threshold
+    const right = node.scrollLeft + node.clientWidth < node.scrollWidth - threshold
+    setScopeScrollEdges((current) => {
+      if (current.left === left && current.right === right) return current
+      return { left, right }
+    })
+  }, [])
+
+  useEffect(() => {
+    const node = scopeBarRef.current
+    if (!node) return
+
+    const frameId = window.requestAnimationFrame(updateScopeScrollEdges)
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(updateScopeScrollEdges)
+
+    resizeObserver?.observe(node)
+    window.addEventListener('resize', updateScopeScrollEdges)
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', updateScopeScrollEdges)
+    }
+  }, [documents.length, selectedDocumentId, updateScopeScrollEdges])
+
   return (
     <section className="kb-docs-panel">
       <div className="kb-panel-section-head">
@@ -126,27 +160,36 @@ const DocumentList: React.FC<DocumentListProps> = ({
         </div>
       </div>
 
-      <div className="kb-scope-bar" aria-label="检索范围">
-        <span className="kb-scope-label">范围</span>
-        <button
-          className={`kb-scope-btn${selectedDocumentId === null ? ' kb-scope-btn--active' : ''}`}
-          type="button"
-          onClick={() => onSelectDocument(null)}
-          aria-pressed={selectedDocumentId === null}
+      <div
+        className={`kb-scope-scroll${scopeScrollEdges.left ? ' kb-scope-scroll--left' : ''}${scopeScrollEdges.right ? ' kb-scope-scroll--right' : ''}`}
+      >
+        <div
+          className="kb-scope-bar"
+          aria-label="检索范围"
+          onScroll={updateScopeScrollEdges}
+          ref={scopeBarRef}
         >
-          全部文档
-        </button>
-        {documents.map((document) => (
+          <span className="kb-scope-label">范围</span>
           <button
-            key={document.id}
-            className={`kb-scope-btn${selectedDocumentId === document.id ? ' kb-scope-btn--active' : ''}`}
+            className={`kb-scope-btn${selectedDocumentId === null ? ' kb-scope-btn--active' : ''}`}
             type="button"
-            onClick={() => onSelectDocument(document.id)}
-            aria-pressed={selectedDocumentId === document.id}
+            onClick={() => onSelectDocument(null)}
+            aria-pressed={selectedDocumentId === null}
           >
-            {document.name}
+            全部文档
           </button>
-        ))}
+          {documents.map((document) => (
+            <button
+              key={document.id}
+              className={`kb-scope-btn${selectedDocumentId === document.id ? ' kb-scope-btn--active' : ''}`}
+              type="button"
+              onClick={() => onSelectDocument(document.id)}
+              aria-pressed={selectedDocumentId === document.id}
+            >
+              {document.name}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="kb-docs-toolbar">

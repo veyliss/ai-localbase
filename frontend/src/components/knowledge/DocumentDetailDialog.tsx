@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { DocumentDetailResponse } from '../../services/api'
 import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
+import { formatDocumentPreviewText, shouldUseRawDocumentPreview } from './documentPreviewText'
 import { chunkKindLabel } from './knowledgeLabels'
 
 interface DocumentDetailDialogProps {
@@ -19,6 +20,7 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
   const backdropRef = useRef<HTMLDivElement | null>(null)
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const focusChunkRef = useRef<HTMLDivElement | null>(null)
+  const [rawContentView, setRawContentView] = useState<'readable' | 'raw'>('readable')
 
   useModalFocusTrap(backdropRef, {
     initialFocusRef: closeButtonRef,
@@ -29,8 +31,16 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
     focusChunkRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [detail?.document.id, focusChunkId])
 
+  useEffect(() => {
+    setRawContentView(shouldUseRawDocumentPreview(detail?.document.name ?? '') ? 'raw' : 'readable')
+  }, [detail?.document.id, detail?.document.name])
+
   const hasFocusedChunk = Boolean(
     detail?.chunks.some((chunk) => focusChunkId && chunk.id === focusChunkId),
+  )
+  const readableRawContent = useMemo(
+    () => formatDocumentPreviewText(detail?.rawContent ?? ''),
+    [detail?.rawContent],
   )
 
   return (
@@ -85,11 +95,35 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
             </section>
 
             <section className="kb-detail-section">
-              <h4>
-                原文预览
-                {detail.diagnostics.rawContentTruncated && <span className="kb-detail-muted">已截断</span>}
-              </h4>
-              <pre className="kb-detail-pre">{detail.rawContent || '暂无可读取原文'}</pre>
+              <div className="kb-detail-section-head">
+                <h4>
+                  原文预览
+                  {detail.diagnostics.rawContentTruncated && <span className="kb-detail-muted">已截断</span>}
+                </h4>
+                <div className="kb-detail-view-toggle" role="group" aria-label="原文显示方式">
+                  <button
+                    aria-pressed={rawContentView === 'readable'}
+                    className={rawContentView === 'readable' ? 'active' : ''}
+                    onClick={() => setRawContentView('readable')}
+                    type="button"
+                  >
+                    整理排版
+                  </button>
+                  <button
+                    aria-pressed={rawContentView === 'raw'}
+                    className={rawContentView === 'raw' ? 'active' : ''}
+                    onClick={() => setRawContentView('raw')}
+                    type="button"
+                  >
+                    原始文本
+                  </button>
+                </div>
+              </div>
+              <pre className={`kb-detail-pre kb-detail-pre--${rawContentView}`}>
+                {rawContentView === 'readable'
+                  ? readableRawContent || '暂无可读取原文'
+                  : detail.rawContent || '暂无可读取原文'}
+              </pre>
             </section>
 
             <section className="kb-detail-section">

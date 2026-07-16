@@ -1,19 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import type { AppConfig } from '../../../App'
 import { useAuth } from '../../../contexts/AuthContext'
 import {
-  createAuthAPIKey,
-  fetchAuthAPIKeys,
   fetchAuthSessions,
   fetchSecurityEvents,
-  revokeAuthAPIKey,
-  type AuthAPIKeyInfo,
   type AuthSessionInfo,
   type SecurityEventInfo,
 } from '../../../services/api'
 
 interface SystemSettingsProps {
-  config: AppConfig
   onLogout: () => void | Promise<void>
 }
 
@@ -75,76 +69,13 @@ const eventLabelMap: Record<string, string> = {
   weak_env_reset_password: '弱重置密码提醒',
 }
 
-const apiKeyScopeOptions = [
-  {
-    value: 'openai:chat',
-    label: '聊天接口',
-    description: '/v1/chat/completions',
-  },
-  {
-    value: 'knowledge:read',
-    label: '读取知识库',
-    description: '预留给知识库读取 API',
-  },
-  {
-    value: 'knowledge:write',
-    label: '写入知识库',
-    description: '预留给知识库变更 API',
-  },
-  {
-    value: 'config:read',
-    label: '读取配置',
-    description: '预留给配置读取 API',
-  },
-  {
-    value: 'mcp:read',
-    label: 'MCP 读取',
-    description: '工具发现、检索、列表和只读查询',
-  },
-  {
-    value: 'mcp:write',
-    label: 'MCP 写入',
-    description: '创建知识库、保存会话和重建索引',
-  },
-  {
-    value: 'mcp:upload',
-    label: 'MCP 上传',
-    description: '上传文档和注册暂存文件',
-  },
-  {
-    value: 'mcp:eval',
-    label: 'MCP 评估',
-    description: '生成评估数据集',
-  },
-  {
-    value: 'mcp:danger',
-    label: 'MCP 危险',
-    description: '删除知识库、文档或会话',
-  },
-  {
-    value: 'mcp:admin',
-    label: 'MCP 管理',
-    description: '允许调用全部 MCP 工具',
-  },
-]
-
-const defaultAPIKeyScopes = ['openai:chat']
-
-const formatAPIKeyScopes = (scopes: string[] = []) => {
-  if (scopes.length === 0) return '未设置权限'
-  return scopes.map((scope) => (
-    apiKeyScopeOptions.find((option) => option.value === scope)?.label || scope
-  )).join(' / ')
-}
-
 const isMCPEvent = (event: SecurityEventInfo) => event.type.startsWith('mcp_')
 const isMCPFailureEvent = (event: SecurityEventInfo) => event.type.includes('_failed')
 const isMCPDangerEvent = (event: SecurityEventInfo) => event.type.includes('_danger_')
 
-const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => {
+const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
   const { username, expiresAt, logoutAll, changePassword } = useAuth()
   const [sessions, setSessions] = useState<AuthSessionInfo[]>([])
-  const [apiKeys, setApiKeys] = useState<AuthAPIKeyInfo[]>([])
   const [events, setEvents] = useState<SecurityEventInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [feedback, setFeedback] = useState('')
@@ -155,10 +86,6 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [keyName, setKeyName] = useState('')
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(defaultAPIKeyScopes)
-  const [createdToken, setCreatedToken] = useState('')
-  const [createdTokenSaved, setCreatedTokenSaved] = useState(false)
   const [busyAction, setBusyAction] = useState('')
 
   const activeSessions = useMemo(
@@ -190,19 +117,15 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
     [mcpEvents],
   )
   const passwordStrength = useMemo(() => getPasswordStrength(newPassword), [newPassword])
-  const deploymentWarnings = config.mcp.deploymentWarnings ?? []
-
   const loadSecurityData = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const [nextSessions, nextAPIKeys, nextEvents] = await Promise.all([
+      const [nextSessions, nextEvents] = await Promise.all([
         fetchAuthSessions(),
-        fetchAuthAPIKeys(),
         fetchSecurityEvents(50),
       ])
       setSessions(nextSessions)
-      setApiKeys(nextAPIKeys)
       setEvents(nextEvents)
     } catch (err) {
       setError(err instanceof Error ? err.message : '安全设置加载失败')
@@ -258,80 +181,6 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
     }
   }
 
-  const handleCreateAPIKey = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setFeedback('')
-    setError('')
-    if (createdToken && !createdTokenSaved) {
-      setError('请先确认已经保存当前 API Key')
-      return
-    }
-    setCreatedToken('')
-    setCreatedTokenSaved(false)
-    if (!keyName.trim()) {
-      setError('请输入 API Key 名称')
-      return
-    }
-    if (selectedScopes.length === 0) {
-      setError('至少选择一个 API Key 权限')
-      return
-    }
-
-    setBusyAction('create-key')
-    try {
-      const created = await createAuthAPIKey({ name: keyName.trim(), scopes: selectedScopes })
-      setCreatedToken(created.token)
-      setCreatedTokenSaved(false)
-      setKeyName('')
-      setFeedback('API Key 已创建，请立即复制保存')
-      await loadSecurityData()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建 API Key 失败')
-    } finally {
-      setBusyAction('')
-    }
-  }
-
-  const handleCopyCreatedToken = async () => {
-    if (!createdToken) return
-    try {
-      await navigator.clipboard.writeText(createdToken)
-      setFeedback('API Key 已复制')
-    } catch {
-      setError('复制失败')
-    }
-  }
-
-  const handleConfirmCreatedTokenSaved = () => {
-    setCreatedToken('')
-    setCreatedTokenSaved(true)
-    setFeedback('API Key 已确认保存')
-  }
-
-  const handleToggleScope = (scope: string) => {
-    setSelectedScopes((current) => {
-      if (current.includes(scope)) {
-        return current.filter((item) => item !== scope)
-      }
-      return [...current, scope]
-    })
-  }
-
-  const handleRevokeAPIKey = async (id: string) => {
-    setBusyAction(id)
-    setFeedback('')
-    setError('')
-    try {
-      await revokeAuthAPIKey(id)
-      setFeedback('API Key 已撤销')
-      await loadSecurityData()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '撤销 API Key 失败')
-    } finally {
-      setBusyAction('')
-    }
-  }
-
   const renderSessionRow = (session: AuthSessionInfo) => (
     <div className="settings-security-row" key={session.id}>
       <div>
@@ -353,23 +202,10 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
             <div>
               <span>Root 账户</span>
               <strong>{username || 'root'}</strong>
-              <p>管理网页登录、服务端会话和 OpenAI-compatible API Key。</p>
+              <p>管理网页登录、服务端会话和账户安全记录。</p>
             </div>
             <span className="settings-status-pill enabled">已认证</span>
           </div>
-
-          {deploymentWarnings.length > 0 && (
-            <div className="settings-security-warning-panel" role="status" aria-live="polite">
-              <div className="settings-security-warning-copy">
-                <strong>部署提醒</strong>
-                <span>{deploymentWarnings.join('；')}</span>
-              </div>
-              <div className="settings-security-warning-meta">
-                <span className="settings-status-pill warning">需处理</span>
-                <small>{config.mcp.recommendedAuthMode === 'api_key_scopes' ? 'MCP 建议使用 API Key Scope，危险工具使用 confirmNonce' : '请检查认证配置'}</small>
-              </div>
-            </div>
-          )}
 
           <div className="settings-security-metrics">
             <div>
@@ -383,9 +219,9 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
               <small>含当前设备</small>
             </div>
             <div>
-              <span>API Key</span>
-              <strong>{apiKeys.filter((key) => !key.revokedAt).length}</strong>
-              <small>未撤销</small>
+              <span>安全记录</span>
+              <strong>{events.length}</strong>
+              <small>最近读取</small>
             </div>
           </div>
 
@@ -532,89 +368,6 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ config, onLogout }) => 
             {otherSessions.map(renderSessionRow)}
             {revokedSessions.length > 0 && <div className="settings-list-group-label">最近失效</div>}
             {revokedSessions.map(renderSessionRow)}
-          </div>
-        </section>
-
-        <section className="settings-setting-section">
-          <div className="settings-setting-section-header">
-            <div>
-              <h3>API Key</h3>
-              <p>用于外部客户端调用 OpenAI-compatible API 或 MCP 工具，和网页登录会话分离。</p>
-            </div>
-          </div>
-          <div className="settings-inline-panel settings-inline-panel-quiet">
-            <form className="settings-token-create-row" onSubmit={handleCreateAPIKey}>
-              <input
-                value={keyName}
-                onChange={(event) => setKeyName(event.target.value)}
-                placeholder="例如：server-deploy"
-              />
-              <button
-                className="settings-action-btn settings-action-btn-primary"
-                disabled={busyAction === 'create-key'}
-                type="submit"
-              >
-                {busyAction === 'create-key' ? '创建中...' : '创建'}
-              </button>
-            </form>
-            <div className="settings-scope-options" role="group" aria-label="API Key 权限">
-              {apiKeyScopeOptions.map((option) => (
-                <label className="settings-scope-option" key={option.value}>
-                  <input
-                    checked={selectedScopes.includes(option.value)}
-                    onChange={() => handleToggleScope(option.value)}
-                    type="checkbox"
-                  />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-
-            {createdToken && (
-              <div className="settings-created-token">
-                <div className="settings-created-token-copy">
-                  <span>只显示一次</span>
-                  <strong>请现在复制保存，关闭后无法再次查看。</strong>
-                </div>
-                <code>{createdToken}</code>
-                <div className="settings-created-token-actions">
-                  <button className="settings-action-btn" onClick={() => void handleCopyCreatedToken()} type="button">
-                    复制
-                  </button>
-                  <button className="settings-action-btn settings-action-btn-primary" onClick={handleConfirmCreatedTokenSaved} type="button">
-                    我已保存
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="settings-security-list settings-api-key-list">
-            {apiKeys.length === 0 && <div className="settings-empty-row">暂无 API Key</div>}
-            {apiKeys.map((apiKey) => (
-              <div className="settings-security-row" key={apiKey.id}>
-                <div>
-                  <strong>{apiKey.name}</strong>
-                  <span>{apiKey.prefix}... · {formatAPIKeyScopes(apiKey.scopes)} · 创建 {formatDateTime(apiKey.createdAt)}</span>
-                </div>
-                <div className="settings-security-row-meta">
-                  <span>{apiKey.revokedAt ? '已撤销' : apiKey.lastUsedAt ? `最近使用 ${formatDateTime(apiKey.lastUsedAt)}` : '未使用'}</span>
-                  {!apiKey.revokedAt && (
-                    <button
-                      className="settings-action-btn settings-action-btn-danger"
-                      disabled={busyAction === apiKey.id}
-                      onClick={() => void handleRevokeAPIKey(apiKey.id)}
-                      type="button"
-                    >
-                      撤销
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
           </div>
         </section>
 

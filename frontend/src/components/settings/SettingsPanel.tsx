@@ -109,6 +109,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [showDiscardDialog, setShowDiscardDialog] = useState(false)
+  const [hasPendingAccessToken, setHasPendingAccessToken] = useState(false)
+  const [pendingCredentialDestination, setPendingCredentialDestination] = useState<SettingsTab | 'close' | null>(null)
 
   const isDirty = useMemo(
     () => getConfigFingerprint(draftConfig, draftThinkModel) !==
@@ -216,12 +218,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   }, [draftConfig, draftThinkModel, onSave])
 
   const handleClose = useCallback(() => {
+    if (hasPendingAccessToken) {
+      setPendingCredentialDestination('close')
+      return
+    }
     if (isDirty) {
       setShowDiscardDialog(true)
       return
     }
     onClose()
-  }, [isDirty, onClose])
+  }, [hasPendingAccessToken, isDirty, onClose])
 
   const activeTabIndex = useMemo(
     () => navItems.findIndex((item) => item.id === activeTab),
@@ -234,9 +240,33 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   )
 
   const handleTabChange = useCallback((nextTab: SettingsTab) => {
+    if (activeTab === 'access' && hasPendingAccessToken && nextTab !== 'access') {
+      setPendingCredentialDestination(nextTab)
+      return
+    }
     setActiveTab((currentTab) => (currentTab === nextTab ? currentTab : nextTab))
     setMobileDetailOpen(true)
-  }, [])
+  }, [activeTab, hasPendingAccessToken])
+
+  const handleCredentialNavigationConfirm = useCallback(() => {
+    const destination = pendingCredentialDestination
+    setPendingCredentialDestination(null)
+    setHasPendingAccessToken(false)
+
+    if (destination === 'close') {
+      if (isDirty) {
+        setShowDiscardDialog(true)
+      } else {
+        onClose()
+      }
+      return
+    }
+
+    if (destination) {
+      setActiveTab(destination)
+      setMobileDetailOpen(true)
+    }
+  }, [isDirty, onClose, pendingCredentialDestination])
 
   const focusTab = useCallback((nextIndex: number) => {
     const nextItem = navItems[(nextIndex + navItems.length) % navItems.length]
@@ -298,11 +328,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <MCPSettings
             config={draftConfig.mcp}
             onCopyMcpToken={onCopyMcpToken}
+            onPendingTokenChange={setHasPendingAccessToken}
             onResetMcpToken={onResetMcpToken}
           />
         )
       case 'account':
-        return <SystemSettings config={draftConfig} onLogout={onLogout} />
+        return <SystemSettings onLogout={onLogout} />
       default:
         return null
     }
@@ -319,6 +350,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
     onCopyMcpToken,
     onLogout,
     onResetMcpToken,
+    setHasPendingAccessToken,
   ])
 
   return (
@@ -464,6 +496,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
         }}
         open={showDiscardDialog}
         title="放弃未保存的更改？"
+      />
+
+      <ConfirmDialog
+        cancelText="留在当前页"
+        confirmText="已保存并继续"
+        message="新创建的 API Key 只显示一次。请确认已经复制并安全保存，再离开接入与密钥页面。"
+        onCancel={() => setPendingCredentialDestination(null)}
+        onConfirm={handleCredentialNavigationConfirm}
+        open={pendingCredentialDestination !== null}
+        title="确认已经保存 API Key？"
       />
     </section>
   )

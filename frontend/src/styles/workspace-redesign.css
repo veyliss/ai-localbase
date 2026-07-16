@@ -2011,42 +2011,6 @@ body,
   font-weight: 500;
 }
 
-.knowledge-workspace-page .kb-upload-btn,
-.knowledge-workspace-page .kb-eval-btn {
-  min-height: 34px;
-  padding: 0 11px;
-  border: 1px solid var(--border-color);
-  border-radius: 7px;
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  box-shadow: none;
-  font-size: 12px;
-}
-
-.knowledge-workspace-page .kb-upload-btn--primary {
-  border-color: var(--color-primary);
-  background: var(--color-primary);
-  color: var(--text-inverse);
-}
-
-.knowledge-workspace-page .kb-upload-btn--primary:hover {
-  border-color: var(--color-primary-hover);
-  background: var(--color-primary-hover);
-  color: var(--text-inverse);
-  filter: none;
-  transform: none;
-}
-
-.knowledge-workspace-page .kb-workspace-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 0;
-  margin-top: 24px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
 .knowledge-workspace-page .kb-workspace-primary-nav {
   margin-top: 20px;
 }
@@ -2094,16 +2058,6 @@ body,
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--surface-primary);
-}
-
-.knowledge-workspace-page .kb-workspace-primary {
-  min-width: 0;
-}
-
-.knowledge-workspace-page .kb-workspace-side {
-  min-width: 0;
-  border-left: 1px solid var(--border-color);
-  background: var(--surface-secondary);
 }
 
 .knowledge-workspace-page .kb-docs-panel,
@@ -3583,17 +3537,6 @@ body,
   }
 }
 
-@media (max-width: 1180px) {
-  .knowledge-workspace-page .kb-workspace-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .knowledge-workspace-page .kb-workspace-side {
-    border-top: 1px solid var(--border-color);
-    border-left: 0;
-  }
-}
-
 @media (max-width: 900px) {
   .knowledge-workspace-page .kb-workbench {
     grid-template-columns: minmax(0, 1fr);
@@ -4128,12 +4071,6 @@ body,
 
   .knowledge-workspace-page .kb-workspace-metrics > div {
     padding: 0 10px;
-  }
-
-  .knowledge-workspace-page .kb-workspace-layout {
-    border-right: 0;
-    border-left: 0;
-    border-radius: 0;
   }
 
   .knowledge-workspace-page .kb-workspace-primary-nav .kb-workspace-view-tabs {

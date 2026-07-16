@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import type { DocumentItem } from '../../App'
 import type { KnowledgeBaseDocumentHealth } from '../../services/api'
-import KnowledgeIcon from './KnowledgeIcon'
+import AppIcon, { type AppIconName } from '../common/AppIcon'
 import { documentStatusLabel } from './knowledgeLabels'
 
 interface DocumentListProps {
@@ -19,13 +19,16 @@ interface DocumentListProps {
 type SortField = 'name' | 'size' | 'uploadedAt'
 type SortOrder = 'asc' | 'desc'
 
-const SortIndicator: React.FC<{ active: boolean; order: SortOrder }> = ({ active, order }) => {
-  if (!active) return null
-  return (
-    <span className="kb-sort-indicator">
-      <KnowledgeIcon name={order === 'asc' ? 'chevronUp' : 'chevronDown'} />
-    </span>
-  )
+const documentIconName = (name: string): AppIconName => {
+  const extension = name.split('.').pop()?.toLowerCase()
+  return extension === 'csv' || extension === 'xlsx' ? 'database' : 'file'
+}
+
+const documentIconKind = (name: string) => {
+  const extension = name.split('.').pop()?.toLowerCase()
+  if (extension === 'csv' || extension === 'xlsx') return 'data'
+  if (extension === 'pdf') return 'pdf'
+  return 'text'
 }
 
 const DocumentList: React.FC<DocumentListProps> = ({
@@ -44,326 +47,329 @@ const DocumentList: React.FC<DocumentListProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
-  const [scopeScrollEdges, setScopeScrollEdges] = useState({ left: false, right: false })
-  const scopeBarRef = useRef<HTMLDivElement | null>(null)
+  const [actionMenuId, setActionMenuId] = useState<string | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const documentIdsKey = documents.map((document) => document.id).join('|')
 
-  const healthByDocumentId = new Map(healthDocuments.map((item) => [item.documentId, item]))
+  const healthByDocumentId = useMemo(
+    () => new Map(healthDocuments.map((item) => [item.documentId, item])),
+    [healthDocuments],
+  )
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortField(field)
-      setSortOrder('asc')
+  useEffect(() => {
+    setSelectedIds(new Set())
+    setShowBulkConfirm(false)
+    setActionMenuId(null)
+    setDeleteConfirmId(null)
+  }, [documentIdsKey])
+
+  useEffect(() => {
+    if (!actionMenuId) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Element && target.closest(`[data-document-actions="${actionMenuId}"]`)) {
+        return
+      }
+      setActionMenuId(null)
+      setDeleteConfirmId(null)
     }
-  }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActionMenuId(null)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [actionMenuId])
 
   const filteredAndSortedDocuments = useMemo(() => {
-    let filtered = documents
+    const query = searchQuery.trim().toLowerCase()
+    const filtered = query
+      ? documents.filter((document) => (
+        document.name.toLowerCase().includes(query) ||
+        document.contentPreview?.toLowerCase().includes(query)
+      ))
+      : documents
 
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      filtered = documents.filter(
-        (doc) =>
-          doc.name.toLowerCase().includes(query) ||
-          (doc.contentPreview && doc.contentPreview.toLowerCase().includes(query))
-      )
-    }
-
-    const sorted = [...filtered].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       let comparison = 0
-
-      switch (sortField) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name)
-          break
-        case 'size':
-          comparison = (a.size || 0) - (b.size || 0)
-          break
-        case 'uploadedAt':
-          comparison = new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
-          break
+      if (sortField === 'name') comparison = a.name.localeCompare(b.name)
+      if (sortField === 'size') comparison = (a.size || 0) - (b.size || 0)
+      if (sortField === 'uploadedAt') {
+        comparison = new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
       }
-
       return sortOrder === 'asc' ? comparison : -comparison
     })
-
-    return sorted
   }, [documents, searchQuery, sortField, sortOrder])
+
+  const handleSortChange = (value: string) => {
+    const [field, order] = value.split(':') as [SortField, SortOrder]
+    setSortField(field)
+    setSortOrder(order)
+  }
 
   const handleToggleSelectAll = () => {
     if (selectedIds.size === filteredAndSortedDocuments.length) {
       setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredAndSortedDocuments.map((doc) => doc.id)))
+      return
     }
+    setSelectedIds(new Set(filteredAndSortedDocuments.map((document) => document.id)))
   }
 
   const handleToggleSelect = (documentId: string) => {
-    const newSelected = new Set(selectedIds)
-    if (newSelected.has(documentId)) {
-      newSelected.delete(documentId)
-    } else {
-      newSelected.add(documentId)
-    }
-    setSelectedIds(newSelected)
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(documentId)) next.delete(documentId)
+      else next.add(documentId)
+      return next
+    })
+    setShowBulkConfirm(false)
   }
 
   const handleBulkDelete = () => {
-    selectedIds.forEach((id) => {
-      onRemoveDocument(id)
-    })
+    selectedIds.forEach(onRemoveDocument)
     setSelectedIds(new Set())
     setShowBulkConfirm(false)
   }
 
   const allSelected = filteredAndSortedDocuments.length > 0 && selectedIds.size === filteredAndSortedDocuments.length
 
-  const updateScopeScrollEdges = useCallback(() => {
-    const node = scopeBarRef.current
-    if (!node) return
-
-    const threshold = 4
-    const left = node.scrollLeft > threshold
-    const right = node.scrollLeft + node.clientWidth < node.scrollWidth - threshold
-    setScopeScrollEdges((current) => {
-      if (current.left === left && current.right === right) return current
-      return { left, right }
-    })
-  }, [])
-
-  useEffect(() => {
-    const node = scopeBarRef.current
-    if (!node) return
-
-    const frameId = window.requestAnimationFrame(updateScopeScrollEdges)
-    const resizeObserver = typeof ResizeObserver === 'undefined'
-      ? null
-      : new ResizeObserver(updateScopeScrollEdges)
-
-    resizeObserver?.observe(node)
-    window.addEventListener('resize', updateScopeScrollEdges)
-
-    return () => {
-      window.cancelAnimationFrame(frameId)
-      resizeObserver?.disconnect()
-      window.removeEventListener('resize', updateScopeScrollEdges)
-    }
-  }, [documents.length, selectedDocumentId, updateScopeScrollEdges])
-
   return (
     <section className="kb-docs-panel">
       <div className="kb-panel-section-head">
         <div>
           <h3>文档</h3>
-          <p>{documents.length} 份文档 · 查看索引状态和查询范围</p>
+          <p>{documents.length} 份文档 · 管理资料、索引状态和检索范围</p>
         </div>
       </div>
 
-      <div
-        className={`kb-scope-scroll${scopeScrollEdges.left ? ' kb-scope-scroll--left' : ''}${scopeScrollEdges.right ? ' kb-scope-scroll--right' : ''}`}
-      >
-        <div
-          className="kb-scope-bar"
-          aria-label="检索范围"
-          onScroll={updateScopeScrollEdges}
-          ref={scopeBarRef}
-        >
-          <span className="kb-scope-label">范围</span>
-          <button
-            className={`kb-scope-btn${selectedDocumentId === null ? ' kb-scope-btn--active' : ''}`}
-            type="button"
-            onClick={() => onSelectDocument(null)}
-            aria-pressed={selectedDocumentId === null}
-          >
-            全部文档
-          </button>
-          {documents.map((document) => (
-            <button
-              key={document.id}
-              className={`kb-scope-btn${selectedDocumentId === document.id ? ' kb-scope-btn--active' : ''}`}
-              type="button"
-              onClick={() => onSelectDocument(document.id)}
-              aria-pressed={selectedDocumentId === document.id}
-            >
-              {document.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="kb-docs-toolbar">
+      <div className="kb-document-controls">
         <div className="kb-docs-search-wrapper">
+          <AppIcon name="search" size={16} />
           <input
-            type="text"
+            aria-label="搜索文档"
             className="kb-docs-search"
-            placeholder="搜索文档名称或内容..."
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="搜索文档名称或内容"
+            type="search"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
 
-        <div className="kb-docs-sort">
-          <button
-            className={`kb-sort-btn${sortField === 'name' ? ' kb-sort-btn--active' : ''}`}
-            type="button"
-            onClick={() => handleSort('name')}
-            aria-pressed={sortField === 'name'}
-            title="按名称排序"
+        <label className="kb-document-select">
+          <span>检索范围</span>
+          <select
+            aria-label="检索范围"
+            onChange={(event) => onSelectDocument(event.target.value || null)}
+            value={selectedDocumentId ?? ''}
           >
-            <span>名称</span>
-            <SortIndicator active={sortField === 'name'} order={sortOrder} />
-          </button>
-          <button
-            className={`kb-sort-btn${sortField === 'size' ? ' kb-sort-btn--active' : ''}`}
-            type="button"
-            onClick={() => handleSort('size')}
-            aria-pressed={sortField === 'size'}
-            title="按大小排序"
+            <option value="">全部文档</option>
+            {documents.map((document) => (
+              <option key={document.id} value={document.id}>{document.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="kb-document-select kb-document-select--sort">
+          <span>排序</span>
+          <select
+            aria-label="文档排序"
+            onChange={(event) => handleSortChange(event.target.value)}
+            value={`${sortField}:${sortOrder}`}
           >
-            <span>大小</span>
-            <SortIndicator active={sortField === 'size'} order={sortOrder} />
-          </button>
-          <button
-            className={`kb-sort-btn${sortField === 'uploadedAt' ? ' kb-sort-btn--active' : ''}`}
-            type="button"
-            onClick={() => handleSort('uploadedAt')}
-            aria-pressed={sortField === 'uploadedAt'}
-            title="按上传时间排序"
-          >
-            <span>时间</span>
-            <SortIndicator active={sortField === 'uploadedAt'} order={sortOrder} />
-          </button>
-        </div>
+            <option value="uploadedAt:desc">最近上传</option>
+            <option value="uploadedAt:asc">最早上传</option>
+            <option value="name:asc">名称升序</option>
+            <option value="name:desc">名称降序</option>
+            <option value="size:desc">文件较大</option>
+            <option value="size:asc">文件较小</option>
+          </select>
+        </label>
 
         {filteredAndSortedDocuments.length > 0 && (
-          <div className="kb-docs-bulk">
-            <label className="kb-bulk-checkbox">
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={handleToggleSelectAll}
-              />
-              <span>全选</span>
-            </label>
-            {selectedIds.size > 0 && (
-              <>
-                {!showBulkConfirm ? (
-                  <button
-                    className="kb-bulk-delete-btn"
-                    onClick={() => setShowBulkConfirm(true)}
-                  >
-                    删除 ({selectedIds.size})
-                  </button>
-                ) : (
-                  <div className="kb-bulk-confirm">
-                    <span>确认删除 {selectedIds.size} 份文档?</span>
-                    <button className="kb-bulk-yes" onClick={handleBulkDelete}>
-                      确认
-                    </button>
-                    <button className="kb-bulk-no" onClick={() => setShowBulkConfirm(false)}>
-                      取消
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          <label className="kb-bulk-checkbox">
+            <input checked={allSelected} onChange={handleToggleSelectAll} type="checkbox" />
+            <span>全选</span>
+          </label>
         )}
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className="kb-bulk-selection-bar">
+          <span>已选择 <strong>{selectedIds.size}</strong> 份文档</span>
+          {!showBulkConfirm ? (
+            <button onClick={() => setShowBulkConfirm(true)} type="button">
+              <AppIcon name="trash" size={15} />
+              删除
+            </button>
+          ) : (
+            <div className="kb-bulk-confirm">
+              <span>确认删除所选文档？</span>
+              <button className="kb-bulk-yes" onClick={handleBulkDelete} type="button">确认</button>
+              <button className="kb-bulk-no" onClick={() => setShowBulkConfirm(false)} type="button">取消</button>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="kb-docs">
         {filteredAndSortedDocuments.length === 0 ? (
           <div className="kb-docs-empty">
-            <span>{searchQuery ? '未找到匹配的文档' : '暂无文档，点击上传添加文件'}</span>
+            <AppIcon name={searchQuery ? 'search' : 'file'} size={22} />
+            <strong>{searchQuery ? '没有匹配的文档' : '还没有文档'}</strong>
+            <span>{searchQuery ? '尝试调整搜索关键词' : '使用右上角上传入口添加资料'}</span>
           </div>
-        ) : (
-          filteredAndSortedDocuments.map((document) => {
-            const badge = documentStatusLabel(document.status)
-            const health = healthByDocumentId.get(document.id)
-            const needsReindex = Boolean(health?.needsReindex || document.status === 'failed')
-            const isSelected = selectedIds.has(document.id)
+        ) : filteredAndSortedDocuments.map((document) => {
+          const badge = documentStatusLabel(document.status)
+          const health = healthByDocumentId.get(document.id)
+          const needsReindex = Boolean(health?.needsReindex || document.status === 'failed')
+          const isSelected = selectedIds.has(document.id)
+          const menuOpen = actionMenuId === document.id
+          const confirmingDelete = deleteConfirmId === document.id
 
-            return (
-              <div
-                key={document.id}
-                className={`kb-doc-item${selectedDocumentId === document.id ? ' kb-doc-item--active' : ''}${needsReindex ? ' kb-doc-item--attention' : ''}${isSelected ? ' kb-doc-item--selected' : ''}`}
-              >
-                <div className="kb-doc-checkbox-wrapper">
-                  <input
-                    type="checkbox"
-                    className="kb-doc-checkbox"
-                    checked={isSelected}
-                    onChange={() => handleToggleSelect(document.id)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+          return (
+            <article
+              className={`kb-doc-item${selectedDocumentId === document.id ? ' kb-doc-item--active' : ''}${needsReindex ? ' kb-doc-item--attention' : ''}${isSelected ? ' kb-doc-item--selected' : ''}`}
+              key={document.id}
+            >
+              <label className="kb-doc-checkbox-wrapper" title={`选择 ${document.name}`}>
+                <input
+                  checked={isSelected}
+                  className="kb-doc-checkbox"
+                  onChange={() => handleToggleSelect(document.id)}
+                  type="checkbox"
+                />
+              </label>
+
+              <div className="kb-doc-file-icon" data-kind={documentIconKind(document.name)}>
+                <AppIcon name={documentIconName(document.name)} size={18} />
+              </div>
+
+              <button className="kb-doc-main" onClick={() => onSelectDocument(document.id)} type="button">
+                <div className="kb-doc-top">
+                  <span className="kb-doc-name">{document.name}</span>
+                  <span className="kb-doc-badge" style={{ color: badge.color, background: badge.bg }}>
+                    {badge.text}
+                  </span>
                 </div>
-                <button className="kb-doc-main" onClick={() => onSelectDocument(document.id)}>
-                  <div className="kb-doc-top">
-                    <span className="kb-doc-name">{document.name}</span>
-                    <span className="kb-doc-badge" style={{ color: badge.color, background: badge.bg }}>
-                      {badge.text}
-                    </span>
-                  </div>
-                  {document.contentPreview && <p className="kb-doc-preview">{document.contentPreview}</p>}
-                  <div className="kb-doc-health-row">
-                    <span>{health?.rawContentAvailable ? '原文可用' : '原文缺失'}</span>
-                    <span>{health?.vectorCount ?? 0} 向量</span>
-                    <span>{health?.structuredRowCount ?? 0} 数据行</span>
-                    {needsReindex && <span className="kb-doc-health-warning">需处理</span>}
-                  </div>
-                  {(document.indexError || health?.recommendation) && (
-                    <p className="kb-doc-issue">
-                      {document.indexError ? `索引失败：${document.indexError}` : health?.recommendation}
-                    </p>
+                {document.contentPreview && <p className="kb-doc-preview">{document.contentPreview}</p>}
+                <div className="kb-doc-health-row">
+                  <span>{health?.rawContentAvailable ? '原文可用' : '原文缺失'}</span>
+                  <span>{health?.vectorCount ?? 0} 向量</span>
+                  {typeof health?.structuredRowCount === 'number' && health.structuredRowCount > 0 && (
+                    <span>{health.structuredRowCount} 数据行</span>
                   )}
-                  <div className="kb-doc-meta">
-                    <span>{document.sizeLabel}</span>
-                    {typeof document.chunkCount === 'number' && (
+                  {needsReindex && <span className="kb-doc-health-warning">需要处理</span>}
+                </div>
+                {(document.indexError || health?.recommendation) && (
+                  <p className="kb-doc-issue">
+                    {document.indexError ? `索引失败：${document.indexError}` : health?.recommendation}
+                  </p>
+                )}
+              </button>
+
+              <div className="kb-doc-side-meta">
+                <strong>{document.sizeLabel}</strong>
+                <span>{document.chunkCount ?? 0} chunks</span>
+                <span>{new Date(document.uploadedAt).toLocaleDateString('zh-CN')}</span>
+              </div>
+
+              <div className="kb-doc-actions" data-document-actions={document.id}>
+                {needsReindex && (
+                  <button
+                    aria-label={`重新解析并重建 ${document.name}`}
+                    className="kb-doc-attention-action"
+                    disabled={reindexingDocumentId === document.id}
+                    onClick={() => onReindexDocument(document.id)}
+                    title="重新解析并重建索引"
+                    type="button"
+                  >
+                    <AppIcon className={reindexingDocumentId === document.id ? 'spin' : undefined} name="refresh" size={16} />
+                  </button>
+                )}
+                <button
+                  aria-expanded={menuOpen}
+                  aria-haspopup="menu"
+                  aria-label={`打开 ${document.name} 的操作菜单`}
+                  className="kb-doc-more"
+                  onClick={() => setActionMenuId((current) => current === document.id ? null : document.id)}
+                  title="更多操作"
+                  type="button"
+                >
+                  <AppIcon name="more" size={17} />
+                </button>
+                {menuOpen && (
+                  <div
+                    aria-label={confirmingDelete ? '确认删除文档' : undefined}
+                    className="kb-doc-menu"
+                    role={confirmingDelete ? 'alertdialog' : 'menu'}
+                  >
+                    {confirmingDelete ? (
+                      <div className="kb-doc-menu-confirm">
+                        <strong>删除这份文档？</strong>
+                        <span>该操作会移除文档及其索引。</span>
+                        <div>
+                          <button
+                            className="kb-doc-menu-confirm-delete"
+                            onClick={() => {
+                              setActionMenuId(null)
+                              setDeleteConfirmId(null)
+                              onRemoveDocument(document.id)
+                            }}
+                            type="button"
+                          >
+                            确认删除
+                          </button>
+                          <button onClick={() => setDeleteConfirmId(null)} type="button">取消</button>
+                        </div>
+                      </div>
+                    ) : (
                       <>
-                        <span>·</span>
-                        <span>{document.chunkCount} chunks</span>
+                        <button
+                          disabled={documentDetailLoadingId === document.id}
+                          onClick={() => {
+                            setActionMenuId(null)
+                            onOpenDocumentDetail(document.id)
+                          }}
+                          role="menuitem"
+                          type="button"
+                        >
+                          <AppIcon name="eye" size={16} />
+                          <span>{documentDetailLoadingId === document.id ? '加载中' : '查看详情'}</span>
+                        </button>
+                        <button
+                          disabled={reindexingDocumentId === document.id}
+                          onClick={() => {
+                            setActionMenuId(null)
+                            onReindexDocument(document.id)
+                          }}
+                          role="menuitem"
+                          type="button"
+                        >
+                          <AppIcon className={reindexingDocumentId === document.id ? 'spin' : undefined} name="refresh" size={16} />
+                          <span>{reindexingDocumentId === document.id ? '重建中' : '重新建立索引'}</span>
+                        </button>
+                        <button
+                          className="kb-doc-menu-danger"
+                          onClick={() => setDeleteConfirmId(document.id)}
+                          role="menuitem"
+                          type="button"
+                        >
+                          <AppIcon name="trash" size={16} />
+                          <span>删除文档</span>
+                        </button>
                       </>
                     )}
-                    <span>·</span>
-                    <span>{new Date(document.uploadedAt).toLocaleDateString('zh-CN')}</span>
                   </div>
-                </button>
-                <div className="kb-doc-actions">
-                  <button
-                    className="kb-doc-action"
-                    type="button"
-                    onClick={() => onOpenDocumentDetail(document.id)}
-                    disabled={documentDetailLoadingId === document.id}
-                    aria-label={`查看 ${document.name} 的索引详情`}
-                    title="查看索引详情"
-                  >
-                    {documentDetailLoadingId === document.id ? '加载' : '详情'}
-                  </button>
-                  <button
-                    className="kb-doc-action"
-                    type="button"
-                    onClick={() => onReindexDocument(document.id)}
-                    disabled={reindexingDocumentId === document.id}
-                    aria-label={`重新解析并重建 ${document.name}`}
-                    title="重新解析并重建索引"
-                  >
-                    {reindexingDocumentId === document.id ? '重建中' : '重建'}
-                  </button>
-                  <button
-                    className="kb-doc-remove"
-                    type="button"
-                    onClick={() => onRemoveDocument(document.id)}
-                    aria-label={`删除文档 ${document.name}`}
-                    title="删除文档"
-                  >
-                    <KnowledgeIcon name="trash" />
-                  </button>
-                </div>
+                )}
               </div>
-            )
-          })
-        )}
+            </article>
+          )
+        })}
       </div>
     </section>
   )

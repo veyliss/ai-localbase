@@ -602,9 +602,10 @@ function AppContent() {
   )
 
   const persistConfigToBackend = async (nextConfig: AppConfig) => {
-    const savedConfig = await updateAppConfig(nextConfig)
-    setConfig((prev) => normalizeAppConfig(savedConfig, prev))
+    const savedConfig = normalizeAppConfig(await updateAppConfig(nextConfig), nextConfig)
+    setConfig(savedConfig)
     setBackendReady(true)
+    return savedConfig
   }
 
   useEffect(() => {
@@ -2051,78 +2052,18 @@ function AppContent() {
     }
   }
 
-  const handleChatConfigChange = <K extends keyof ChatConfig>(
-    key: K,
-    value: ChatConfig[K],
-  ) => {
-    setConfig((prev) => {
-      const nextChat = {
-        ...prev.chat,
-        [key]:
-          key === 'contextMessageLimit'
-            ? Math.max(1, Math.min(100, Number(value) || 1))
-            : value,
-      }
-      if (key === 'apiKey') {
-        nextChat.clearApiKey = false
-      }
-      const nextConfig = {
-        ...prev,
-        chat: nextChat,
-      }
-      void persistConfigToBackend(nextConfig)
-      return nextConfig
-    })
-  }
-
-  const handleEmbeddingConfigChange = <K extends keyof EmbeddingConfig>(
-    key: K,
-    value: EmbeddingConfig[K],
-  ) => {
-    setConfig((prev) => {
-      const nextEmbedding = {
-        ...prev.embedding,
-        [key]: value,
-      }
-      if (key === 'apiKey') {
-        nextEmbedding.clearApiKey = false
-      }
-      const nextConfig = {
-        ...prev,
-        embedding: nextEmbedding,
-      }
-      void persistConfigToBackend(nextConfig)
-      return nextConfig
-    })
-  }
-
-  const handleRetrievalConfigChange = <K extends keyof RetrievalConfig>(
-    key: K,
-    value: RetrievalConfig[K],
-  ) => {
-    setConfig((prev) => {
-      const nextConfig = normalizeAppConfig({
-        ...prev,
-        retrieval: {
-          ...prev.retrieval,
-          [key]: value,
-        },
-      }, prev)
-      void persistConfigToBackend(nextConfig)
-      return nextConfig
-    })
-  }
-
-  const handleThinkModelChange = (value: string) => {
-    const nextValue = value.trim()
-    setThinkModel(nextValue)
+  const handleSaveSettings = async (nextConfig: AppConfig, nextThinkModel: string) => {
+    const savedConfig = await persistConfigToBackend(nextConfig)
+    const normalizedThinkModel = nextThinkModel.trim()
+    setThinkModel(normalizedThinkModel)
     if (typeof window !== 'undefined') {
-      if (nextValue) {
-        window.localStorage.setItem(THINK_MODEL_STORAGE_KEY, nextValue)
+      if (normalizedThinkModel) {
+        window.localStorage.setItem(THINK_MODEL_STORAGE_KEY, normalizedThinkModel)
       } else {
         window.localStorage.removeItem(THINK_MODEL_STORAGE_KEY)
       }
     }
+    return savedConfig
   }
 
   const handleChangeWorkspace = (workspace: WorkspaceView) => {
@@ -2300,11 +2241,8 @@ function AppContent() {
           <SettingsPanel
             config={config}
             onClose={() => handleChangeWorkspace('chat')}
-            onChatConfigChange={handleChatConfigChange}
-            onEmbeddingConfigChange={handleEmbeddingConfigChange}
-            onRetrievalConfigChange={handleRetrievalConfigChange}
             chatModeSettings={chatModeSettings}
-            onThinkModelChange={handleThinkModelChange}
+            onSave={handleSaveSettings}
             onCopyMcpToken={handleCopyMcpToken}
             onResetMcpToken={handleResetMcpToken}
             onLogout={logout}

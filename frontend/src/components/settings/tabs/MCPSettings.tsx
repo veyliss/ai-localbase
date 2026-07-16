@@ -398,7 +398,7 @@ const MCPSettings: React.FC<MCPSettingsProps> = ({
       </section>
 
       <section className="settings-setting-section">
-        <div className="settings-setting-section-header">
+        <div className="settings-setting-section-header settings-setting-section-header-action">
           <div>
             <h3>API Key</h3>
             <p>为每个外部客户端单独命名并分配权限，密钥只在创建后显示一次。</p>

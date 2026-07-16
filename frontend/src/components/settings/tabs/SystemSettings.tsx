@@ -482,7 +482,7 @@ const SystemSettings: React.FC<SystemSettingsProps> = ({ onLogout }) => {
         </section>
 
         <section className="settings-setting-section">
-          <div className="settings-setting-section-header">
+          <div className="settings-setting-section-header settings-setting-section-header-action">
             <div>
               <h3>设备会话</h3>
               <p>按浏览器和系统识别登录设备，展开后可查看完整连接信息。</p>

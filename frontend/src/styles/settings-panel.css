@@ -822,10 +822,10 @@
 .settings-access-key-form {
   display: grid;
   gap: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid color-mix(in srgb, var(--border-color) 42%, transparent);
-  border-radius: var(--radius-md);
-  background: var(--settings-preference-control-bg);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .settings-scope-fieldset {
@@ -2568,6 +2568,17 @@
     gap: var(--space-3);
   }
 
+  .settings-setting-section-header-action {
+    position: relative;
+    padding-right: 44px;
+  }
+
+  .settings-setting-section-header-action > .settings-icon-action {
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+
   .settings-security-identity strong {
     white-space: normal;
   }
@@ -2838,10 +2849,6 @@
   .settings-access-summary,
   .settings-scope-groups {
     grid-template-columns: 1fr;
-  }
-
-  .settings-access-key-form {
-    padding: var(--space-3);
   }
 
   .settings-access-key-actions {

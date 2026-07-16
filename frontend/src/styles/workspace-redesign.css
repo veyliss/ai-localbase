@@ -1661,9 +1661,18 @@ body,
   box-shadow: none;
 }
 
-.settings-card + .settings-card,
-.settings-setting-section + .settings-setting-section {
+.settings-card + .settings-card {
   margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-setting-section {
+  border-bottom: 0;
+}
+
+.settings-setting-section + .settings-setting-section {
+  margin-top: 0;
   padding-top: 24px;
   border-top: 1px solid var(--border-color);
 }

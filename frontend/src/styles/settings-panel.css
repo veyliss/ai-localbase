@@ -911,6 +911,12 @@
   border: 1px solid color-mix(in srgb, var(--border-color) 48%, transparent);
   border-radius: var(--radius-md);
   background: var(--settings-control-bg);
+  scrollbar-width: none;
+}
+
+.settings-template-switcher::-webkit-scrollbar,
+.settings-record-filters::-webkit-scrollbar {
+  display: none;
 }
 
 .settings-template-switcher button {
@@ -943,8 +949,9 @@
 }
 
 .settings-mcp-template-single {
-  padding: var(--space-4);
-  background: var(--settings-preference-control-bg);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .settings-mcp-template-single .settings-mcp-template-code {
@@ -1758,6 +1765,7 @@
   overflow-x: auto;
   padding-bottom: 1px;
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 54%, transparent);
+  scrollbar-width: none;
 }
 
 .settings-record-filters button {
@@ -2832,8 +2840,7 @@
     grid-template-columns: 1fr;
   }
 
-  .settings-access-key-form,
-  .settings-mcp-template-single {
+  .settings-access-key-form {
     padding: var(--space-3);
   }
 

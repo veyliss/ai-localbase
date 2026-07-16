@@ -1647,7 +1647,7 @@ body,
 }
 
 .settings-tab-content {
-  width: min(100%, 760px);
+  width: min(100%, 860px);
   margin: 0 auto;
 }
 
@@ -1663,8 +1663,8 @@ body,
 
 .settings-card + .settings-card,
 .settings-setting-section + .settings-setting-section {
-  margin-top: 30px;
-  padding-top: 30px;
+  margin-top: 24px;
+  padding-top: 24px;
   border-top: 1px solid var(--border-color);
 }
 
@@ -2258,8 +2258,36 @@ body,
   }
 
   .message-actions {
+    position: static;
+    order: 2;
+    align-self: flex-end;
+    margin-top: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
     opacity: 1;
     pointer-events: auto;
+  }
+
+  .message-content,
+  .message-edit-container {
+    order: 1;
+  }
+
+  .message-citations {
+    order: 3;
+  }
+
+  .message-time {
+    display: none;
+  }
+
+  .message-action-btn {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border-color);
+    background: var(--surface-primary);
   }
 
   .welcome-message {

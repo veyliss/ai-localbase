@@ -1946,6 +1946,14 @@ body,
   color: var(--text-inverse);
 }
 
+.knowledge-workspace-page .kb-upload-btn--primary:hover {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+  color: var(--text-inverse);
+  filter: none;
+  transform: none;
+}
+
 .knowledge-workspace-page .kb-workspace-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;

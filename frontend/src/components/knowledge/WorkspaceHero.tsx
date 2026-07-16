@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { KnowledgeBase } from '../../App'
 import type { KnowledgeBaseHealthResponse } from '../../services/api'
 import { healthStatusLabel } from './knowledgeLabels'
@@ -8,10 +8,8 @@ interface WorkspaceHeroProps {
   knowledgeBase: KnowledgeBase
   health: KnowledgeBaseHealthResponse | undefined
   selectedScopeLabel: string
-  generatingEvalDataset: boolean
   onUploadFiles: (e: React.ChangeEvent<HTMLInputElement>) => void
   onUploadDirectory: (e: React.ChangeEvent<HTMLInputElement>) => void
-  onGenerateEvalDataset: () => void
   registerDirectoryInput: (element: HTMLInputElement | null) => void
 }
 
@@ -19,21 +17,49 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
   knowledgeBase,
   health,
   selectedScopeLabel,
-  generatingEvalDataset,
   onUploadFiles,
   onUploadDirectory,
-  onGenerateEvalDataset,
   registerDirectoryInput,
 }) => {
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false)
+  const uploadMenuRef = useRef<HTMLDivElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const directoryInputRef = useRef<HTMLInputElement | null>(null)
   const healthBadge = health ? healthStatusLabel(health.status) : null
   const metrics = health?.metrics
   const indexedCount = metrics?.indexedCount ?? knowledgeBase.documents.filter(d => d.status === 'indexed').length ?? 0
+
+  useEffect(() => {
+    if (!uploadMenuOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!uploadMenuRef.current?.contains(event.target as Node)) {
+        setUploadMenuOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setUploadMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [uploadMenuOpen])
+
+  const registerDirectory = (element: HTMLInputElement | null) => {
+    directoryInputRef.current = element
+    registerDirectoryInput(element)
+  }
 
   return (
     <section className="kb-workspace-hero">
       <div className="kb-workspace-overview">
         <div className="kb-workspace-title">
-          <span className="kb-workspace-kicker">当前知识库</span>
           <div className="kb-workspace-title-row">
             <h3>{knowledgeBase.name}</h3>
             {healthBadge && (
@@ -66,36 +92,67 @@ const WorkspaceHero: React.FC<WorkspaceHeroProps> = ({
           </div>
         </div>
       </div>
-      <div className="kb-workspace-actions">
-        <label className="kb-upload-btn kb-upload-btn--primary" title="上传文档">
-          <KnowledgeIcon name="upload" />
-          <span>上传文件</span>
-          <input
-            type="file"
-            multiple
-            accept=".txt,.md,.pdf,.csv,.xlsx"
-            className="hidden-input"
-            onChange={onUploadFiles}
-          />
-        </label>
-        <label className="kb-upload-btn kb-upload-btn--secondary" title="上传目录">
-          <KnowledgeIcon name="folderPlus" />
-          <span>上传目录</span>
-          <input
-            ref={registerDirectoryInput}
-            type="file"
-            multiple
-            className="hidden-input"
-            onChange={onUploadDirectory}
-          />
-        </label>
+      <div className="kb-workspace-actions" ref={uploadMenuRef}>
         <button
-          className="kb-eval-btn"
-          onClick={onGenerateEvalDataset}
-          disabled={knowledgeBase.documents.length === 0 || generatingEvalDataset}
+          aria-expanded={uploadMenuOpen}
+          aria-haspopup="menu"
+          className="kb-upload-menu-trigger"
+          onClick={() => setUploadMenuOpen((current) => !current)}
+          type="button"
         >
-          {generatingEvalDataset ? '生成中' : '生成评估集'}
+          <KnowledgeIcon name="upload" />
+          <span>上传</span>
+          <KnowledgeIcon name="chevronDown" />
         </button>
+        {uploadMenuOpen && (
+          <div className="kb-upload-menu" role="menu">
+            <button
+              className="kb-upload-menu-item"
+              onClick={() => {
+                setUploadMenuOpen(false)
+                fileInputRef.current?.click()
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <KnowledgeIcon name="file" />
+              <span>
+                <strong>上传文件</strong>
+                <small>选择 PDF、文本或表格文件</small>
+              </span>
+            </button>
+            <button
+              className="kb-upload-menu-item"
+              onClick={() => {
+                setUploadMenuOpen(false)
+                directoryInputRef.current?.click()
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <KnowledgeIcon name="folderPlus" />
+              <span>
+                <strong>上传目录</strong>
+                <small>批量扫描并导入目录内容</small>
+              </span>
+            </button>
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".txt,.md,.pdf,.csv,.xlsx"
+          className="hidden-input"
+          onChange={onUploadFiles}
+        />
+        <input
+          ref={registerDirectory}
+          type="file"
+          multiple
+          className="hidden-input"
+          onChange={onUploadDirectory}
+        />
       </div>
     </section>
   )

@@ -1,5 +1,6 @@
 import React from 'react'
 import type { EvalDatasetSummary } from '../../services/api'
+import AppIcon from '../common/AppIcon'
 import KnowledgeIcon from './KnowledgeIcon'
 
 interface EvalDatasetHistoryPanelProps {
@@ -8,6 +9,8 @@ interface EvalDatasetHistoryPanelProps {
   error: string
   openingDatasetId: string | null
   deletingDatasetId: string | null
+  generating: boolean
+  onGenerate: () => void
   onRefresh: () => void
   onOpen: (datasetId: string) => void
   onDelete: (datasetId: string) => void
@@ -38,6 +41,8 @@ const EvalDatasetHistoryPanel: React.FC<EvalDatasetHistoryPanelProps> = ({
   error,
   openingDatasetId,
   deletingDatasetId,
+  generating,
+  onGenerate,
   onRefresh,
   onOpen,
   onDelete,
@@ -51,9 +56,27 @@ const EvalDatasetHistoryPanel: React.FC<EvalDatasetHistoryPanelProps> = ({
           <h3>评估集历史</h3>
           <p>{safeDatasets.length} 份已保存评估集 · 可再次查看和导出</p>
         </div>
-        <button className="kb-panel-mini-btn" onClick={onRefresh} disabled={loading}>
-          {loading ? '刷新中' : '刷新'}
-        </button>
+        <div className="kb-panel-section-actions">
+          <button
+            aria-label="刷新评估集"
+            className="kb-panel-icon-btn"
+            disabled={loading}
+            onClick={onRefresh}
+            title="刷新评估集"
+            type="button"
+          >
+            <AppIcon className={loading ? 'spin' : undefined} name="refresh" size={16} />
+          </button>
+          <button
+            className="kb-eval-generate-btn"
+            disabled={generating}
+            onClick={onGenerate}
+            type="button"
+          >
+            <AppIcon name="sparkles" size={16} />
+            <span>{generating ? '生成中' : '生成评估集'}</span>
+          </button>
+        </div>
       </div>
 
       {error && <div className="kb-eval-history-error">{error}</div>}
@@ -61,7 +84,7 @@ const EvalDatasetHistoryPanel: React.FC<EvalDatasetHistoryPanelProps> = ({
       {loading && safeDatasets.length === 0 ? (
         <div className="kb-eval-history-empty">正在加载评估集历史</div>
       ) : safeDatasets.length === 0 ? (
-        <div className="kb-eval-history-empty">暂无已保存评估集，点击上方“评估集”生成第一份。</div>
+        <div className="kb-eval-history-empty">暂无已保存评估集，生成第一份评估集后会显示在这里。</div>
       ) : (
         <div className="kb-eval-history-list">
           {safeDatasets.map((dataset) => (

@@ -35,6 +35,7 @@ interface MainWorkspaceProps {
   retrievalDebugResult: RetrievalDebugResponse | null
   retrievalDebugError: string
   retrievalDebugKnowledgeBaseId: string | null
+  generatingEvalDataset: boolean
   onToggleUploadTaskDetails: () => void
   onToggleFailedItems: () => void
   onToggleSkippedItems: () => void
@@ -50,6 +51,7 @@ interface MainWorkspaceProps {
   onOpenSavedEvalDataset: (datasetId: string) => void
   onDeleteSavedEvalDataset: (datasetId: string) => void
   onLoadEvalRuns: () => void
+  onGenerateEvalDataset: () => void
   onSelectDocument: (documentId: string | null) => void
   onOpenDocumentDetail: (documentId: string) => void
   onRemoveDocument: (documentId: string) => void
@@ -58,6 +60,12 @@ interface MainWorkspaceProps {
 const INSPECTION_VIEW_OPTIONS = [
   { value: 'retrieval', label: '检索调试' },
   { value: 'health', label: '索引健康' },
+] as const
+
+const WORKSPACE_VIEW_OPTIONS = [
+  { value: 'documents', label: '文档' },
+  { value: 'retrieval', label: '检索测试' },
+  { value: 'evaluation', label: '质量评估' },
 ] as const
 
 const EVALUATION_VIEW_OPTIONS = [
@@ -151,6 +159,7 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
   retrievalDebugResult,
   retrievalDebugError,
   retrievalDebugKnowledgeBaseId,
+  generatingEvalDataset,
   onToggleUploadTaskDetails,
   onToggleFailedItems,
   onToggleSkippedItems,
@@ -166,12 +175,14 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
   onOpenSavedEvalDataset,
   onDeleteSavedEvalDataset,
   onLoadEvalRuns,
+  onGenerateEvalDataset,
   onSelectDocument,
   onOpenDocumentDetail,
   onRemoveDocument,
 }) => {
   const docContext = useDocument()
   const evalContext = useEvalDataset()
+  const [workspaceView, setWorkspaceView] = useState<(typeof WORKSPACE_VIEW_OPTIONS)[number]['value']>('documents')
   const [inspectionView, setInspectionView] = useState<(typeof INSPECTION_VIEW_OPTIONS)[number]['value']>('retrieval')
   const [evaluationView, setEvaluationView] = useState<(typeof EVALUATION_VIEW_OPTIONS)[number]['value']>('datasets')
 
@@ -200,22 +211,41 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
         </div>
       )}
 
-      <div className="kb-workspace-layout">
-        <div className="kb-workspace-primary">
-          <DocumentList
-            documents={knowledgeBase.documents}
-            healthDocuments={activeHealth?.documents}
-            selectedDocumentId={selectedDocumentId}
-            documentDetailLoadingId={docContext.documentDetailLoading ? selectedDocumentId : null}
-            reindexingDocumentId={docContext.reindexingDocumentId}
-            onSelectDocument={onSelectDocument}
-            onOpenDocumentDetail={onOpenDocumentDetail}
-            onReindexDocument={onReindexDocument}
-            onRemoveDocument={onRemoveDocument}
-          />
-        </div>
+      <div className="kb-workspace-primary-nav">
+        <WorkspaceViewTabs
+          activeView={workspaceView}
+          ariaLabel="知识库工作视图"
+          idPrefix="kb-workspace"
+          onChange={setWorkspaceView}
+          options={WORKSPACE_VIEW_OPTIONS}
+          panelId="kb-workspace-primary-panel"
+        />
+      </div>
 
-        <aside className="kb-workspace-side" aria-label="知识库检查与调试">
+      <div
+        aria-labelledby={`kb-workspace-${workspaceView}-tab`}
+        className="kb-workspace-primary-panel"
+        id="kb-workspace-primary-panel"
+        role="tabpanel"
+      >
+        {workspaceView === 'documents' && (
+          <div className="kb-workspace-surface kb-workspace-surface--documents">
+            <DocumentList
+              documents={knowledgeBase.documents}
+              healthDocuments={activeHealth?.documents}
+              selectedDocumentId={selectedDocumentId}
+              documentDetailLoadingId={docContext.documentDetailLoading ? selectedDocumentId : null}
+              reindexingDocumentId={docContext.reindexingDocumentId}
+              onSelectDocument={onSelectDocument}
+              onOpenDocumentDetail={onOpenDocumentDetail}
+              onReindexDocument={onReindexDocument}
+              onRemoveDocument={onRemoveDocument}
+            />
+          </div>
+        )}
+
+        {workspaceView === 'retrieval' && (
+          <section className="kb-workspace-surface kb-workspace-surface--inspection" aria-label="知识库检查与调试">
           <WorkspaceViewTabs
             activeView={inspectionView}
             ariaLabel="知识库检查工具"
@@ -257,44 +287,49 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
               />
             )}
           </div>
-        </aside>
-      </div>
+          </section>
+        )}
 
-      <div className="kb-evaluation-shell">
-        <WorkspaceViewTabs
-          activeView={evaluationView}
-          ariaLabel="质量评估视图"
-          idPrefix="kb-evaluation"
-          onChange={setEvaluationView}
-          options={EVALUATION_VIEW_OPTIONS}
-          panelId="kb-evaluation-panel"
-        />
-        <div
-          className="kb-evaluation-panel"
-          id="kb-evaluation-panel"
-          aria-labelledby={`kb-evaluation-${evaluationView}-tab`}
-          role="tabpanel"
-        >
-          {evaluationView === 'datasets' ? (
-            <EvalDatasetHistoryPanel
-              datasets={evalContext.evalDatasetSummaries}
-              loading={evalContext.evalDatasetHistoryLoading}
-              error={evalContext.evalDatasetHistoryError}
-              openingDatasetId={evalContext.openingEvalDatasetId}
-              deletingDatasetId={evalContext.deletingEvalDatasetId}
-              onRefresh={onLoadEvalDatasets}
-              onOpen={onOpenSavedEvalDataset}
-              onDelete={onDeleteSavedEvalDataset}
+        {workspaceView === 'evaluation' && (
+          <div className="kb-evaluation-shell">
+            <WorkspaceViewTabs
+              activeView={evaluationView}
+              ariaLabel="质量评估视图"
+              idPrefix="kb-evaluation"
+              onChange={setEvaluationView}
+              options={EVALUATION_VIEW_OPTIONS}
+              panelId="kb-evaluation-panel"
             />
-          ) : (
-            <EvalRunTrendPanel
-              runs={evalContext.evalRunSummaries}
-              loading={evalContext.evalRunHistoryLoading}
-              error={evalContext.evalRunHistoryError}
-              onRefresh={onLoadEvalRuns}
-            />
-          )}
-        </div>
+            <div
+              className="kb-evaluation-panel"
+              id="kb-evaluation-panel"
+              aria-labelledby={`kb-evaluation-${evaluationView}-tab`}
+              role="tabpanel"
+            >
+              {evaluationView === 'datasets' ? (
+                <EvalDatasetHistoryPanel
+                  datasets={evalContext.evalDatasetSummaries}
+                  loading={evalContext.evalDatasetHistoryLoading}
+                  error={evalContext.evalDatasetHistoryError}
+                  openingDatasetId={evalContext.openingEvalDatasetId}
+                  deletingDatasetId={evalContext.deletingEvalDatasetId}
+                  generating={generatingEvalDataset}
+                  onGenerate={onGenerateEvalDataset}
+                  onRefresh={onLoadEvalDatasets}
+                  onOpen={onOpenSavedEvalDataset}
+                  onDelete={onDeleteSavedEvalDataset}
+                />
+              ) : (
+                <EvalRunTrendPanel
+                  runs={evalContext.evalRunSummaries}
+                  loading={evalContext.evalRunHistoryLoading}
+                  error={evalContext.evalRunHistoryError}
+                  onRefresh={onLoadEvalRuns}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </>
   )

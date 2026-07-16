@@ -440,10 +440,8 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       knowledgeBase={selectedKnowledgeBase}
                       health={activeHealth}
                       selectedScopeLabel={selectedScopeLabel}
-                      generatingEvalDataset={evalContext.generatingKnowledgeBaseId === activeKnowledgeBaseId}
                       onUploadFiles={(e) => handleFileChange(activeKnowledgeBaseId, e)}
                       onUploadDirectory={(e) => handleDirectoryChange(activeKnowledgeBaseId, e)}
-                      onGenerateEvalDataset={() => void handleGenerateEvalDataset(activeKnowledgeBaseId)}
                       registerDirectoryInput={(el) => registerDirectoryInput(activeKnowledgeBaseId, el)}
                     />
 
@@ -468,6 +466,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       retrievalDebugResult={healthContext.retrievalDebugResult}
                       retrievalDebugError={healthContext.retrievalDebugError}
                       retrievalDebugKnowledgeBaseId={healthContext.retrievalDebugKnowledgeBaseId}
+                      generatingEvalDataset={evalContext.generatingKnowledgeBaseId === activeKnowledgeBaseId}
                       onToggleUploadTaskDetails={() => setShowUploadTaskDetails(prev => !prev)}
                       onToggleFailedItems={() => setShowFailedItems(prev => !prev)}
                       onToggleSkippedItems={() => setShowSkippedItems(prev => !prev)}
@@ -483,6 +482,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       onOpenSavedEvalDataset={(datasetId) => void handleOpenSavedEvalDataset(datasetId)}
                       onDeleteSavedEvalDataset={(datasetId) => void handleDeleteSavedEvalDataset(datasetId)}
                       onLoadEvalRuns={() => void loadEvalRuns(activeKnowledgeBaseId)}
+                      onGenerateEvalDataset={() => void handleGenerateEvalDataset(activeKnowledgeBaseId)}
                       onSelectDocument={(documentId) => onSelectDocument(activeKnowledgeBaseId, documentId)}
                       onOpenDocumentDetail={(documentId) => void handleOpenDocumentDetail(activeKnowledgeBaseId, documentId)}
                       onRemoveDocument={(documentId) => onRemoveDocument(activeKnowledgeBaseId, documentId)}

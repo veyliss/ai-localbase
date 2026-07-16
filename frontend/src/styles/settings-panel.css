@@ -828,6 +828,19 @@
   background: transparent;
 }
 
+.settings-access-key-form .settings-form-group input[type="text"] {
+  min-height: var(--control-height-md);
+  border-color: var(--settings-control-border);
+  background: var(--bg-primary);
+  box-shadow: none;
+}
+
+.settings-access-key-form .settings-form-group input[type="text"]:focus {
+  border-color: var(--color-primary);
+  background: var(--bg-primary);
+  box-shadow: none;
+}
+
 .settings-scope-fieldset {
   min-width: 0;
   margin: 0;

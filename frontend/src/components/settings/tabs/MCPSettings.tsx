@@ -430,6 +430,7 @@ const MCPSettings: React.FC<MCPSettingsProps> = ({
               id="settings-api-key-name"
               onChange={(event) => setKeyName(event.target.value)}
               placeholder="例如：cherry-studio-mac"
+              type="text"
               value={keyName}
             />
             <small>使用客户端和设备名称，便于之后识别与撤销。</small>

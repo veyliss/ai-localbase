@@ -26,6 +26,8 @@ interface AuthContextValue {
   logoutAll: () => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   authError: string
+  authConnectionError: string
+  clearAuthError: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -69,11 +71,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [bootstrap, setBootstrap] = useState<AuthBootstrapResponse | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [authConnectionError, setAuthConnectionError] = useState('')
 
   const clearLocalAuth = useCallback(() => {
     localStorage.removeItem('auth_token')
     localStorage.removeItem('token_expires_at')
     localStorage.removeItem('auth_expires_at')
+    setAuthError('')
+    setAuthConnectionError('')
     setExpiresAt(null)
   }, [])
 
@@ -87,6 +92,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [])
 
   const refreshAuthBootstrap = useCallback(async () => {
+    setAuthReady(false)
+    setAuthConnectionError('')
     try {
       const nextBootstrap = await fetchAuthBootstrap()
       setBootstrap(nextBootstrap)
@@ -94,10 +101,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return nextBootstrap
     } catch {
       setBootstrap(null)
+      setAuthConnectionError('无法连接认证服务，请确认后端已启动并重试。')
       return null
     } finally {
       setAuthReady(true)
     }
+  }, [])
+
+  const clearAuthError = useCallback(() => {
+    setAuthError('')
   }, [])
 
   const login = useCallback(async (nextUsername: string, password: string) => {
@@ -202,14 +214,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       logoutAll,
       changePassword,
       authError,
+      authConnectionError,
+      clearAuthError,
     }),
     [
       authError,
+      authConnectionError,
       authReady,
       bootstrap?.auth_enabled,
       bootstrap?.setup_required,
       bootstrap?.setup_token_required,
       changePassword,
+      clearAuthError,
       expiresAt,
       login,
       logout,

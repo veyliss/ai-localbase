@@ -2148,7 +2148,7 @@ function AppContent() {
   }, [isAuthenticated, logout])
 
   if (!authCheckDone) {
-    return null // Or a loading spinner
+    return <Login checkingConnection />
   }
 
   if (authRequired && !isAuthenticated) {

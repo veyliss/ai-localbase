@@ -11,7 +11,7 @@ describe('citation source filtering', () => {
     documentId: 'doc-1',
     documentName: 'demo.md',
     chunkId: 'chunk-1',
-    snippet: '真实文档片段',
+    snippet: '示例文档片段',
   }
 
   it('keeps complete document chunk sources', () => {

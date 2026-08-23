@@ -27,8 +27,8 @@ func TestSelectEvalChunkCandidatesPrefersUsefulChunks(t *testing.T) {
 
 func TestSelectEvalChunkCandidatesKeepsStructuredSummaryPriority(t *testing.T) {
 	chunks := []DocumentChunk{
-		{ID: "doc-1-chunk-0", Text: "第2行：姓名：张三。薪资：24000。第3行：姓名：李四。薪资：18000。", Index: 0, Kind: "structured_row"},
-		{ID: "doc-1-summary-0", Text: "统计摘要：文件《工作簿1.csv》共有2条数据记录。\n统计摘要：字段“薪资”为数值列，非空值2个，最小值18000.00，最大值24000.00，平均值21000.00。", Index: 1, Kind: "structured_summary"},
+		{ID: "doc-1-chunk-0", Text: "第2行：姓名：成员甲。薪资：300。第3行：姓名：成员乙。薪资：200。", Index: 0, Kind: "structured_row"},
+		{ID: "doc-1-summary-0", Text: "统计摘要：文件《structured-records.csv》共有2条数据记录。\n统计摘要：字段“薪资”为数值列，非空值2个，最小值200.00，最大值300.00，平均值250.00。", Index: 1, Kind: "structured_summary"},
 	}
 
 	selected := selectEvalChunkCandidates(chunks, len(chunks))
@@ -44,16 +44,16 @@ func TestBuildStructuredSummaryEvalCasesAreGrounded(t *testing.T) {
 	document := model.Document{
 		ID:              "doc-1",
 		KnowledgeBaseID: "kb-1",
-		Name:            "工作簿1.csv",
+		Name:            "structured-records.csv",
 	}
 	chunk := DocumentChunk{
 		ID:              "doc-1-summary-0",
 		KnowledgeBaseID: "kb-1",
 		DocumentID:      "doc-1",
-		DocumentName:    "工作簿1.csv",
+		DocumentName:    "structured-records.csv",
 		Text: strings.Join([]string{
-			"统计摘要：文件《工作簿1.csv》共有4条数据记录。",
-			"统计摘要：字段“薪资”为数值列，非空值4个，最小值7000.00，最大值24000.00，平均值14250.00。",
+			"统计摘要：文件《structured-records.csv》共有4条数据记录。",
+			"统计摘要：字段“薪资”为数值列，非空值4个，最小值100.00，最大值400.00，平均值250.00。",
 			"统计摘要：字段“性别”为类别列，共4个非空值，主要分布为：女(2)、男(2)。",
 		}, "\n"),
 		Index: 0,
@@ -75,7 +75,7 @@ func TestBuildStructuredSummaryEvalCasesAreGrounded(t *testing.T) {
 
 	var foundMax bool
 	for _, item := range cases {
-		if strings.Contains(item.Question, "最大值") && strings.Contains(item.Answer, "24000.00") {
+		if strings.Contains(item.Question, "最大值") && strings.Contains(item.Answer, "400.00") {
 			foundMax = true
 			break
 		}
@@ -89,14 +89,14 @@ func TestBuildStructuredRowEvalCasesAnswerExactField(t *testing.T) {
 	document := model.Document{
 		ID:              "doc-1",
 		KnowledgeBaseID: "kb-1",
-		Name:            "工作簿1.csv",
+		Name:            "structured-records.csv",
 	}
 	chunk := DocumentChunk{
 		ID:              "doc-1-chunk-0",
 		KnowledgeBaseID: "kb-1",
 		DocumentID:      "doc-1",
-		DocumentName:    "工作簿1.csv",
-		Text:            "第2行：姓名：张三。性别：男。职称：高级职称。教师编号：111222333111。年龄：45。手机号：15911110011。薪资：24000。教龄：20。",
+		DocumentName:    "structured-records.csv",
+		Text:            "第2行：姓名：成员甲。性别：甲。职称：级别甲。教师编号：编号甲。年龄：41。手机号：联系方式甲。薪资：300。教龄：20。",
 		Index:           0,
 		Kind:            "structured_row",
 	}
@@ -112,7 +112,7 @@ func TestBuildStructuredRowEvalCasesAnswerExactField(t *testing.T) {
 	}
 	foundRowQuestion := false
 	for _, item := range cases {
-		if item.Question == "《工作簿1.csv》第2行的“姓名”是什么？" && item.Answer == "张三" {
+		if item.Question == "《structured-records.csv》第2行的“姓名”是什么？" && item.Answer == "成员甲" {
 			foundRowQuestion = true
 			break
 		}
@@ -126,14 +126,14 @@ func TestBuildStructuredRowEvalCasesIncludeFactQueries(t *testing.T) {
 	document := model.Document{
 		ID:              "doc-1",
 		KnowledgeBaseID: "kb-1",
-		Name:            "教师信息.csv",
+		Name:            "structured-records.csv",
 	}
 	chunk := DocumentChunk{
 		ID:              "doc-1-chunk-0",
 		KnowledgeBaseID: "kb-1",
 		DocumentID:      "doc-1",
-		DocumentName:    "教师信息.csv",
-		Text:            "第2行：姓名：张三。性别：男。职称：高级职称。教师编号：111222333111。年龄：45。手机号：15911110011。薪资：24000。教龄：20。",
+		DocumentName:    "structured-records.csv",
+		Text:            "第2行：姓名：成员甲。性别：甲。职称：级别甲。教师编号：编号甲。年龄：41。手机号：联系方式甲。薪资：300。教龄：20。",
 		Index:           0,
 		Kind:            "structured_row",
 	}
@@ -145,8 +145,8 @@ func TestBuildStructuredRowEvalCasesIncludeFactQueries(t *testing.T) {
 	}
 	joined := strings.Join(joinedQuestions, "\n")
 	for _, expected := range []string{
-		"张三的手机号是什么？",
-		"张三的薪资是多少？",
+		"成员甲的手机号是什么？",
+		"成员甲的薪资是多少？",
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("expected fact query %q in generated cases: %#v", expected, cases)
@@ -276,12 +276,12 @@ func TestBuildCrossDocumentEvalCasesAreGrounded(t *testing.T) {
 
 func TestGenerateEvalDatasetPersistsDataset(t *testing.T) {
 	tempDir := t.TempDir()
-	documentPath := filepath.Join(tempDir, "teachers.csv")
+	documentPath := filepath.Join(tempDir, "structured-records.csv")
 	content := strings.Join([]string{
 		"姓名,性别,薪资",
-		"张三,男,24000",
-		"李四,女,18000",
-		"王五,男,7000",
+		"成员甲,甲,300",
+		"成员乙,乙,200",
+		"成员丙,甲,100",
 	}, "\n")
 	if err := os.WriteFile(documentPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write csv: %v", err)
@@ -294,12 +294,12 @@ func TestGenerateEvalDatasetPersistsDataset(t *testing.T) {
 			KnowledgeBases: map[string]model.KnowledgeBase{
 				"kb-1": {
 					ID:        "kb-1",
-					Name:      "教师信息",
+					Name:      "结构化记录",
 					CreatedAt: "2026-03-12T00:00:00Z",
 					Documents: []model.Document{{
 						ID:              "doc-1",
 						KnowledgeBaseID: "kb-1",
-						Name:            "teachers.csv",
+						Name:            "structured-records.csv",
 						Path:            documentPath,
 						Status:          "indexed",
 					}},
@@ -360,12 +360,12 @@ func TestAddEvalDatasetCandidateCreatesReviewDataset(t *testing.T) {
 			KnowledgeBases: map[string]model.KnowledgeBase{
 				"kb-1": {
 					ID:        "kb-1",
-					Name:      "教师信息",
+					Name:      "结构化记录",
 					CreatedAt: "2026-03-12T00:00:00Z",
 					Documents: []model.Document{{
 						ID:              "doc-1",
 						KnowledgeBaseID: "kb-1",
-						Name:            "teachers.csv",
+						Name:            "structured-records.csv",
 						Status:          "indexed",
 					}},
 				},
@@ -382,8 +382,8 @@ func TestAddEvalDatasetCandidateCreatesReviewDataset(t *testing.T) {
 		Item: model.EvalGroundTruthCase{
 			ID:             "debug-low-confidence-kb-1-001",
 			Question:       "谁的薪资最高？",
-			Answer:         "张三的薪资最高。",
-			AnswerSnippets: []string{"张三,男,24000", "张三,男,24000"},
+			Answer:         "成员甲的薪资最高。",
+			AnswerSnippets: []string{"成员甲,甲,300", "成员甲,甲,300"},
 			SourceDocuments: []model.EvalSourceDocument{{
 				KnowledgeBaseID: "kb-1",
 				DocumentID:      "doc-1",
@@ -444,14 +444,14 @@ func TestUpdateAndDeleteEvalDatasetItem(t *testing.T) {
 			KnowledgeBases: map[string]model.KnowledgeBase{
 				"kb-1": {
 					ID:        "kb-1",
-					Name:      "教师信息",
+					Name:      "结构化记录",
 					CreatedAt: "2026-03-12T00:00:00Z",
 				},
 			},
 			EvalDatasets: map[string]model.EvalDataset{
 				"eval-1": {
 					ID:              "eval-1",
-					Name:            "待审核评估样本 - 教师信息",
+					Name:            "待审核评估样本 - 结构化记录",
 					Kind:            evalDatasetKindReview,
 					KnowledgeBaseID: "kb-1",
 					Count:           1,
@@ -483,8 +483,8 @@ func TestUpdateAndDeleteEvalDatasetItem(t *testing.T) {
 		Item: model.EvalGroundTruthCase{
 			ID:             "ignored-id",
 			Question:       "谁的薪资最高？",
-			Answer:         "张三的薪资最高。",
-			AnswerSnippets: []string{"张三,24000"},
+			Answer:         "成员甲的薪资最高。",
+			AnswerSnippets: []string{"成员甲,300"},
 			AnswerType:     "numeric",
 			Difficulty:     "medium",
 			ReviewStatus:   evalReviewStatusApproved,
@@ -522,8 +522,8 @@ func TestEvalCaseHitPrefersChunkDocumentThenSnippet(t *testing.T) {
 	item := model.EvalGroundTruthCase{
 		ID:             "case-1",
 		Question:       "谁的薪资最高？",
-		Answer:         "张三",
-		AnswerSnippets: []string{"张三"},
+		Answer:         "成员甲",
+		AnswerSnippets: []string{"成员甲"},
 		SourceDocuments: []model.EvalSourceDocument{{
 			KnowledgeBaseID: "kb-1",
 			DocumentID:      "doc-1",
@@ -531,8 +531,8 @@ func TestEvalCaseHitPrefersChunkDocumentThenSnippet(t *testing.T) {
 		}},
 	}
 	chunks := []model.RetrievalDebugChunk{
-		{ID: "doc-1-chunk-1", DocumentID: "doc-1", Text: "李四的薪资是 18000。"},
-		{ID: "doc-1-chunk-2", DocumentID: "doc-1", Text: "张三的薪资是 24000。"},
+		{ID: "doc-1-chunk-1", DocumentID: "doc-1", Text: "成员乙的薪资是 200。"},
+		{ID: "doc-1-chunk-2", DocumentID: "doc-1", Text: "成员甲的薪资是 300。"},
 	}
 
 	hit, rank, matchedBy := evalCaseHit(item, chunks)
@@ -618,16 +618,16 @@ func TestBuildEvalRunMetrics(t *testing.T) {
 
 func TestEvalCaseEvidenceSupportDetectsCitationMismatch(t *testing.T) {
 	item := model.EvalGroundTruthCase{
-		Question:       "张三的手机号是多少？",
-		Answer:         "15911110011",
-		AnswerSnippets: []string{"15911110011"},
+		Question:       "成员甲的手机号是多少？",
+		Answer:         "联系方式甲",
+		AnswerSnippets: []string{"联系方式甲"},
 		SourceDocuments: []model.EvalSourceDocument{{
 			DocumentID: "doc-1",
 			ChunkID:    "chunk-1",
 		}},
 	}
 	chunks := []model.RetrievalDebugChunk{
-		{ID: "chunk-1", DocumentID: "doc-1", Text: "张三的地址是上海。"},
+		{ID: "chunk-1", DocumentID: "doc-1", Text: "成员甲的地址是城市甲。"},
 	}
 
 	supported, issue := evalCaseEvidenceSupport(item, chunks, true)
@@ -635,7 +635,7 @@ func TestEvalCaseEvidenceSupportDetectsCitationMismatch(t *testing.T) {
 		t.Fatalf("expected citation mismatch, got supported=%v issue=%q", supported, issue)
 	}
 
-	chunks[0].Text = "张三的手机号是15911110011。"
+	chunks[0].Text = "成员甲的手机号是联系方式甲。"
 	supported, issue = evalCaseEvidenceSupport(item, chunks, true)
 	if !supported || issue != "" {
 		t.Fatalf("expected supported evidence, got supported=%v issue=%q", supported, issue)
@@ -678,7 +678,7 @@ func TestListEvalRunsAndDeleteDatasetCleanup(t *testing.T) {
 			EvalDatasets: map[string]model.EvalDataset{
 				"eval-1": {
 					ID:              "eval-1",
-					Name:            "评估集 - 教师信息",
+					Name:            "评估集 - 结构化记录",
 					KnowledgeBaseID: "kb-1",
 					Count:           1,
 					CreatedAt:       "2026-03-12T00:00:00Z",
@@ -688,7 +688,7 @@ func TestListEvalRunsAndDeleteDatasetCleanup(t *testing.T) {
 				"run-1": {
 					RunID:           "run-1",
 					DatasetID:       "eval-1",
-					DatasetName:     "评估集 - 教师信息",
+					DatasetName:     "评估集 - 结构化记录",
 					KnowledgeBaseID: "kb-1",
 					StartedAt:       "2026-03-12T00:00:01Z",
 					Metrics:         model.EvalRunMetrics{TotalCases: 1, HitRate: 1, MRR: 1},

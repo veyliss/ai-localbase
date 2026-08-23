@@ -23,12 +23,12 @@ describe('getDocumentScopeMatches', () => {
 
   it('prioritizes exact and prefix filename matches', () => {
     const documents = [
-      { id: 'contains', name: '归档-武汉大学.pdf' },
-      { id: 'prefix', name: '武汉大学介绍.pdf' },
-      { id: 'exact', name: '武汉大学' },
+      { id: 'contains', name: '归档-示例机构.pdf' },
+      { id: 'prefix', name: '示例机构介绍.pdf' },
+      { id: 'exact', name: '示例机构' },
     ]
 
-    const result = getDocumentScopeMatches(documents, '武汉大学', null)
+    const result = getDocumentScopeMatches(documents, '示例机构', null)
 
     expect(result.visible.map((document) => document.id)).toEqual(['exact', 'prefix', 'contains'])
   })
@@ -36,10 +36,10 @@ describe('getDocumentScopeMatches', () => {
   it('does not keep a selected document that does not match the active query', () => {
     const documents = [
       { id: 'selected', name: '财务数据.xlsx' },
-      { id: 'match', name: '武汉大学简介.pdf' },
+      { id: 'match', name: '示例机构简介.pdf' },
     ]
 
-    const result = getDocumentScopeMatches(documents, '武汉大学', 'selected')
+    const result = getDocumentScopeMatches(documents, '示例机构', 'selected')
 
     expect(result.visible.map((document) => document.id)).toEqual(['match'])
   })

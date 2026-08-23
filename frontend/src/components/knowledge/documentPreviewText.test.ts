@@ -3,20 +3,20 @@ import { formatDocumentPreviewText, shouldUseRawDocumentPreview } from './docume
 
 describe('formatDocumentPreviewText', () => {
   it('merges PDF line wraps while keeping paragraph breaks', () => {
-    expect(formatDocumentPreviewText('武汉大学\n是全国重点大学。\n\n学校位于\n武汉。')).toBe(
-      '武汉大学是全国重点大学。\n\n学校位于武汉。',
+    expect(formatDocumentPreviewText('示例机构\n是一个示例机构。\n\n机构位于\n示例城市。')).toBe(
+      '示例机构是一个示例机构。\n\n机构位于示例城市。',
     )
   })
 
   it('joins isolated markdown heading markers with their titles', () => {
-    expect(formatDocumentPreviewText('#\n武汉大学简介\n\n##\n学校概况')).toBe(
-      '# 武汉大学简介\n\n## 学校概况',
+    expect(formatDocumentPreviewText('#\n示例机构简介\n\n##\n机构概况')).toBe(
+      '# 示例机构简介\n\n## 机构概况',
     )
   })
 
   it('preserves spaces between wrapped latin words', () => {
-    expect(formatDocumentPreviewText('Wuhan\nUniversity\n位于武汉')).toBe(
-      'Wuhan University位于武汉',
+    expect(formatDocumentPreviewText('Example\nOrganization\n位于示例城市')).toBe(
+      'Example Organization位于示例城市',
     )
   })
 

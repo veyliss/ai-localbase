@@ -160,7 +160,7 @@ func TestExtractStructuredTableSummaryFromCSV(t *testing.T) {
 func TestExtractStructuredTablesFromCSV(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "users.csv")
-	content := "姓名,城市,薪资\n张三,上海,24000\n李四,北京,18000\n"
+	content := "姓名,城市,薪资\n成员甲,城市甲,300\n成员乙,城市乙,200\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write csv: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestExtractStructuredTablesFromCSV(t *testing.T) {
 	if len(tables[0].Rows) != 2 {
 		t.Fatalf("expected two rows, got %d", len(tables[0].Rows))
 	}
-	if tables[0].Rows[0].Number != 2 || tables[0].Rows[0].Values[0] != "张三" {
+	if tables[0].Rows[0].Number != 2 || tables[0].Rows[0].Values[0] != "成员甲" {
 		t.Fatalf("unexpected first row: %#v", tables[0].Rows[0])
 	}
 }

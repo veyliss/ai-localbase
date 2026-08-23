@@ -800,8 +800,8 @@ func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
 				"name": "upload_text_document",
 				"arguments": map[string]any{
 					"knowledgeBaseId": knowledgeBaseID,
-					"fileName":        "mcp-users.csv",
-					"content":         "姓名,城市,薪资\n张三,上海,24000\n李四,北京,18000\n王五,上海,7000\n",
+					"fileName":        "mcp-records.csv",
+					"content":         "姓名,城市,薪资\n成员甲,城市甲,300\n成员乙,城市乙,200\n成员丙,城市甲,100\n",
 				},
 			},
 		})),
@@ -837,7 +837,7 @@ func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
 				"name": "query_structured_data",
 				"arguments": map[string]any{
 					"documentId": documentID,
-					"query":      "筛选城市是上海的数据",
+					"query":      "筛选城市是城市甲的数据",
 				},
 			},
 		})),
@@ -847,7 +847,7 @@ func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
 	if queryResp.Code != http.StatusOK {
 		t.Fatalf("expected query status 200, got %d, body=%s", queryResp.Code, queryResp.Body.String())
 	}
-	if !strings.Contains(queryResp.Body.String(), `"structuredData"`) || !strings.Contains(queryResp.Body.String(), `"姓名":"张三"`) || !strings.Contains(queryResp.Body.String(), `"姓名":"王五"`) {
+	if !strings.Contains(queryResp.Body.String(), `"structuredData"`) || !strings.Contains(queryResp.Body.String(), `"姓名":"成员甲"`) || !strings.Contains(queryResp.Body.String(), `"姓名":"成员丙"`) {
 		t.Fatalf("expected structured rows in MCP result, got %s", queryResp.Body.String())
 	}
 	if strings.Contains(queryResp.Body.String(), `"answer"`) || strings.Contains(queryResp.Body.String(), "|姓名|") {
@@ -856,7 +856,7 @@ func TestMCPStructuredDataQueryAndEvalDataset(t *testing.T) {
 
 	evidenceResp := performMCPToolCall(t, engine, headers, 23, "answer_with_sources", map[string]any{
 		"documentId": documentID,
-		"query":      "筛选城市是上海的数据",
+		"query":      "筛选城市是城市甲的数据",
 	})
 	if evidenceResp.Code != http.StatusOK {
 		t.Fatalf("expected evidence status 200, got %d, body=%s", evidenceResp.Code, evidenceResp.Body.String())
@@ -2085,13 +2085,13 @@ func TestRouterStructuredCSVCountQuestionUsesCondensedAnswerRules(t *testing.T) 
 	}
 	knowledgeBaseID := kbList.Items[0].ID
 
-	csvContent := "姓名,性别,职称,教龄\n张三,男,高级职称,20\n李四,女,中级职称,8\n王五,男,无职称,4\n赵六,女,助教,1\n"
+	csvContent := "姓名,性别,职称,教龄\n成员甲,甲,级别甲,20\n成员乙,乙,级别乙,8\n成员丙,甲,无,4\n成员丁,乙,级别丙,1\n"
 	uploadResp := performMultipartUpload(
 		t,
 		engine,
 		http.MethodPost,
 		fmt.Sprintf("/api/knowledge-bases/%s/documents", knowledgeBaseID),
-		"employees.csv",
+		"structured-records.csv",
 		csvContent,
 	)
 	if uploadResp.Code != http.StatusOK {

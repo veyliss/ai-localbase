@@ -9,7 +9,8 @@ const retrievalQuery = process.env.E2E_QUERY?.trim() || ''
 const chatQuery = process.env.E2E_CHAT_QUERY?.trim() || ''
 const username = process.env.E2E_USERNAME?.trim() || 'root'
 const password = process.env.E2E_PASSWORD || ''
-const workflowEnabled = Boolean(uploadFile && fs.existsSync(uploadFile) && retrievalQuery)
+const externalFileAllowed = process.env.E2E_ALLOW_EXTERNAL_FILE === '1'
+const workflowEnabled = Boolean(externalFileAllowed && uploadFile && fs.existsSync(uploadFile) && retrievalQuery)
 
 const loginIfRequired = async (page: Page, testInfo: TestInfo) => {
   await page.goto('/')
@@ -87,7 +88,10 @@ const cleanupKnowledgeBase = async (page: Page, knowledgeBaseId: string) => {
 test.describe('知识库核心浏览器工作流', () => {
   let knowledgeBaseId = ''
 
-  test.skip(!workflowEnabled, '设置 E2E_UPLOAD_FILE 和 E2E_QUERY 后运行浏览器工作流测试')
+  test.skip(
+    !workflowEnabled,
+    '仅在明确设置 E2E_ALLOW_EXTERNAL_FILE=1、E2E_UPLOAD_FILE 和 E2E_QUERY 后运行浏览器工作流测试',
+  )
 
   test.beforeEach(async ({ page }, testInfo) => {
     await loginIfRequired(page, testInfo)

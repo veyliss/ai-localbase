@@ -3,24 +3,24 @@ import { fixMarkdown } from './MarkdownRenderer'
 
 describe('fixMarkdown', () => {
   it('normalizes compact headings and lists', () => {
-    const output = fixMarkdown('##核心观点###数据概况-**文件名称**：users.csv-**字段定义**：姓名、城市')
+    const output = fixMarkdown('##核心观点###数据概况-**文件名称**：records.csv-**字段定义**：姓名、地点')
 
     expect(output).toContain('## 核心观点')
     expect(output).toContain('### 数据概况')
-    expect(output).toContain('- **文件名称**：users.csv')
-    expect(output).toContain('- **字段定义**：姓名、城市')
+    expect(output).toContain('- **文件名称**：records.csv')
+    expect(output).toContain('- **字段定义**：姓名、地点')
   })
 
   it('repairs compact markdown tables from model output', () => {
     const output = fixMarkdown(
-      '###关键人员信息摘要|姓名|城市|薪资||------|------|------||张三|上海|24000||李四|北京|18000|',
+      '###表格摘要|字段A|字段B|字段C||------|------|------||值甲|值乙|300||值丙|值丁|200|',
     )
 
-    expect(output).toContain('### 关键人员信息摘要')
-    expect(output).toContain('| 姓名 | 城市 | 薪资 |')
+    expect(output).toContain('### 表格摘要')
+    expect(output).toContain('| 字段A | 字段B | 字段C |')
     expect(output).toContain('| --- | --- | --- |')
-    expect(output).toContain('| 张三 | 上海 | 24000 |')
-    expect(output).toContain('| 李四 | 北京 | 18000 |')
+    expect(output).toContain('| 值甲 | 值乙 | 300 |')
+    expect(output).toContain('| 值丙 | 值丁 | 200 |')
   })
 
   it('keeps valid mermaid fences readable', () => {

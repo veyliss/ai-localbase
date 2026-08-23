@@ -15,6 +15,7 @@ npx playwright install chromium
 
 ```bash
 E2E_BASE_URL=http://localhost:4173 \
+E2E_ALLOW_EXTERNAL_FILE=1 \
 E2E_UPLOAD_FILE=/绝对路径/本地文件.txt \
 E2E_QUERY='输入一个与本地文件内容相关的问题' \
 npm run test:e2e
@@ -22,4 +23,4 @@ npm run test:e2e
 
 启用认证时再提供 `E2E_USERNAME` 和 `E2E_PASSWORD`。聊天引用流程还需要提供 `E2E_CHAT_QUERY`，并确保当前配置的聊天模型可用。
 
-测试会创建带有 `E2E` 前缀的临时知识库，并在每个用例结束后尝试删除。**本地文件、问题、模型凭据和测试结果都不会写入仓库。**
+测试会创建带有 `E2E` 前缀的临时知识库，并在每个用例结束后尝试删除。外部文件上传必须显式设置 `E2E_ALLOW_EXTERNAL_FILE=1`，请只使用专门准备的合成文件。**本地文件、问题、模型凭据和测试结果都不会写入仓库。**

@@ -154,7 +154,7 @@ func TestNormalizeRetrievalConfigIncludesRerankAndRewrite(t *testing.T) {
 
 func TestBuildRetrievalDebugConfidence(t *testing.T) {
 	t.Run("empty result is low confidence", func(t *testing.T) {
-		confidence := buildRetrievalDebugConfidence("张三的薪资是多少", nil)
+		confidence := buildRetrievalDebugConfidence("成员甲的金额是多少", nil)
 		if confidence.Status != "low" {
 			t.Fatalf("expected low confidence, got %s", confidence.Status)
 		}
@@ -164,9 +164,9 @@ func TestBuildRetrievalDebugConfidence(t *testing.T) {
 	})
 
 	t.Run("low score result explains score issue", func(t *testing.T) {
-		confidence := buildRetrievalDebugConfidence("张三的薪资是多少", []RetrievedChunk{
+		confidence := buildRetrievalDebugConfidence("成员甲的金额是多少", []RetrievedChunk{
 			{
-				DocumentChunk: DocumentChunk{Text: "张三 薪资 24000"},
+				DocumentChunk: DocumentChunk{Text: "成员甲 金额 300"},
 				Score:         0.05,
 			},
 		})
@@ -179,13 +179,13 @@ func TestBuildRetrievalDebugConfidence(t *testing.T) {
 	})
 
 	t.Run("strong result is normal confidence", func(t *testing.T) {
-		confidence := buildRetrievalDebugConfidence("张三", []RetrievedChunk{
+		confidence := buildRetrievalDebugConfidence("成员甲", []RetrievedChunk{
 			{
-				DocumentChunk: DocumentChunk{Text: "张三 的 薪资 是 24000 元"},
+				DocumentChunk: DocumentChunk{Text: "成员甲 的 金额 是 300 元"},
 				Score:         0.92,
 			},
 			{
-				DocumentChunk: DocumentChunk{Text: "张三 教师编号 111222333111"},
+				DocumentChunk: DocumentChunk{Text: "成员甲 编号 编号甲"},
 				Score:         0.86,
 			},
 		})
@@ -412,7 +412,7 @@ func TestApplyEvidenceGateKeepsDeterministicStructuredResults(t *testing.T) {
 }
 
 func TestQueryEvidenceTermsDoNotInjectFactAliases(t *testing.T) {
-	terms := strings.Join(queryEvidenceTerms("张三的手机号是多少？"), "\n")
+	terms := strings.Join(queryEvidenceTerms("成员甲的手机号是多少？"), "\n")
 	for _, alias := range []string{"联系电话", "联系方式", "办公电话"} {
 		if strings.Contains(terms, alias) {
 			t.Fatalf("expected query terms to come only from the user query, found injected alias %q in %q", alias, terms)
@@ -570,7 +570,7 @@ func TestFilterRetrievedChunksToScopeDropsForeignAndOrphanDocuments(t *testing.T
 			Documents: []model.Document{{
 				ID:              "doc-school",
 				KnowledgeBaseID: "kb-school",
-				Name:            "武汉大学简介.pdf",
+				Name:            "机构简介.pdf",
 			}},
 		},
 		"kb-novel": {
@@ -627,10 +627,10 @@ func TestRecentConversationHistorySkipsCurrentQueryAndDegradedReplies(t *testing
 }
 
 func TestBuildRetrievalDebugMatchReasons(t *testing.T) {
-	reasons := buildRetrievalDebugMatchReasons("武汉大学校长是谁", RetrievedChunk{
+	reasons := buildRetrievalDebugMatchReasons("示例机构负责人是谁", RetrievedChunk{
 		DocumentChunk: DocumentChunk{
 			Kind: "text",
-			Text: "武汉大学校长信息与学校治理结构说明。",
+			Text: "示例机构负责人信息与组织结构说明。",
 		},
 		Score:    0.82,
 		RawScore: 0.86,
@@ -647,7 +647,7 @@ func TestBuildRetrievalDebugMatchReasons(t *testing.T) {
 	structuredReasons := buildRetrievalDebugMatchReasons("谁的薪资最高", RetrievedChunk{
 		DocumentChunk: DocumentChunk{
 			Kind: "structured_row",
-			Text: "第2行：姓名：张三。薪资：24000。",
+			Text: "第2行：姓名：成员甲。金额：300。",
 		},
 		Score:    0.72,
 		RawScore: 0.61,
@@ -693,12 +693,12 @@ func TestBuildChunkTextDeduplicatesRepeatedChunks(t *testing.T) {
 
 func TestGetKnowledgeBaseHealthReportsStructuredMetrics(t *testing.T) {
 	dir := t.TempDir()
-	csvPath := filepath.Join(dir, "users.csv")
+	csvPath := filepath.Join(dir, "records.csv")
 	content := strings.Join([]string{
-		"姓名,城市,薪资",
-		"张三,上海,24000",
-		"李四,北京,18000",
-		"王五,上海,7000",
+		"姓名,地点,金额",
+		"成员甲,城市甲,300",
+		"成员乙,城市乙,200",
+		"成员丙,城市甲,100",
 	}, "\n")
 	if err := os.WriteFile(csvPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write csv fixture: %v", err)
@@ -714,7 +714,7 @@ func TestGetKnowledgeBaseHealthReportsStructuredMetrics(t *testing.T) {
 					Documents: []model.Document{{
 						ID:              "doc-users",
 						KnowledgeBaseID: "kb-1",
-						Name:            "users.csv",
+						Name:            "records.csv",
 						Path:            csvPath,
 						Status:          "indexed",
 						IndexedAt:       indexedAt,
@@ -803,8 +803,8 @@ func TestExtractFilenamesFromQuery(t *testing.T) {
 	}{
 		{
 			name:     "双书名号包裹",
-			query:    "《1780210993958540083____1.csv》共有多少条数据记录？",
-			expected: []string{"1780210993958540083____1.csv"},
+			query:    "《generated-001.csv》共有多少条数据记录？",
+			expected: []string{"generated-001.csv"},
 		},
 		{
 			name:     "双引号包裹",
@@ -828,13 +828,13 @@ func TestExtractFilenamesFromQuery(t *testing.T) {
 		},
 		{
 			name:     "Excel文件",
-			query:    "《工作簿1.xlsx》工作表《教师信息》共有多少条数据记录？",
-			expected: []string{"工作簿1.xlsx"},
+			query:    "《structured-records.xlsx》工作表《记录》共有多少条数据记录？",
+			expected: []string{"structured-records.xlsx"},
 		},
 		{
 			name:     "PDF文件",
-			query:    "《武汉大学简介.pdf》中提到的建校时间是什么？",
-			expected: []string{"武汉大学简介.pdf"},
+			query:    "《机构简介.pdf》中提到的成立年份是什么？",
+			expected: []string{"机构简介.pdf"},
 		},
 	}
 
@@ -860,10 +860,10 @@ func TestFindDocumentByFilename(t *testing.T) {
 				"kb-1": {
 					ID: "kb-1",
 					Documents: []model.Document{
-						{ID: "doc-1", Name: "users.csv"},
-						{ID: "doc-2", Name: "1780210993958540083____1.csv"},
-						{ID: "doc-3", Name: "工作簿1.xlsx"},
-						{ID: "doc-4", Name: "武汉大学简介.pdf"},
+						{ID: "doc-1", Name: "records.csv"},
+						{ID: "doc-2", Name: "generated-001.csv"},
+						{ID: "doc-3", Name: "structured-records.xlsx"},
+						{ID: "doc-4", Name: "机构简介.pdf"},
 					},
 				},
 			},
@@ -879,25 +879,25 @@ func TestFindDocumentByFilename(t *testing.T) {
 		{
 			name:       "精确匹配",
 			kbID:       "kb-1",
-			filename:   "users.csv",
+			filename:   "records.csv",
 			expectedID: "doc-1",
 		},
 		{
 			name:       "部分匹配 - 长文件名",
 			kbID:       "kb-1",
-			filename:   "1780210993958540083____1.csv",
+			filename:   "generated-001.csv",
 			expectedID: "doc-2",
 		},
 		{
 			name:       "中文文件名",
 			kbID:       "kb-1",
-			filename:   "工作簿1.xlsx",
+			filename:   "structured-records.xlsx",
 			expectedID: "doc-3",
 		},
 		{
 			name:       "PDF文件",
 			kbID:       "kb-1",
-			filename:   "武汉大学简介.pdf",
+			filename:   "机构简介.pdf",
 			expectedID: "doc-4",
 		},
 		{
@@ -921,7 +921,7 @@ func TestFindDocumentByFilename(t *testing.T) {
 		{
 			name:       "不存在的知识库",
 			kbID:       "kb-999",
-			filename:   "users.csv",
+			filename:   "records.csv",
 			expectedID: "",
 		},
 	}
@@ -943,9 +943,9 @@ func TestFindDocumentByFilenameWithExtensionFallback(t *testing.T) {
 				"kb-30": {
 					ID: "kb-30",
 					Documents: []model.Document{
-						{ID: "doc-48", Name: "工作簿1.csv"},
-						{ID: "doc-50", Name: "工作簿1.xlsx"},
-						{ID: "doc-35", Name: "users.csv"},
+						{ID: "doc-48", Name: "generated____1.csv"},
+						{ID: "doc-50", Name: "generated____1.xlsx"},
+						{ID: "doc-35", Name: "records.csv"},
 					},
 				},
 			},
@@ -962,14 +962,14 @@ func TestFindDocumentByFilenameWithExtensionFallback(t *testing.T) {
 		{
 			name:       "扩展名唯一匹配 - xlsx",
 			kbID:       "kb-30",
-			filename:   "1780210994576679459____1.xlsx",
+			filename:   "incoming____1.xlsx",
 			expectedID: "doc-50",
 			desc:       "临时文件名应该通过扩展名匹配到唯一的 xlsx 文档",
 		},
 		{
 			name:       "扩展名不唯一 - csv",
 			kbID:       "kb-30",
-			filename:   "1780210993958540083____1.csv",
+			filename:   "incoming____1.csv",
 			expectedID: "",
 			desc:       "两个 csv 文档时，不应该通过扩展名匹配",
 		},

@@ -1,0 +1,62 @@
+name: Browser E2E (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: '已启动应用的前端地址，例如 http://localhost:4173'
+        required: true
+        default: 'http://localhost:4173'
+        type: string
+      upload_file:
+        description: 'self-hosted runner 上的本地文件绝对路径，不提交到仓库'
+        required: true
+        type: string
+      query:
+        description: '用于检索调试的本地问题'
+        required: true
+        type: string
+      chat_query:
+        description: '可选：用于验证聊天引用定位的问题'
+        required: false
+        type: string
+      username:
+        description: '认证用户名；未启用认证时保持默认值即可'
+        required: false
+        default: 'root'
+        type: string
+
+jobs:
+  browser-e2e:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: frontend
+        run: npx playwright install chromium
+
+      - name: Run browser workflow
+        working-directory: frontend
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
+          E2E_UPLOAD_FILE: ${{ inputs.upload_file }}
+          E2E_QUERY: ${{ inputs.query }}
+          E2E_CHAT_QUERY: ${{ inputs.chat_query }}
+          E2E_USERNAME: ${{ inputs.username }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}

@@ -35,6 +35,21 @@ const rerankStrategyLabel = (strategy?: string) => (
   strategy === 'semantic' ? '语义重排' : '关键词重排'
 )
 
+const retrievalStageLabel = (stage: string) => {
+  const labels: Record<string, string> = {
+    structured_retrieve: '结构化查询',
+    query_embedding: '问题向量化',
+    query_rewrite: '问题改写',
+    retrieve: '候选检索',
+    rerank: '候选重排',
+    select_with_mmr: '多样性选择',
+    deduplicate: '结果去重',
+    topk: '结果截断',
+    evidence_gate: '证据门控',
+  }
+  return labels[stage] || stage
+}
+
 const retrievalChannelLabel = (channel: string) => {
   if (channel === 'dense') return '向量'
   if (channel === 'sparse') return '关键词'
@@ -189,6 +204,9 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
               <span>最高分 {formatDiagnosticScore(result.confidence.topScore)}</span>
               <span>平均分 {formatDiagnosticScore(result.confidence.averageScore)}</span>
               <span>证据覆盖 {formatDiagnosticPercent(result.confidence.evidenceCoverage)}</span>
+              {result.evidenceGateDroppedCount > 0 && (
+                <span>证据门控移除 {result.evidenceGateDroppedCount}</span>
+              )}
             </div>
             {result.confidence.reasons && result.confidence.reasons.length > 0 && (
               <ul>
@@ -277,7 +295,7 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
                 <div className="kb-retrieval-trace-list">
                   {result.trace.map((step, index) => (
                     <span key={`${step.stage}-${index}`}>
-                      {step.stage}：{step.reason || step.status}
+                      {retrievalStageLabel(step.stage)}：{step.reason || step.status}
                       {(step.inputCount || step.outputCount) ? `（${step.inputCount ?? '-'} -> ${step.outputCount ?? '-'}）` : ''}
                     </span>
                   ))}

@@ -68,6 +68,7 @@ const evalTrendInsights = (latest: EvalRunSummary | null, previous: EvalRunSumma
   if (metrics.evidenceSupportRate < 0.85) insights.push('证据支撑不足，关注上下文压缩、引用片段和答案支撑关系。')
   if (metrics.latencyP95Ms > 8000) insights.push('P95 延迟较高，建议检查改写、重排和模型调用耗时。')
   if (metrics.citationMismatchCount > 0) insights.push(`存在 ${metrics.citationMismatchCount} 条引用不准结果。`)
+  if (metrics.evidenceGateAffectedCases > 0) insights.push(`证据门控影响 ${metrics.evidenceGateAffectedCases} 条用例，共移除 ${metrics.evidenceGateDroppedCount} 个片段；请重点复核门控误杀。`)
 
   return insights.slice(0, 4)
 }

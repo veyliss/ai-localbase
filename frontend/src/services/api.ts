@@ -358,6 +358,9 @@ export interface RetrievalDebugResponse {
   count: number
   lowConfidence: boolean
   confidence: RetrievalDebugConfidence
+  evidenceGateInputCount: number
+  evidenceGateOutputCount: number
+  evidenceGateDroppedCount: number
   contextPreview: string
   sources: Array<Record<string, string>>
   evalCandidate?: EvalGroundTruthCase
@@ -446,6 +449,9 @@ export interface EvalRunMetrics {
   citationMismatchCount: number
   directEvidenceHitCount: number
   directEvidenceHitRate: number
+  evidenceGateDroppedCount: number
+  evidenceGateAffectedCases: number
+  evidenceGateEmptyResults: number
 }
 
 export interface EvalRunCaseResult {
@@ -462,6 +468,9 @@ export interface EvalRunCaseResult {
   evidenceSupport: boolean
   evidenceIssue?: string
   directEvidence: boolean
+  evidenceGateInputCount: number
+  evidenceGateOutputCount: number
+  evidenceGateDroppedCount: number
   error?: string
   retrieved: RetrievalDebugChunk[]
 }

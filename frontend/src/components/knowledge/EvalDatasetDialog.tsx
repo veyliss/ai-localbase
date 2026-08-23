@@ -930,11 +930,15 @@ const EvalDatasetDialog: React.FC<EvalDatasetDialogProps> = ({
                     {item.lowConfidence && <span>低置信</span>}
                     {item.directEvidence && <span>直接证据</span>}
                     {item.evidenceIssue && <span>证据待核</span>}
+                    {item.evidenceGateDroppedCount > 0 && <span>门控移除 {item.evidenceGateDroppedCount}</span>}
                     {item.matchedBy && <span>{item.matchedBy}</span>}
                     <strong>{item.question}</strong>
                     <p>{item.error || item.expectedAnswer}</p>
                     {item.evidenceIssue && (
                       <p>证据问题：{item.evidenceIssue}</p>
+                    )}
+                    {item.evidenceGateDroppedCount > 0 && (
+                      <p>证据门控：召回 {item.evidenceGateInputCount} 条，保留 {item.evidenceGateOutputCount} 条，移除 {item.evidenceGateDroppedCount} 条。</p>
                     )}
                     {item.lowConfidence && evalCaseConfidenceSummary(item) && (
                       <p>低置信原因：{evalCaseConfidenceSummary(item)}</p>

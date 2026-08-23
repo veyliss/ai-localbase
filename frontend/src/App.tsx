@@ -8,6 +8,8 @@ import { ToastProvider, useToast } from './components/common/Toast'
 import LoadingBar from './components/common/LoadingBar'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useKnowledgeWorkspaceState } from './hooks/useKnowledgeWorkspaceState'
+import { useAppPreferencesState } from './hooks/useAppPreferencesState'
+import { useConversationWorkspaceState } from './hooks/useConversationWorkspaceState'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE_PATH,
@@ -206,8 +208,6 @@ export interface ChatModeSettings {
   thinkModel: string
 }
 
-const THINK_MODEL_STORAGE_KEY = 'ai-localbase-think-model'
-const SIDEBAR_OPEN_STORAGE_KEY = 'ai-localbase-conversation-sidebar-open'
 const FALLBACK_REQUEST_TIMEOUT_MS = 180_000
 const STREAM_FIRST_CHUNK_TIMEOUT_MS = 30_000
 const STREAM_REQUEST_TIMEOUT_MS = 180_000
@@ -551,15 +551,6 @@ function AppContent() {
   const { showToast } = useToast()
   const [authCheckDone, setAuthCheckDone] = useState(false)
   const [authRequired, setAuthRequired] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(() =>
-    (() => {
-      if (typeof window === 'undefined') return true
-      const storedValue = window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY)
-      if (storedValue === 'true') return true
-      if (storedValue === 'false') return false
-      return window.innerWidth > 768
-    })(),
-  )
   const {
     knowledgeBases,
     setKnowledgeBases,
@@ -572,19 +563,22 @@ function AppContent() {
     selectedDocument,
     toggleKnowledgeBaseCollapse,
   } = useKnowledgeWorkspaceState()
-  const [streamingConversationId, setStreamingConversationId] = useState<string | null>(null)
   const [backendReady, setBackendReady] = useState(false)
   const [backendWarmupRequired, setBackendWarmupRequired] = useState(true)
   const [authWarningsShown, setAuthWarningsShown] = useState(false)
   const [globalLoading] = useState(false)
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    const initialConversation = createEmptyConversation()
-    return [initialConversation]
-  })
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
-  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceView>('chat')
-  const [citationNavigationTarget, setCitationNavigationTarget] =
-    useState<CitationNavigationTarget | null>(null)
+  const {
+    conversations,
+    setConversations,
+    activeConversationId,
+    setActiveConversationId,
+    activeWorkspace,
+    setActiveWorkspace,
+    citationNavigationTarget,
+    setCitationNavigationTarget,
+    streamingConversationId,
+    setStreamingConversationId,
+  } = useConversationWorkspaceState(createEmptyConversation)
   const [directoryUploadTask, setDirectoryUploadTask] = useState<DirectoryUploadTask>(
     createEmptyDirectoryUploadTask,
   )
@@ -592,10 +586,6 @@ function AppContent() {
   const directoryUploadCancelRef = useRef(false)
   const chatAbortControllerRef = useRef<AbortController | null>(null)
   const activeChatRequestRef = useRef<{ requestId: string; conversationId: string } | null>(null)
-
-  useEffect(() => {
-    window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(sidebarOpen))
-  }, [sidebarOpen])
 
   const waitForBackendReady = async (attempts = 12, delayMs = 1500) => {
     for (let index = 0; index < attempts; index += 1) {
@@ -646,20 +636,14 @@ function AppContent() {
     return defaultConfig
   })
 
-  const [chatMode, setChatMode] = useState<ChatMode>('fast')
-  const [thinkModel, setThinkModel] = useState(() => {
-    if (typeof window === 'undefined') {
-      return 'deepseek-r1:8b'
-    }
-    return window.localStorage.getItem(THINK_MODEL_STORAGE_KEY)?.trim() || 'deepseek-r1:8b'
-  })
-  const chatModeSettings = useMemo<ChatModeSettings>(
-    () => ({
-      fastModel: config.chat.model,
-      thinkModel,
-    }),
-    [config.chat.model, thinkModel],
-  )
+  const {
+    sidebarOpen,
+    setSidebarOpen,
+    chatMode,
+    setChatMode,
+    setThinkModel,
+    chatModeSettings,
+  } = useAppPreferencesState(config)
 
   const persistConfigToBackend = async (nextConfig: AppConfig) => {
     const savedConfig = normalizeAppConfig(await updateAppConfig(nextConfig), nextConfig)
@@ -2219,13 +2203,6 @@ function AppContent() {
     const savedConfig = await persistConfigToBackend(nextConfig)
     const normalizedThinkModel = nextThinkModel.trim()
     setThinkModel(normalizedThinkModel)
-    if (typeof window !== 'undefined') {
-      if (normalizedThinkModel) {
-        window.localStorage.setItem(THINK_MODEL_STORAGE_KEY, normalizedThinkModel)
-      } else {
-        window.localStorage.removeItem(THINK_MODEL_STORAGE_KEY)
-      }
-    }
     return savedConfig
   }
 

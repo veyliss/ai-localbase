@@ -840,6 +840,8 @@ func structuredDataResultChunks(result StructuredDataQueryResult, sources []map[
 					Text:            text,
 					Index:           maxInt(row.RowNumber-1, index),
 					Kind:            "structured_query",
+					TableRow:        row.RowNumber,
+					TableColumns:    append([]string(nil), result.Columns...),
 				},
 				Score:             1,
 				RawScore:          1,

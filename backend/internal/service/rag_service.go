@@ -149,6 +149,13 @@ type DocumentChunk struct {
 	Text            string
 	Index           int
 	Kind            string
+	EvidenceID      string
+	CharStart       int
+	CharEnd         int
+	LineStart       int
+	LineEnd         int
+	TableRow        int
+	TableColumns    []string
 }
 
 // SparseVector 稀疏向量（词项索引 -> 权重）
@@ -252,8 +259,10 @@ func (s *RagService) BuildDocumentChunks(document model.Document, text string) [
 	parts := s.ChunkText(text)
 	chunks := make([]DocumentChunk, 0, len(parts))
 	nextIndex := 0
+	searchFrom := 0
 	for index, part := range parts {
 		kind := classifyDocumentChunkKind(part)
+		charStart, charEnd, lineStart, lineEnd, nextSearch := locateEvidenceRange(text, part, searchFrom)
 		chunks = append(chunks, DocumentChunk{
 			ID:              fmt.Sprintf("%s-chunk-%d", document.ID, index),
 			KnowledgeBaseID: document.KnowledgeBaseID,
@@ -262,7 +271,12 @@ func (s *RagService) BuildDocumentChunks(document model.Document, text string) [
 			Text:            part,
 			Index:           nextIndex,
 			Kind:            kind,
+			CharStart:       charStart,
+			CharEnd:         charEnd,
+			LineStart:       lineStart,
+			LineEnd:         lineEnd,
 		})
+		searchFrom = nextSearch
 		nextIndex++
 	}
 
@@ -277,7 +291,9 @@ func buildStructuredSummaryChunks(document model.Document, text string, startInd
 		return nil
 	}
 	chunks := make([]DocumentChunk, 0, len(blocks))
+	searchFrom := 0
 	for i, block := range blocks {
+		charStart, charEnd, lineStart, lineEnd, nextSearch := locateEvidenceRange(text, block, searchFrom)
 		chunks = append(chunks, DocumentChunk{
 			ID:              fmt.Sprintf("%s-summary-%d", document.ID, i),
 			KnowledgeBaseID: document.KnowledgeBaseID,
@@ -286,7 +302,12 @@ func buildStructuredSummaryChunks(document model.Document, text string, startInd
 			Text:            block,
 			Index:           startIndex + i,
 			Kind:            "structured_summary",
+			CharStart:       charStart,
+			CharEnd:         charEnd,
+			LineStart:       lineStart,
+			LineEnd:         lineEnd,
 		})
+		searchFrom = nextSearch
 	}
 	return chunks
 }
@@ -417,7 +438,7 @@ func (s *RagService) BuildContext(chunks []RetrievedChunk) (string, []map[string
 	sources := make([]map[string]string, 0, len(chunks))
 	for _, chunk := range chunks {
 		lines = append(lines, fmt.Sprintf("[%s#%d] %s", chunk.DocumentName, chunk.Index+1, chunk.Text))
-		sources = append(sources, map[string]string{
+		source := map[string]string{
 			"knowledgeBaseId": chunk.KnowledgeBaseID,
 			"documentId":      chunk.DocumentID,
 			"documentName":    chunk.DocumentName,
@@ -426,7 +447,11 @@ func (s *RagService) BuildContext(chunks []RetrievedChunk) (string, []map[string
 			"chunkKind":       chunk.Kind,
 			"score":           fmt.Sprintf("%.4f", chunk.Score),
 			"snippet":         truncateRunes(strings.TrimSpace(chunk.Text), 220),
-		})
+		}
+		for key, value := range evidenceMetadata(chunk) {
+			source[key] = value
+		}
+		sources = append(sources, source)
 	}
 
 	return strings.Join(lines, "\n\n"), sources
@@ -561,11 +586,19 @@ func (r *RagService) MultiQuerySearch(
 				results = append(results, RetrievedChunk{
 					DocumentChunk: DocumentChunk{
 						ID:              chunkID,
+						EvidenceID:      payloadString(item.Payload, "evidence_id", ""),
 						KnowledgeBaseID: payloadString(item.Payload, "knowledge_base_id", collectionName),
 						DocumentID:      payloadString(item.Payload, "document_id", ""),
 						DocumentName:    payloadString(item.Payload, "document_name", "未知文档"),
 						Text:            text,
 						Index:           payloadInt(item.Payload, "chunk_index"),
+						Kind:            payloadString(item.Payload, "chunk_kind", "text"),
+						CharStart:       payloadInt(item.Payload, "char_start"),
+						CharEnd:         payloadInt(item.Payload, "char_end"),
+						LineStart:       payloadInt(item.Payload, "line_start"),
+						LineEnd:         payloadInt(item.Payload, "line_end"),
+						TableRow:        payloadInt(item.Payload, "table_row"),
+						TableColumns:    payloadStringSlice(item.Payload, "table_columns"),
 					},
 					Score:    item.Score,
 					RawScore: item.Score,

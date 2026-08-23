@@ -150,6 +150,28 @@ func TestRagServiceBuildContext(t *testing.T) {
 	if sources[0]["chunkId"] != "chunk-1" {
 		t.Fatalf("expected chunkId chunk-1, got %s", sources[0]["chunkId"])
 	}
+	if sources[0]["evidenceId"] == "" {
+		t.Fatal("expected stable evidence id")
+	}
+}
+
+func TestBuildDocumentChunksIncludesEvidenceLocation(t *testing.T) {
+	rag := NewRagService()
+	document := model.Document{ID: "doc-1", KnowledgeBaseID: "kb-1", Name: "demo.md"}
+	chunks := rag.BuildDocumentChunks(document, "第一段。\n第二段内容。\n")
+	if len(chunks) == 0 {
+		t.Fatal("expected document chunks")
+	}
+	if chunks[0].EvidenceID != "" {
+		t.Fatal("evidence id should be derived at the API boundary")
+	}
+	if chunks[0].CharEnd <= chunks[0].CharStart || chunks[0].LineStart <= 0 {
+		t.Fatalf("expected chunk location, got %#v", chunks[0])
+	}
+	firstID := evidenceIDForChunk(chunks[0])
+	if firstID == "" || firstID != evidenceIDForChunk(chunks[0]) {
+		t.Fatalf("expected deterministic evidence id, got %q", firstID)
+	}
 }
 
 func TestExtractDocumentTextFromMarkdown(t *testing.T) {

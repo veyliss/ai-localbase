@@ -486,9 +486,16 @@ type APIError struct {
 }
 
 type EvalSourceDocument struct {
-	KnowledgeBaseID string `json:"knowledge_base_id"`
-	DocumentID      string `json:"document_id"`
-	ChunkID         string `json:"chunk_id"`
+	KnowledgeBaseID string   `json:"knowledge_base_id"`
+	DocumentID      string   `json:"document_id"`
+	ChunkID         string   `json:"chunk_id"`
+	EvidenceID      string   `json:"evidence_id,omitempty"`
+	CharStart       int      `json:"char_start,omitempty"`
+	CharEnd         int      `json:"char_end,omitempty"`
+	LineStart       int      `json:"line_start,omitempty"`
+	LineEnd         int      `json:"line_end,omitempty"`
+	TableRow        int      `json:"table_row,omitempty"`
+	TableColumns    []string `json:"table_columns,omitempty"`
 }
 
 type EvalGroundTruthCase struct {
@@ -663,6 +670,7 @@ type RetrievalDebugRequest struct {
 
 type RetrievalDebugChunk struct {
 	ID                string   `json:"id"`
+	EvidenceID        string   `json:"evidenceId,omitempty"`
 	KnowledgeBaseID   string   `json:"knowledgeBaseId"`
 	DocumentID        string   `json:"documentId"`
 	DocumentName      string   `json:"documentName"`
@@ -670,6 +678,12 @@ type RetrievalDebugChunk struct {
 	Kind              string   `json:"kind"`
 	Score             float64  `json:"score"`
 	Text              string   `json:"text"`
+	CharStart         int      `json:"charStart,omitempty"`
+	CharEnd           int      `json:"charEnd,omitempty"`
+	LineStart         int      `json:"lineStart,omitempty"`
+	LineEnd           int      `json:"lineEnd,omitempty"`
+	TableRow          int      `json:"tableRow,omitempty"`
+	TableColumns      []string `json:"tableColumns,omitempty"`
 	MatchReasons      []string `json:"matchReasons,omitempty"`
 	RetrievalChannels []string `json:"retrievalChannels,omitempty"`
 	DenseRank         int      `json:"denseRank,omitempty"`

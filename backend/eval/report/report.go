@@ -45,6 +45,8 @@ type CaseReport struct {
 	ChunkHit          bool   `json:"chunk_hit"`
 	AnswerSnippetHit  bool   `json:"answer_snippet_hit"`
 	DirectEvidenceHit bool   `json:"direct_evidence_hit"`
+	FailureCategory   string `json:"failure_category,omitempty"`
+	FailureReason     string `json:"failure_reason,omitempty"`
 	LLMAnswer         string `json:"llm_answer,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
@@ -65,6 +67,8 @@ func BuildReport(runID string, datasetPath string, results []offline.CaseResult,
 			ChunkHit:          res.ChunkHit,
 			AnswerSnippetHit:  res.AnswerSnippetHit,
 			DirectEvidenceHit: res.DirectEvidenceHit,
+			FailureCategory:   res.FailureCategory,
+			FailureReason:     res.FailureReason,
 			LLMAnswer:         res.LLMAnswer,
 			Error:             res.Error,
 		}
@@ -89,6 +93,20 @@ func BuildReport(runID string, datasetPath string, results []offline.CaseResult,
 		},
 		Cases: caseReports,
 	}
+}
+
+// LoadJSON loads a previously generated report for local comparison.
+func LoadJSON(path string) (*Report, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read report %s: %w", path, err)
+	}
+
+	var result Report
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode report %s: %w", path, err)
+	}
+	return &result, nil
 }
 
 // WriteJSON 将报告写入 JSON 文件
@@ -137,14 +155,14 @@ func (r *Report) WriteMarkdown(path string) error {
 
 	if len(failedCases) > 0 {
 		md.WriteString("## 失败用例\n")
-		md.WriteString("| ID | 问题 | 错误 |\n")
-		md.WriteString("|----|----|-----|\n")
+		md.WriteString("| ID | 问题 | 分类 | 原因 | 错误 |\n")
+		md.WriteString("|----|----|------|------|-----|\n")
 		for _, c := range failedCases {
 			errorMsg := c.Error
 			if !c.Hit && c.Error == "" {
 				errorMsg = "未命中"
 			}
-			md.WriteString(fmt.Sprintf("| %s | %s | %s |\n", c.CaseID, c.Question, errorMsg))
+			md.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n", c.CaseID, c.Question, c.FailureCategory, c.FailureReason, errorMsg))
 		}
 	}
 

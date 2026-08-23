@@ -229,3 +229,30 @@ func TestComputeLatencyPercentiles(t *testing.T) {
 	assert.Equal(t, 0*time.Millisecond, p50Empty)
 	assert.Equal(t, 0*time.Millisecond, p95Empty)
 }
+
+func TestClassifyFailureDistinguishesRecallRankAndCitation(t *testing.T) {
+	gt := GroundTruthCase{
+		SourceDocuments: []SourceDocument{{DocumentID: "doc-1", ChunkID: "chunk-1"}},
+		AnswerSnippets:  []string{"目标答案"},
+	}
+
+	recall := ClassifyFailure(CaseResult{RetrievedChunks: []RetrievedChunkInfo{{DocumentID: "doc-2"}}}, gt, 0.5)
+	assert.Equal(t, FailureCategoryRecallMiss, recall.Category)
+
+	rank := ClassifyFailure(CaseResult{RetrievedChunks: []RetrievedChunkInfo{{DocumentID: "doc-1", ChunkID: "chunk-2"}}}, gt, 0.5)
+	assert.Equal(t, FailureCategoryRankMiss, rank.Category)
+
+	citation := ClassifyFailure(CaseResult{RetrievedChunks: []RetrievedChunkInfo{{DocumentID: "doc-1", ChunkID: "chunk-2", Text: "目标答案"}}}, gt, 0.5)
+	assert.Equal(t, FailureCategoryCitationMismatch, citation.Category)
+}
+
+func TestEnabledCasesKeepsLegacyAndApprovedCases(t *testing.T) {
+	dataset := (&Dataset{Cases: []GroundTruthCase{
+		{ID: "legacy"},
+		{ID: "approved", ReviewStatus: "approved"},
+		{ID: "disabled", Disabled: true},
+		{ID: "rejected", ReviewStatus: "rejected"},
+	}}).EnabledCases()
+
+	assert.Equal(t, []string{"legacy", "approved"}, []string{dataset.Cases[0].ID, dataset.Cases[1].ID})
+}

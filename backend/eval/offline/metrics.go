@@ -24,6 +24,8 @@ type CaseResult struct {
 	HitRank           int     // 第一个命中的排名，-1 表示未命中
 	ReciprocalRank    float64 // 1/HitRank，未命中为 0
 	Error             string  // 运行时错误信息（若有）
+	FailureCategory   string  // 失败根因分类
+	FailureReason     string  // 失败根因说明
 }
 
 // RetrievedChunkInfo 检索结果摘要（不依赖 service 包，避免循环依赖）
@@ -57,6 +59,26 @@ type HitClassification struct {
 	AnswerSnippetHit  bool
 	DirectEvidenceHit bool
 	Rank              int
+}
+
+const (
+	FailureCategoryRecallMiss        = "recall_miss"
+	FailureCategoryRankMiss          = "rank_miss"
+	FailureCategoryEvidenceGateMiss  = "evidence_gate_miss"
+	FailureCategoryCitationMismatch  = "citation_mismatch"
+	FailureCategoryTableIntentMiss   = "table_intent_miss"
+	FailureCategoryFilenameScopeMiss = "filename_scope_miss"
+	FailureCategoryNoAnswerPolicy    = "no_answer_policy_miss"
+	FailureCategoryDatasetIssue      = "dataset_issue"
+	FailureCategoryRuntimeError      = "runtime_error"
+)
+
+// FailureClassification explains why a case did not produce a trustworthy hit.
+// It intentionally uses only evaluator-visible evidence so the result remains
+// reproducible across real and mock retrieval implementations.
+type FailureClassification struct {
+	Category string
+	Reason   string
 }
 
 // IsHit 判断单个用例是否命中（支持 Chunk 精确匹配和无 ChunkID 时的片段匹配）。
@@ -206,6 +228,89 @@ func ClassifyHit(result CaseResult, gt GroundTruthCase, threshold float64) HitCl
 		classification.Hit = classification.AnswerSnippetHit
 	}
 	return classification
+}
+
+// ClassifyFailure assigns a stable, coarse-grained root cause to an evaluation case.
+// The evaluator cannot infer every product-level cause from chunks alone, so it
+// prefers conservative categories over pretending to know the exact failure stage.
+func ClassifyFailure(result CaseResult, gt GroundTruthCase, threshold float64) FailureClassification {
+	if strings.TrimSpace(result.Error) != "" && strings.TrimSpace(result.Error) != "未命中" {
+		return FailureClassification{
+			Category: FailureCategoryRuntimeError,
+			Reason:   strings.TrimSpace(result.Error),
+		}
+	}
+
+	classification := ClassifyHit(result, gt, threshold)
+	if isNoAnswerCase(gt) && classification.Hit {
+		return FailureClassification{
+			Category: FailureCategoryNoAnswerPolicy,
+			Reason:   "无答案用例返回了可命中的证据",
+		}
+	}
+	if classification.Hit {
+		return FailureClassification{}
+	}
+	if len(gt.SourceDocuments) == 0 && len(gt.AnswerSnippets) == 0 {
+		return FailureClassification{
+			Category: FailureCategoryDatasetIssue,
+			Reason:   "用例没有 source_documents 或 answer_snippets，无法判断证据是否正确",
+		}
+	}
+	if !classification.DocumentHit {
+		return FailureClassification{
+			Category: FailureCategoryRecallMiss,
+			Reason:   "返回结果没有命中期望文档",
+		}
+	}
+	if classification.AnswerSnippetHit && !classification.ChunkHit {
+		return FailureClassification{
+			Category: FailureCategoryCitationMismatch,
+			Reason:   "结果包含答案片段，但没有命中标注的 Chunk",
+		}
+	}
+	if hasExactChunkSource(gt) && !classification.ChunkHit {
+		return FailureClassification{
+			Category: FailureCategoryRankMiss,
+			Reason:   "命中了目标文档，但正确 Chunk 未被召回或排名不足",
+		}
+	}
+	if !classification.DirectEvidenceHit {
+		if looksLikeTableCase(gt) {
+			return FailureClassification{
+				Category: FailureCategoryTableIntentMiss,
+				Reason:   "表格问题命中文档，但返回片段没有覆盖答案证据",
+			}
+		}
+		return FailureClassification{
+			Category: FailureCategoryEvidenceGateMiss,
+			Reason:   "命中文档范围，但没有足够的直接答案证据",
+		}
+	}
+	return FailureClassification{
+		Category: FailureCategoryRankMiss,
+		Reason:   "结果存在部分证据，但未达到当前命中判定标准",
+	}
+}
+
+func hasExactChunkSource(gt GroundTruthCase) bool {
+	for _, source := range gt.SourceDocuments {
+		if strings.TrimSpace(source.ChunkID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func isNoAnswerCase(gt GroundTruthCase) bool {
+	answerType := strings.ToLower(strings.TrimSpace(gt.AnswerType))
+	return answerType == "no_answer" || answerType == "unanswerable" || answerType == "unknown"
+}
+
+func looksLikeTableCase(gt GroundTruthCase) bool {
+	answerType := strings.ToLower(strings.TrimSpace(gt.AnswerType))
+	notes := strings.ToLower(strings.TrimSpace(gt.Notes))
+	return strings.Contains(answerType, "table") || strings.Contains(notes, "表格") || strings.Contains(notes, "structured")
 }
 
 // ComputeHitRate 计算命中率

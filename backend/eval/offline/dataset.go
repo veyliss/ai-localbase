@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,8 @@ type GroundTruthCase struct {
 	AnswerType      string           `json:"answer_type"` // extractive|abstractive|yesno|numeric
 	Difficulty      string           `json:"difficulty"`  // easy|medium|hard
 	Notes           string           `json:"notes"`
+	ReviewStatus    string           `json:"review_status,omitempty"`
+	Disabled        bool             `json:"disabled,omitempty"`
 }
 
 type SourceDocument struct {
@@ -68,6 +71,24 @@ func (d *Dataset) Validate() error {
 		}
 	}
 	return nil
+}
+
+// EnabledCases returns a copy that excludes explicitly disabled or rejected cases.
+// Legacy datasets without review_status remain runnable for compatibility.
+func (d *Dataset) EnabledCases() *Dataset {
+	if d == nil {
+		return &Dataset{}
+	}
+
+	active := make([]GroundTruthCase, 0, len(d.Cases))
+	for _, item := range d.Cases {
+		status := strings.ToLower(strings.TrimSpace(item.ReviewStatus))
+		if item.Disabled || status == "disabled" || status == "rejected" {
+			continue
+		}
+		active = append(active, item)
+	}
+	return &Dataset{Cases: active}
 }
 
 // Sample 随机采样 n 个用例（n<=0 时返回全部）

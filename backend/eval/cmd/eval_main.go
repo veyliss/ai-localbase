@@ -52,6 +52,7 @@ func main() {
 		evalChatBaseURL                = flag.String("eval-chat-base-url", "", "真实模式下覆盖评估请求使用的 Chat Base URL")
 		evalPathMap                    = flag.String("eval-path-map", "", "真实模式下临时映射 app-state 中的文档路径，格式 from=to，多个映射用逗号分隔")
 		evalAllowMissingSources        = flag.Bool("eval-allow-missing-sources", false, "真实模式下允许数据集 source_documents 引用不存在的知识库或文档")
+		includeDisabled                = flag.Bool("include-disabled", false, "包含 disabled 或 rejected 的评估用例；默认只运行启用样本")
 	)
 	flag.Parse()
 
@@ -64,6 +65,14 @@ func main() {
 	}
 	if err := ds.Validate(); err != nil {
 		log.Fatalf("[eval] 数据集验证失败: %v", err)
+	}
+	if !*includeDisabled {
+		before := len(ds.Cases)
+		ds = ds.EnabledCases()
+		log.Printf("[eval] 已过滤禁用样本: %d -> %d", before, len(ds.Cases))
+		if len(ds.Cases) == 0 {
+			log.Fatalf("[eval] 过滤禁用样本后没有可运行用例")
+		}
 	}
 	log.Printf("[eval] 已加载 %d 个用例", len(ds.Cases))
 

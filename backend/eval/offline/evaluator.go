@@ -59,6 +59,9 @@ func (e *Evaluator) Run(ctx context.Context, dataset *Dataset) ([]CaseResult, er
 			if err != nil {
 				result.Error = err.Error()
 			}
+			failure := ClassifyFailure(result, gtCase, e.config.HitThreshold)
+			result.FailureCategory = failure.Category
+			result.FailureReason = failure.Reason
 			results[i] = result
 		}
 	}
@@ -102,6 +105,9 @@ func (e *Evaluator) EvaluateCase(ctx context.Context, gt GroundTruthCase) (CaseR
 	} else {
 		result.Error = "未命中"
 	}
+	failure := ClassifyFailure(result, gt, e.config.HitThreshold)
+	result.FailureCategory = failure.Category
+	result.FailureReason = failure.Reason
 
 	return result, nil
 }

@@ -97,6 +97,9 @@ export interface BackendDocumentItem {
   indexErrorCode?: string
   indexRunId?: string
   indexVersion?: number
+  indexedContentAvailable?: boolean
+  indexedContentChars?: number
+  indexedTablesCount?: number
   source?: string
   version?: number
 }
@@ -200,6 +203,7 @@ export interface DocumentIndexDiagnostics {
   qdrantEnabled: boolean
   rawContentTruncated: boolean
   chunkPreviewTruncated: boolean
+  contentSource?: 'indexed' | 'source' | 'unavailable' | string
 }
 
 export interface DocumentDetailResponse {
@@ -936,7 +940,11 @@ export const fetchKnowledgeBaseDocumentDetail = async (
 ): Promise<DocumentDetailResponse> => (
   requestJson<DocumentDetailResponse>(
     `/api/knowledge-bases/${knowledgeBaseId}/documents/${documentId}${
-      focusChunkId ? `?focusChunkId=${encodeURIComponent(focusChunkId)}` : ''
+      `?${[
+        focusChunkId ? `focusChunkId=${encodeURIComponent(focusChunkId)}` : '',
+        'fullContent=true',
+        'allChunks=true',
+      ].filter(Boolean).join('&')}`
     }`,
   )
 )

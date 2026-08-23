@@ -48,6 +48,7 @@ services:
     environment:
       PORT: ${PORT:-8080}
       UPLOAD_DIR: ${UPLOAD_DIR:-/app/data/uploads}
+      INDEXED_CONTENT_DIR: ${INDEXED_CONTENT_DIR:-/app/data/indexed-content}
       STAGING_DIR: ${STAGING_DIR:-/app/data/staging}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
       MAX_JSON_BODY_BYTES: ${MAX_JSON_BODY_BYTES:-4194304}

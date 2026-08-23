@@ -37,7 +37,6 @@ func (o *RetrievalOrchestrator) BuildContext(ctx context.Context, req model.Chat
 
 	service := o.appService
 	ctx = normalizeServiceContext(ctx)
-	startedAt := time.Now()
 	chunks, err := o.Evaluate(ctx, req)
 	if err != nil {
 		return "", nil, err
@@ -49,6 +48,11 @@ func (o *RetrievalOrchestrator) BuildContext(ctx context.Context, req model.Chat
 	chunks = service.filterRetrievedChunksToScope(req, knowledgeBaseIDs, chunks)
 
 	query := latestUserMessage(req.Messages)
+	return service.buildRetrievedContext(ctx, req, query, chunks)
+}
+
+func (s *AppService) buildRetrievedContext(ctx context.Context, req model.ChatCompletionRequest, query string, chunks []RetrievedChunk) (string, []map[string]string, error) {
+	startedAt := time.Now()
 	dedupStartedAt := time.Now()
 	chunks = deduplicateRetrievedChunks(chunks)
 	logRetrievalStageMetrics(req, query, "context_deduplicate", dedupStartedAt, map[string]any{
@@ -56,33 +60,16 @@ func (o *RetrievalOrchestrator) BuildContext(ctx context.Context, req model.Chat
 		"remaining_chunks": len(chunks),
 	})
 
-	maxContextChars := service.retrievalMaxContextChars()
-	trimStartedAt := time.Now()
-	if maxContextChars > 0 {
-		chunks = trimRetrievedChunksToContextLimit(chunks, maxContextChars, query)
-	}
-	logRetrievalStageMetrics(req, query, "context_trim", trimStartedAt, map[string]any{
-		"status":            "ok",
-		"remaining_chunks":  len(chunks),
-		"max_context_chars": maxContextChars,
-		"context_chars":     chunksTotalChars(chunks),
-	})
-
-	buildStartedAt := time.Now()
-	contextText, sources := service.rag.BuildContext(chunks)
-	logRetrievalStageMetrics(req, query, "context_build", buildStartedAt, map[string]any{
-		"status":        "ok",
-		"sources":       len(sources),
-		"context_chars": len(contextText),
-	})
-	if service.contextCompressor != nil && maxContextChars > 0 && chunksTotalChars(chunks) > maxContextChars {
+	maxContextChars := s.retrievalMaxContextChars()
+	compressedContext := ""
+	if s.contextCompressor != nil && maxContextChars > 0 && chunksTotalChars(chunks) > maxContextChars {
 		compressStartedAt := time.Now()
-		compressed, compressErr := service.contextCompressor.Compress(ctx, query, chunks)
+		compressed, compressErr := s.contextCompressor.Compress(ctx, query, chunks)
 		if compressErr == nil && strings.TrimSpace(compressed) != "" {
-			contextText = compressed
+			compressedContext = strings.TrimSpace(compressed)
 			logRetrievalStageMetrics(req, query, "context_compress", compressStartedAt, map[string]any{
 				"status":           "ok",
-				"compressed_chars": len(contextText),
+				"compressed_chars": len(compressedContext),
 			})
 		} else {
 			logRetrievalStageMetrics(req, query, "context_compress", compressStartedAt, map[string]any{
@@ -91,6 +78,28 @@ func (o *RetrievalOrchestrator) BuildContext(ctx context.Context, req model.Chat
 			})
 		}
 	}
+
+	trimStartedAt := time.Now()
+	if compressedContext == "" && maxContextChars > 0 {
+		chunks = trimRetrievedChunksToContextLimit(chunks, maxContextChars, query)
+	}
+	logRetrievalStageMetrics(req, query, "context_trim", trimStartedAt, map[string]any{
+		"status":            ternaryString(compressedContext != "", "skipped_after_compression", "ok"),
+		"remaining_chunks":  len(chunks),
+		"max_context_chars": maxContextChars,
+		"context_chars":     chunksTotalChars(chunks),
+	})
+
+	buildStartedAt := time.Now()
+	contextText, sources := s.rag.BuildContext(chunks)
+	if compressedContext != "" {
+		contextText = compressedContext
+	}
+	logRetrievalStageMetrics(req, query, "context_build", buildStartedAt, map[string]any{
+		"status":        "ok",
+		"sources":       len(sources),
+		"context_chars": len(contextText),
+	})
 	logRetrievalStageMetrics(req, query, "build_retrieval_context_total", startedAt, map[string]any{
 		"status":        "ok",
 		"sources":       len(sources),

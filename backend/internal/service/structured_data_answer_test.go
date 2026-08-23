@@ -403,6 +403,59 @@ func TestEvaluateRetrieveFallsBackWhenStructuredFileMissing(t *testing.T) {
 	}
 }
 
+func TestIndexedContentSupportsDetailAndStructuredQueryWhenSourceMissing(t *testing.T) {
+	service := newStructuredQueryTestService(t)
+	service.rag = NewRagService()
+	service.indexedContentStore = NewIndexedContentStore(t.TempDir())
+
+	kb := service.state.KnowledgeBases["kb-1"]
+	document := kb.Documents[0]
+	content, err := util.ExtractDocumentText(document.Path)
+	if err != nil {
+		t.Fatalf("extract source content: %v", err)
+	}
+	tables, err := util.ExtractStructuredTables(document.Path)
+	if err != nil {
+		t.Fatalf("extract source tables: %v", err)
+	}
+	document.IndexedContentAvailable = true
+	document.IndexedContentChars = len([]rune(content))
+	document.IndexedTablesCount = len(tables)
+	if err := service.indexedContentStore.Put(document, content, structuredTablesToModel(tables)); err != nil {
+		t.Fatalf("persist indexed content: %v", err)
+	}
+	if err := os.Remove(document.Path); err != nil {
+		t.Fatalf("remove source file: %v", err)
+	}
+	kb.Documents[0] = document
+	service.state.KnowledgeBases["kb-1"] = kb
+
+	result, _, ok, err := service.QueryStructuredData(model.ChatCompletionRequest{
+		DocumentID: "doc-users",
+		Messages:   []model.ChatMessage{{Role: "user", Content: "城市甲薪资最高的是谁"}},
+	})
+	if err != nil || !ok {
+		t.Fatalf("expected indexed structured query, ok=%v err=%v", ok, err)
+	}
+	if result.Aggregate == nil || result.Aggregate.Value != 300 || len(result.Rows) != 1 || result.Rows[0].Values["姓名"] != "成员甲" {
+		t.Fatalf("unexpected indexed structured result: %#v", result)
+	}
+
+	detail, err := service.GetDocumentDetailWithOptions("kb-1", "doc-users", "", DocumentDetailOptions{
+		IncludeFullContent: true,
+		IncludeAllChunks:   true,
+	})
+	if err != nil {
+		t.Fatalf("get detail from indexed content: %v", err)
+	}
+	if detail.Diagnostics.ContentSource != "indexed" || !detail.Diagnostics.RawContentAvailable {
+		t.Fatalf("expected indexed content diagnostics, got %#v", detail.Diagnostics)
+	}
+	if detail.Diagnostics.RawContentTruncated || !strings.Contains(detail.RawContent, "成员甲") {
+		t.Fatalf("expected complete indexed raw content, got %#v", detail.Diagnostics)
+	}
+}
+
 func TestBuildRetrievalDebugEvalCandidateFromLowConfidence(t *testing.T) {
 	candidate := buildRetrievalDebugEvalCandidate(
 		model.ChatCompletionRequest{KnowledgeBaseID: "kb-1"},

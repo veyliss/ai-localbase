@@ -92,8 +92,11 @@ backend/internal/router/data/
 # Evaluation artifacts (generated locally, do not commit)
 backend/eval/results/
 !backend/eval/results/.gitkeep
-backend/eval/data/
+backend/eval/data/*
+!backend/eval/data/
 !backend/eval/data/.gitkeep
+# This is a reviewed, synthetic corpus for offline regression tests.
+!backend/eval/data/ground_truth_v1.small.json
 
 # Evaluation fix documents (temporary analysis files)
 EVALUATION_FIX.md

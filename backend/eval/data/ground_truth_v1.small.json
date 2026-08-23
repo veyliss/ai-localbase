@@ -16,7 +16,8 @@
     ],
     "answer_type": "extractive",
     "difficulty": "easy",
-    "notes": ""
+    "notes": "",
+    "review_status": "approved"
   },
   {
     "id": "case-2",
@@ -36,7 +37,8 @@
     ],
     "answer_type": "abstractive",
     "difficulty": "medium",
-    "notes": ""
+    "notes": "",
+    "review_status": "approved"
   },
   {
     "id": "case-3",
@@ -55,7 +57,8 @@
     ],
     "answer_type": "extractive",
     "difficulty": "easy",
-    "notes": ""
+    "notes": "",
+    "review_status": "approved"
   },
   {
     "id": "case-4",
@@ -68,7 +71,8 @@
     "source_documents": [],
     "answer_type": "extractive",
     "difficulty": "easy",
-    "notes": "此用例没有 SourceDocuments，将依赖文本包含匹配"
+    "notes": "此用例没有 SourceDocuments，将依赖文本包含匹配",
+    "review_status": "approved"
   },
   {
     "id": "case-5",
@@ -87,6 +91,275 @@
     ],
     "answer_type": "yesno",
     "difficulty": "medium",
-    "notes": ""
+    "notes": "",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-6",
+    "question": "Qdrant 的数据点通常包含哪些内容？",
+    "answer": "Qdrant 的数据点通常由向量、点 ID 和可选的 payload 组成。",
+    "answer_snippets": [
+      "向量",
+      "点 ID",
+      "payload"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-1",
+        "document_id": "doc-qdrant-intro",
+        "chunk_id": "doc-qdrant-intro-chunk-0"
+      }
+    ],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开合成补充样本，用于验证多片段答案的证据覆盖",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-7",
+    "question": "安装 Qdrant 时最简单的方式是什么？",
+    "answer": "安装 Qdrant 最简单的方式是使用 Docker 镜像。",
+    "answer_snippets": [
+      "最简单的方式",
+      "Docker 镜像"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-1",
+        "document_id": "doc-qdrant-install",
+        "chunk_id": "doc-qdrant-install-chunk-1"
+      }
+    ],
+    "answer_type": "abstractive",
+    "difficulty": "easy",
+    "notes": "公开合成补充样本，用于验证同义问法",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-8",
+    "question": "ai-localbase 为什么需要 Qdrant？",
+    "answer": "ai-localbase 使用 Qdrant 存储和检索向量嵌入，以支持知识库检索。",
+    "answer_snippets": [
+      "Qdrant",
+      "存储和检索向量嵌入"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-2",
+        "document_id": "doc-ai-localbase-arch",
+        "chunk_id": "doc-ai-localbase-arch-chunk-0"
+      }
+    ],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开合成补充样本，用于验证原因型问题",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-9",
+    "question": "Hit Rate 指标衡量什么？",
+    "answer": "Hit Rate 衡量检索结果中包含正确答案片段的用例比例。",
+    "answer_snippets": [
+      "正确答案片段",
+      "用例比例"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开合成补充样本，无固定来源，使用答案片段匹配",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-10",
+    "question": "MRR 指标如何反映检索质量？",
+    "answer": "MRR 使用首个命中结果排名的倒数计算平均值，数值越高表示正确结果通常排名越靠前。",
+    "answer_snippets": [
+      "首个命中结果排名的倒数",
+      "排名越靠前"
+    ],
+    "source_documents": [],
+    "answer_type": "numeric",
+    "difficulty": "medium",
+    "notes": "公开合成补充样本，无固定来源，使用答案片段匹配",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-11",
+    "question": "records.csv 中薪资最高的是谁？",
+    "answer": "成员甲的薪资最高，为 300 元。",
+    "answer_snippets": [
+      "成员甲",
+      "300 元"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-public-table",
+        "document_id": "doc-public-staff-table",
+        "chunk_id": "doc-public-staff-table-row-1"
+      }
+    ],
+    "answer_type": "numeric",
+    "difficulty": "easy",
+    "notes": "公开合成结构化数据样本；用于验证最高值和文件范围意图",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-12",
+    "question": "records.csv 中薪资最低的是谁？",
+    "answer": "成员丙的薪资最低，为 100 元。",
+    "answer_snippets": [
+      "成员丙",
+      "100 元"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-public-table",
+        "document_id": "doc-public-staff-table",
+        "chunk_id": "doc-public-staff-table-row-3"
+      }
+    ],
+    "answer_type": "numeric",
+    "difficulty": "easy",
+    "notes": "公开合成结构化数据样本；用于验证最低值意图",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-13",
+    "question": "records.csv 的平均薪资是多少？",
+    "answer": "records.csv 的平均薪资为 200 元。",
+    "answer_snippets": [
+      "平均薪资",
+      "200 元"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-public-table",
+        "document_id": "doc-public-staff-table",
+        "chunk_id": "doc-public-staff-table-summary"
+      }
+    ],
+    "answer_type": "numeric",
+    "difficulty": "medium",
+    "notes": "公开合成结构化数据样本；用于验证平均值意图",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-14",
+    "question": "records.csv 一共有多少条数据记录？",
+    "answer": "records.csv 一共有 3 条数据记录。",
+    "answer_snippets": [
+      "3 条数据记录"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-public-table",
+        "document_id": "doc-public-staff-table",
+        "chunk_id": "doc-public-staff-table-summary"
+      }
+    ],
+    "answer_type": "numeric",
+    "difficulty": "easy",
+    "notes": "公开合成结构化数据样本；用于验证行数查询",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-15",
+    "question": "records.csv 中城市甲的薪资最高的是谁？",
+    "answer": "城市甲中薪资最高的是成员甲，为 300 元。",
+    "answer_snippets": [
+      "城市甲",
+      "成员甲",
+      "300 元"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-public-table",
+        "document_id": "doc-public-staff-table",
+        "chunk_id": "doc-public-staff-table-row-1"
+      }
+    ],
+    "answer_type": "numeric",
+    "difficulty": "medium",
+    "notes": "公开合成结构化数据样本；用于验证条件过滤与最高值组合意图",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-16",
+    "question": "records.csv 中年龄最小的是谁？",
+    "answer": "成员丙的年龄最小，为 27 岁。",
+    "answer_snippets": [
+      "成员丙",
+      "27 岁"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-public-table",
+        "document_id": "doc-public-staff-table",
+        "chunk_id": "doc-public-staff-table-row-3"
+      }
+    ],
+    "answer_type": "numeric",
+    "difficulty": "easy",
+    "notes": "公开合成结构化数据样本；用于验证另一数值列的最低值意图",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-17",
+    "question": "现有公开资料是否说明了项目的商业客户数量？",
+    "answer": "现有公开资料没有提供项目商业客户数量，无法确认。",
+    "answer_snippets": [],
+    "source_documents": [],
+    "answer_type": "no_answer",
+    "difficulty": "medium",
+    "notes": "公开合成无答案样本；系统应拒答而不是猜测",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-18",
+    "question": "Qdrant 是否提供向量相似度搜索？",
+    "answer": "是的，Qdrant 提供向量相似度搜索能力。",
+    "answer_snippets": [
+      "向量相似度搜索"
+    ],
+    "source_documents": [
+      {
+        "knowledge_base_id": "kb-1",
+        "document_id": "doc-qdrant-features",
+        "chunk_id": "doc-qdrant-features-chunk-2"
+      }
+    ],
+    "answer_type": "yesno",
+    "difficulty": "easy",
+    "notes": "公开合成补充样本，用于验证事实型是非问题",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-19",
+    "question": "评估数据集为什么要记录 source_documents？",
+    "answer": "记录 source_documents 是为了核对期望文档和 Chunk，避免仅凭摘要或相似度把无关片段误判为命中。",
+    "answer_snippets": [
+      "核对期望文档和 Chunk",
+      "仅凭摘要或相似度"
+    ],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开合成补充样本，无固定来源，使用答案片段匹配",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-20",
+    "question": "结构化查询为什么不能只依赖向量相似度？",
+    "answer": "最高、最低、平均等聚合查询需要读取完整行数据并执行确定性计算，单靠向量相似度不能保证数值正确。",
+    "answer_snippets": [
+      "读取完整行数据",
+      "确定性计算",
+      "不能保证数值正确"
+    ],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "hard",
+    "notes": "公开合成补充样本，无固定来源，使用答案片段匹配",
+    "review_status": "approved"
   }
 ]

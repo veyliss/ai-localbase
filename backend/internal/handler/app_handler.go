@@ -558,13 +558,25 @@ func (h *AppHandler) DeleteDocument(c *gin.Context) {
 }
 
 func (h *AppHandler) GetDocumentDetail(c *gin.Context) {
-	detail, err := h.appService.GetDocumentDetail(c.Param("id"), c.Param("documentId"), c.Query("focusChunkId"))
+	detail, err := h.appService.GetDocumentDetailWithOptions(
+		c.Param("id"),
+		c.Param("documentId"),
+		c.Query("focusChunkId"),
+		service.DocumentDetailOptions{
+			IncludeFullContent: queryFlagEnabled(c.Query("fullContent")),
+			IncludeAllChunks:   queryFlagEnabled(c.Query("allChunks")),
+		},
+	)
 	if err != nil {
 		writeError(c, http.StatusNotFound, err.Error())
 		return
 	}
 
 	c.JSON(http.StatusOK, detail)
+}
+
+func queryFlagEnabled(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true") || strings.TrimSpace(value) == "1"
 }
 
 func (h *AppHandler) ReindexDocument(c *gin.Context) {

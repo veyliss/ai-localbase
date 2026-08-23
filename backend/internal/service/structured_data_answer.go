@@ -111,7 +111,7 @@ func (s *AppService) buildStructuredDataQueryResult(req model.ChatCompletionRequ
 
 	tables := make([]structuredTableDocument, 0, len(documents))
 	for _, document := range documents {
-		parsed, err := util.ExtractStructuredTables(document.Path)
+		parsed, _, err := s.resolveStructuredTables(document)
 		if err != nil {
 			return StructuredDataQueryResult{}, nil, true, err
 		}
@@ -165,7 +165,7 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 	if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
 		for _, kb := range s.state.KnowledgeBases {
 			for _, document := range kb.Documents {
-				if document.ID == documentID && isStructuredDocumentPath(document.Path) {
+				if document.ID == documentID && isStructuredDocument(document) {
 					return []model.Document{document}
 				}
 			}
@@ -194,7 +194,7 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 func structuredDocumentsFromKnowledgeBase(kb model.KnowledgeBase) []model.Document {
 	documents := make([]model.Document, 0)
 	for _, document := range kb.Documents {
-		if isStructuredDocumentPath(document.Path) {
+		if isStructuredDocument(document) {
 			documents = append(documents, document)
 		}
 	}

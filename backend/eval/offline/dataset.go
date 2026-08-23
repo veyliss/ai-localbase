@@ -50,27 +50,62 @@ func LoadDataset(path string) (*Dataset, error) {
 
 // Validate 验证数据集（检查必填字段等）
 func (d *Dataset) Validate() error {
+	if d == nil {
+		return fmt.Errorf("dataset is empty")
+	}
 	if len(d.Cases) == 0 {
 		return fmt.Errorf("dataset is empty")
 	}
+	seenIDs := make(map[string]struct{}, len(d.Cases))
+	seenQuestions := make(map[string]struct{}, len(d.Cases))
 	for i, c := range d.Cases {
-		if c.ID == "" {
+		caseID := strings.TrimSpace(c.ID)
+		question := strings.TrimSpace(c.Question)
+		answer := strings.TrimSpace(c.Answer)
+		if caseID == "" {
 			return fmt.Errorf("case %d: ID is required", i)
 		}
-		if c.Question == "" {
+		if _, exists := seenIDs[caseID]; exists {
+			return fmt.Errorf("case %d (%s): duplicate ID", i, caseID)
+		}
+		seenIDs[caseID] = struct{}{}
+		if question == "" {
 			return fmt.Errorf("case %d (%s): Question is required", i, c.ID)
 		}
-		if c.Answer == "" {
+		questionKey := normalizeDatasetKey(question)
+		if _, exists := seenQuestions[questionKey]; exists {
+			return fmt.Errorf("case %d (%s): duplicate question", i, caseID)
+		}
+		seenQuestions[questionKey] = struct{}{}
+		if answer == "" {
 			return fmt.Errorf("case %d (%s): Answer is required", i, c.ID)
 		}
-		if c.AnswerType == "" {
+		if strings.TrimSpace(c.AnswerType) == "" {
 			return fmt.Errorf("case %d (%s): AnswerType is required", i, c.ID)
 		}
-		if c.Difficulty == "" {
+		if strings.TrimSpace(c.Difficulty) == "" {
 			return fmt.Errorf("case %d (%s): Difficulty is required", i, c.ID)
+		}
+		for snippetIndex, snippet := range c.AnswerSnippets {
+			if strings.TrimSpace(snippet) == "" {
+				return fmt.Errorf("case %d (%s): answer_snippets[%d] is empty", i, caseID, snippetIndex)
+			}
+		}
+		for sourceIndex, source := range c.SourceDocuments {
+			if strings.TrimSpace(source.DocumentID) == "" {
+				return fmt.Errorf("case %d (%s): source_documents[%d].document_id is required", i, caseID, sourceIndex)
+			}
+		}
+		status := strings.ToLower(strings.TrimSpace(c.ReviewStatus))
+		if status != "" && status != "pending" && status != "approved" && status != "rejected" && status != "disabled" {
+			return fmt.Errorf("case %d (%s): unsupported review_status %q", i, caseID, c.ReviewStatus)
 		}
 	}
 	return nil
+}
+
+func normalizeDatasetKey(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
 
 // EnabledCases returns a copy that excludes explicitly disabled or rejected cases.

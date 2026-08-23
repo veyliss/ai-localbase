@@ -5,6 +5,7 @@ import "sync"
 type ServerConfig struct {
 	Port                           string
 	UploadDir                      string
+	IndexedContentDir              string
 	StagingDir                     string
 	MaxUploadBytes                 int64
 	MaxJSONBodyBytes               int64
@@ -239,24 +240,39 @@ type IndexRunRecord struct {
 }
 
 type Document struct {
-	ID              string `json:"id"`
-	KnowledgeBaseID string `json:"knowledgeBaseId"`
-	Name            string `json:"name"`
-	Size            int64  `json:"size"`
-	SizeLabel       string `json:"sizeLabel"`
-	UploadedAt      string `json:"uploadedAt"`
-	Status          string `json:"status"`
-	Source          string `json:"source,omitempty"`
-	Version         int    `json:"version,omitempty"`
-	Checksum        string `json:"-"`
-	Path            string `json:"-"`
-	ContentPreview  string `json:"contentPreview"`
-	ChunkCount      int    `json:"chunkCount,omitempty"`
-	IndexedAt       string `json:"indexedAt,omitempty"`
-	IndexError      string `json:"indexError,omitempty"`
-	IndexErrorCode  string `json:"indexErrorCode,omitempty"`
-	IndexRunID      string `json:"indexRunId,omitempty"`
-	IndexVersion    int    `json:"indexVersion,omitempty"`
+	ID                      string `json:"id"`
+	KnowledgeBaseID         string `json:"knowledgeBaseId"`
+	Name                    string `json:"name"`
+	Size                    int64  `json:"size"`
+	SizeLabel               string `json:"sizeLabel"`
+	UploadedAt              string `json:"uploadedAt"`
+	Status                  string `json:"status"`
+	Source                  string `json:"source,omitempty"`
+	Version                 int    `json:"version,omitempty"`
+	Checksum                string `json:"-"`
+	Path                    string `json:"-"`
+	ContentPreview          string `json:"contentPreview"`
+	ChunkCount              int    `json:"chunkCount,omitempty"`
+	IndexedAt               string `json:"indexedAt,omitempty"`
+	IndexError              string `json:"indexError,omitempty"`
+	IndexErrorCode          string `json:"indexErrorCode,omitempty"`
+	IndexRunID              string `json:"indexRunId,omitempty"`
+	IndexVersion            int    `json:"indexVersion,omitempty"`
+	IndexedContentAvailable bool   `json:"indexedContentAvailable,omitempty"`
+	IndexedContentChars     int    `json:"indexedContentChars,omitempty"`
+	IndexedTablesCount      int    `json:"indexedTablesCount,omitempty"`
+}
+
+type IndexedTable struct {
+	FileName string            `json:"fileName"`
+	Sheet    string            `json:"sheet,omitempty"`
+	Headers  []string          `json:"headers"`
+	Rows     []IndexedTableRow `json:"rows"`
+}
+
+type IndexedTableRow struct {
+	Number int      `json:"number"`
+	Values []string `json:"values"`
 }
 
 type DocumentChunkPreview struct {
@@ -267,15 +283,16 @@ type DocumentChunkPreview struct {
 }
 
 type DocumentIndexDiagnostics struct {
-	RawContentChars       int  `json:"rawContentChars"`
-	ChunkCount            int  `json:"chunkCount"`
-	VectorCount           int  `json:"vectorCount"`
-	SummaryChunkCount     int  `json:"summaryChunkCount"`
-	StructuredRowCount    int  `json:"structuredRowCount"`
-	RawContentAvailable   bool `json:"rawContentAvailable"`
-	QdrantEnabled         bool `json:"qdrantEnabled"`
-	RawContentTruncated   bool `json:"rawContentTruncated"`
-	ChunkPreviewTruncated bool `json:"chunkPreviewTruncated"`
+	RawContentChars       int    `json:"rawContentChars"`
+	ChunkCount            int    `json:"chunkCount"`
+	VectorCount           int    `json:"vectorCount"`
+	SummaryChunkCount     int    `json:"summaryChunkCount"`
+	StructuredRowCount    int    `json:"structuredRowCount"`
+	RawContentAvailable   bool   `json:"rawContentAvailable"`
+	QdrantEnabled         bool   `json:"qdrantEnabled"`
+	RawContentTruncated   bool   `json:"rawContentTruncated"`
+	ChunkPreviewTruncated bool   `json:"chunkPreviewTruncated"`
+	ContentSource         string `json:"contentSource"`
 }
 
 type DocumentDetailResponse struct {

@@ -14,6 +14,7 @@ func LoadServerConfig() model.ServerConfig {
 	return model.ServerConfig{
 		Port:                           getEnv("PORT", "8080"),
 		UploadDir:                      uploadDir,
+		IndexedContentDir:              getEnv("INDEXED_CONTENT_DIR", filepath.Join(filepath.Dir(uploadDir), "indexed-content")),
 		StagingDir:                     getEnv("STAGING_DIR", filepath.Join(filepath.Dir(uploadDir), "staging")),
 		MaxUploadBytes:                 getEnvAsInt64("MAX_UPLOAD_BYTES", 25*1024*1024),
 		MaxJSONBodyBytes:               getEnvAsInt64("MAX_JSON_BODY_BYTES", 4*1024*1024),

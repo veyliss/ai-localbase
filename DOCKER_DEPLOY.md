@@ -76,6 +76,7 @@ docker compose -f docker-compose.prod.yml up -d
 - `TRUST_EXTERNAL_PROXY_HEADERS`：是否信任外层代理的 `X-Forwarded-Proto` / `X-Forwarded-Host`，默认 `false`；只有前端端口不直接暴露且前置代理受控时才设为 `true`
 - `ENABLE_AUTH`：生产 Compose 在变量未提供时默认 `true`；使用 `.env.example` 时也必须显式确认其为 `true`
 - `STAGING_DIR`：上传暂存目录，默认 `/app/data/staging`，必须与应用数据卷保持一致
+- `INDEXED_CONTENT_DIR`：索引后的全文和结构化快照目录，默认 `/app/data/indexed-content`，必须与应用数据卷保持一致
 - `MAX_UPLOAD_BYTES`：单文件上传大小上限，默认 `26214400`，即 25 MiB
 - `MAX_JSON_BODY_BYTES`：登录、Chat、配置和 MCP 等非 multipart 请求体上限，默认 `4194304`，即 4 MiB
 - `LOG_MAX_SIZE` / `LOG_MAX_FILE`：Docker JSON 日志轮转参数，默认每个日志文件 10 MiB、保留 3 个文件

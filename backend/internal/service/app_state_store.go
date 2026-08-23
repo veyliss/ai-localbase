@@ -41,24 +41,27 @@ type persistedKnowledgeBase struct {
 }
 
 type persistedDocument struct {
-	ID              string `json:"id"`
-	KnowledgeBaseID string `json:"knowledgeBaseId"`
-	Name            string `json:"name"`
-	Size            int64  `json:"size"`
-	SizeLabel       string `json:"sizeLabel"`
-	UploadedAt      string `json:"uploadedAt"`
-	Status          string `json:"status"`
-	Source          string `json:"source,omitempty"`
-	Version         int    `json:"version,omitempty"`
-	Checksum        string `json:"checksum,omitempty"`
-	Path            string `json:"path"`
-	ContentPreview  string `json:"contentPreview"`
-	ChunkCount      int    `json:"chunkCount,omitempty"`
-	IndexedAt       string `json:"indexedAt,omitempty"`
-	IndexError      string `json:"indexError,omitempty"`
-	IndexErrorCode  string `json:"indexErrorCode,omitempty"`
-	IndexRunID      string `json:"indexRunId,omitempty"`
-	IndexVersion    int    `json:"indexVersion,omitempty"`
+	ID                      string `json:"id"`
+	KnowledgeBaseID         string `json:"knowledgeBaseId"`
+	Name                    string `json:"name"`
+	Size                    int64  `json:"size"`
+	SizeLabel               string `json:"sizeLabel"`
+	UploadedAt              string `json:"uploadedAt"`
+	Status                  string `json:"status"`
+	Source                  string `json:"source,omitempty"`
+	Version                 int    `json:"version,omitempty"`
+	Checksum                string `json:"checksum,omitempty"`
+	Path                    string `json:"path"`
+	ContentPreview          string `json:"contentPreview"`
+	ChunkCount              int    `json:"chunkCount,omitempty"`
+	IndexedAt               string `json:"indexedAt,omitempty"`
+	IndexError              string `json:"indexError,omitempty"`
+	IndexErrorCode          string `json:"indexErrorCode,omitempty"`
+	IndexRunID              string `json:"indexRunId,omitempty"`
+	IndexVersion            int    `json:"indexVersion,omitempty"`
+	IndexedContentAvailable bool   `json:"indexedContentAvailable,omitempty"`
+	IndexedContentChars     int    `json:"indexedContentChars,omitempty"`
+	IndexedTablesCount      int    `json:"indexedTablesCount,omitempty"`
 }
 
 func (s persistentAppState) MarshalJSON() ([]byte, error) {
@@ -172,47 +175,53 @@ func migratePersistedKnowledgeBase(mapKey string, raw persistedKnowledgeBase) mo
 
 func persistedDocumentFromModel(document model.Document) persistedDocument {
 	return persistedDocument{
-		ID:              document.ID,
-		KnowledgeBaseID: document.KnowledgeBaseID,
-		Name:            document.Name,
-		Size:            document.Size,
-		SizeLabel:       document.SizeLabel,
-		UploadedAt:      document.UploadedAt,
-		Status:          document.Status,
-		Source:          document.Source,
-		Version:         document.Version,
-		Checksum:        document.Checksum,
-		Path:            document.Path,
-		ContentPreview:  document.ContentPreview,
-		ChunkCount:      document.ChunkCount,
-		IndexedAt:       document.IndexedAt,
-		IndexError:      document.IndexError,
-		IndexErrorCode:  document.IndexErrorCode,
-		IndexRunID:      document.IndexRunID,
-		IndexVersion:    document.IndexVersion,
+		ID:                      document.ID,
+		KnowledgeBaseID:         document.KnowledgeBaseID,
+		Name:                    document.Name,
+		Size:                    document.Size,
+		SizeLabel:               document.SizeLabel,
+		UploadedAt:              document.UploadedAt,
+		Status:                  document.Status,
+		Source:                  document.Source,
+		Version:                 document.Version,
+		Checksum:                document.Checksum,
+		Path:                    document.Path,
+		ContentPreview:          document.ContentPreview,
+		ChunkCount:              document.ChunkCount,
+		IndexedAt:               document.IndexedAt,
+		IndexError:              document.IndexError,
+		IndexErrorCode:          document.IndexErrorCode,
+		IndexRunID:              document.IndexRunID,
+		IndexVersion:            document.IndexVersion,
+		IndexedContentAvailable: document.IndexedContentAvailable,
+		IndexedContentChars:     document.IndexedContentChars,
+		IndexedTablesCount:      document.IndexedTablesCount,
 	}
 }
 
 func documentToModel(document persistedDocument) model.Document {
 	return model.Document{
-		ID:              document.ID,
-		KnowledgeBaseID: document.KnowledgeBaseID,
-		Name:            document.Name,
-		Size:            document.Size,
-		SizeLabel:       document.SizeLabel,
-		UploadedAt:      document.UploadedAt,
-		Status:          document.Status,
-		Source:          document.Source,
-		Version:         document.Version,
-		Checksum:        document.Checksum,
-		Path:            document.Path,
-		ContentPreview:  document.ContentPreview,
-		ChunkCount:      document.ChunkCount,
-		IndexedAt:       document.IndexedAt,
-		IndexError:      document.IndexError,
-		IndexErrorCode:  document.IndexErrorCode,
-		IndexRunID:      document.IndexRunID,
-		IndexVersion:    document.IndexVersion,
+		ID:                      document.ID,
+		KnowledgeBaseID:         document.KnowledgeBaseID,
+		Name:                    document.Name,
+		Size:                    document.Size,
+		SizeLabel:               document.SizeLabel,
+		UploadedAt:              document.UploadedAt,
+		Status:                  document.Status,
+		Source:                  document.Source,
+		Version:                 document.Version,
+		Checksum:                document.Checksum,
+		Path:                    document.Path,
+		ContentPreview:          document.ContentPreview,
+		ChunkCount:              document.ChunkCount,
+		IndexedAt:               document.IndexedAt,
+		IndexError:              document.IndexError,
+		IndexErrorCode:          document.IndexErrorCode,
+		IndexRunID:              document.IndexRunID,
+		IndexVersion:            document.IndexVersion,
+		IndexedContentAvailable: document.IndexedContentAvailable,
+		IndexedContentChars:     document.IndexedContentChars,
+		IndexedTablesCount:      document.IndexedTablesCount,
 	}
 }
 

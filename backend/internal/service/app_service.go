@@ -68,6 +68,7 @@ type AppService struct {
 	chatHistory           ChatHistoryStore
 	qdrant                *QdrantService
 	rag                   *RagService
+	indexedContentStore   *IndexedContentStore
 	serverConfig          model.ServerConfig
 	staging               *UploadStagingService
 	stateSaveMu           sync.Mutex
@@ -169,18 +170,26 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 	if stagingDir == "" && strings.TrimSpace(serverConfig.UploadDir) != "" {
 		stagingDir = filepath.Join(filepath.Dir(serverConfig.UploadDir), "staging")
 	}
+	indexedContentDir := strings.TrimSpace(serverConfig.IndexedContentDir)
+	if indexedContentDir == "" && strings.TrimSpace(serverConfig.UploadDir) != "" {
+		indexedContentDir = filepath.Join(filepath.Dir(serverConfig.UploadDir), "indexed-content")
+	}
+	if indexedContentDir == "" && strings.TrimSpace(serverConfig.StateFile) != "" {
+		indexedContentDir = filepath.Join(filepath.Dir(serverConfig.StateFile), "indexed-content")
+	}
 	service := &AppService{
-		state:             defaultAppState(serverConfig),
-		store:             store,
-		chatHistory:       chatHistory,
-		qdrant:            qdrant,
-		rag:               NewRagService(),
-		serverConfig:      serverConfig,
-		staging:           NewUploadStagingService(stagingDir, 30*time.Minute),
-		mcpDangerConfirms: map[string]mcpDangerConfirmationRecord{},
-		mcpDangerRates:    map[string][]time.Time{},
-		mcpJobs:           map[string]model.MCPJob{},
-		mcpJobCancels:     map[string]context.CancelFunc{},
+		state:               defaultAppState(serverConfig),
+		store:               store,
+		chatHistory:         chatHistory,
+		qdrant:              qdrant,
+		rag:                 NewRagService(),
+		indexedContentStore: NewIndexedContentStore(indexedContentDir),
+		serverConfig:        serverConfig,
+		staging:             NewUploadStagingService(stagingDir, 30*time.Minute),
+		mcpDangerConfirms:   map[string]mcpDangerConfirmationRecord{},
+		mcpDangerRates:      map[string][]time.Time{},
+		mcpJobs:             map[string]model.MCPJob{},
+		mcpJobCancels:       map[string]context.CancelFunc{},
 	}
 	service.retrievalOrchestrator = NewRetrievalOrchestrator(service)
 	service.rag.SetQdrantService(qdrant)
@@ -1917,8 +1926,14 @@ func (s *AppService) DeleteKnowledgeBase(id string) (int, error) {
 		return remaining, err
 	}
 
-	if err := s.deleteKnowledgeBaseCollection(id); err != nil {
-		return remaining, err
+	collectionErr := s.deleteKnowledgeBaseCollection(id)
+	for _, document := range removedKnowledgeBase.Documents {
+		if err := s.deleteIndexedDocument(id, document.ID); err != nil {
+			log.Printf("failed to delete indexed content for document %s: %v", document.ID, err)
+		}
+	}
+	if collectionErr != nil {
+		return remaining, collectionErr
 	}
 
 	return remaining, nil
@@ -1950,19 +1965,28 @@ func (s *AppService) GetDocumentIndexStatus(knowledgeBaseID, documentID string) 
 	return publicDocument(document), nil
 }
 
+type DocumentDetailOptions struct {
+	IncludeFullContent bool
+	IncludeAllChunks   bool
+}
+
 func (s *AppService) GetDocumentDetail(knowledgeBaseID, documentID, focusChunkID string) (model.DocumentDetailResponse, error) {
+	return s.GetDocumentDetailWithOptions(knowledgeBaseID, documentID, focusChunkID, DocumentDetailOptions{})
+}
+
+func (s *AppService) GetDocumentDetailWithOptions(knowledgeBaseID, documentID, focusChunkID string, options DocumentDetailOptions) (model.DocumentDetailResponse, error) {
 	document, err := s.findDocument(knowledgeBaseID, documentID)
 	if err != nil {
 		return model.DocumentDetailResponse{}, err
 	}
 
-	content, err := util.ExtractDocumentText(document.Path)
+	content, contentSource, err := s.resolveDocumentContent(document)
 	if err != nil {
-		return model.DocumentDetailResponse{}, fmt.Errorf("extract document text: %w", err)
+		return model.DocumentDetailResponse{}, err
 	}
 
 	chunks := s.rag.BuildDocumentChunks(document, content)
-	return buildDocumentDetailResponse(s, document, content, chunks, focusChunkID), nil
+	return buildDocumentDetailResponse(s, document, content, contentSource, chunks, focusChunkID, options), nil
 }
 
 func (s *AppService) GetKnowledgeBaseHealth(knowledgeBaseID string) (model.KnowledgeBaseHealthResponse, error) {
@@ -2044,7 +2068,7 @@ func (s *AppService) buildKnowledgeBaseDocumentHealth(document model.Document) m
 		ChunkCount:     document.ChunkCount,
 	}
 
-	content, err := util.ExtractDocumentText(document.Path)
+	content, _, err := s.resolveDocumentContent(document)
 	if err == nil {
 		item.RawContentChars = len([]rune(content))
 		item.RawContentAvailable = strings.TrimSpace(content) != ""
@@ -2148,6 +2172,10 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, nil, nil); err != nil {
 			return model.Document{}, err
 		}
+		document, err = s.captureIndexedDocument(document, content)
+		if err != nil {
+			return model.Document{}, err
+		}
 		document.ContentPreview = util.BuildContentPreviewFromText(content)
 		document.Status = "ready"
 		document.ChunkCount = 0
@@ -2164,6 +2192,11 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	}
 
 	if err := s.upsertDocumentChunksWithContext(ctx, document.KnowledgeBaseID, chunks, vectors); err != nil {
+		return model.Document{}, err
+	}
+	document, err = s.captureIndexedDocument(document, content)
+	if err != nil {
+		_ = s.deleteDocumentChunks(document.KnowledgeBaseID, document.ID)
 		return model.Document{}, err
 	}
 
@@ -2289,6 +2322,10 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 		if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, nil, nil); err != nil {
 			return model.Document{}, err
 		}
+		document, err = s.captureIndexedDocument(document, content)
+		if err != nil {
+			return model.Document{}, err
+		}
 		document.ContentPreview = util.BuildContentPreviewFromText(content)
 		document.Status = "ready"
 		document.ChunkCount = 0
@@ -2310,6 +2347,11 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 	}
 
 	if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, chunks, vectors); err != nil {
+		return model.Document{}, err
+	}
+	document, err = s.captureIndexedDocument(document, content)
+	if err != nil {
+		_ = s.deleteDocumentChunks(document.KnowledgeBaseID, document.ID)
 		return model.Document{}, err
 	}
 
@@ -2413,6 +2455,9 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 	}
 	if err := s.deleteDocumentChunks(knowledgeBaseID, documentID); err != nil {
 		log.Printf("failed to delete qdrant points for document %s: %v", documentID, err)
+	}
+	if err := s.deleteIndexedDocument(knowledgeBaseID, documentID); err != nil {
+		log.Printf("failed to delete indexed content for document %s: %v", documentID, err)
 	}
 	return removedDocument, nil
 }
@@ -3587,16 +3632,28 @@ func documentFilter(documentID string) map[string]any {
 	}
 }
 
-func buildDocumentDetailResponse(s *AppService, document model.Document, content string, chunks []DocumentChunk, focusChunkID string) model.DocumentDetailResponse {
+func buildDocumentDetailResponse(s *AppService, document model.Document, content, contentSource string, chunks []DocumentChunk, focusChunkID string, options DocumentDetailOptions) model.DocumentDetailResponse {
 	document = publicDocument(document)
 	rawContent := strings.TrimSpace(content)
 	rawContentTruncated := false
-	if len([]rune(rawContent)) > documentDetailRawContentLimit {
-		rawContent = truncateRunes(rawContent, documentDetailRawContentLimit)
+	rawContentLimit := documentDetailRawContentLimit
+	if options.IncludeFullContent {
+		rawContentLimit = 0
+	}
+	if rawContentLimit > 0 && len([]rune(rawContent)) > rawContentLimit {
+		rawContent = truncateRunes(rawContent, rawContentLimit)
 		rawContentTruncated = true
 	}
 
-	chunkPreviews := make([]model.DocumentChunkPreview, 0, minInt(len(chunks), documentDetailChunkLimit))
+	chunkLimit := documentDetailChunkLimit
+	if options.IncludeAllChunks {
+		chunkLimit = 0
+	}
+	previewCapacity := len(chunks)
+	if chunkLimit > 0 {
+		previewCapacity = minInt(len(chunks), chunkLimit)
+	}
+	chunkPreviews := make([]model.DocumentChunkPreview, 0, previewCapacity)
 	summaryParts := make([]string, 0)
 	summaryChunkCount := 0
 	structuredRowCount := 0
@@ -3608,7 +3665,7 @@ func buildDocumentDetailResponse(s *AppService, document model.Document, content
 		if chunk.Kind == "structured_row" {
 			structuredRowCount++
 		}
-		if index >= documentDetailChunkLimit {
+		if chunkLimit > 0 && index >= chunkLimit {
 			continue
 		}
 		chunkPreviews = append(chunkPreviews, model.DocumentChunkPreview{
@@ -3656,7 +3713,8 @@ func buildDocumentDetailResponse(s *AppService, document model.Document, content
 			RawContentAvailable:   strings.TrimSpace(content) != "",
 			QdrantEnabled:         s != nil && s.qdrant != nil && s.qdrant.IsEnabled(),
 			RawContentTruncated:   rawContentTruncated,
-			ChunkPreviewTruncated: len(chunks) > documentDetailChunkLimit,
+			ChunkPreviewTruncated: chunkLimit > 0 && len(chunks) > chunkLimit,
+			ContentSource:         contentSource,
 		},
 		RawContent: rawContent,
 		Summary:    summary,

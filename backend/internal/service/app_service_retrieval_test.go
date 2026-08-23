@@ -15,6 +15,49 @@ import (
 	"ai-localbase/internal/model"
 )
 
+type recordingContextCompressor struct {
+	called int
+	result string
+}
+
+func (c *recordingContextCompressor) Compress(_ context.Context, _ string, _ []RetrievedChunk) (string, error) {
+	c.called++
+	return c.result, nil
+}
+
+func TestBuildRetrievedContextCompressesBeforeTrim(t *testing.T) {
+	compressor := &recordingContextCompressor{result: "压缩后的证据上下文"}
+	service := &AppService{
+		rag:               NewRagService(),
+		contextCompressor: compressor,
+		serverConfig: model.ServerConfig{
+			RetrievalMaxContextChars: 80,
+		},
+	}
+
+	contextText, sources, err := service.buildRetrievedContext(
+		context.Background(),
+		model.ChatCompletionRequest{},
+		"示例机构成立时间",
+		[]RetrievedChunk{
+			{DocumentChunk: DocumentChunk{ID: "chunk-1", DocumentID: "doc-1", DocumentName: "机构简介.md", Text: strings.Repeat("第一份证据。", 12)}},
+			{DocumentChunk: DocumentChunk{ID: "chunk-2", DocumentID: "doc-1", DocumentName: "机构简介.md", Text: strings.Repeat("第二份证据。", 12)}},
+		},
+	)
+	if err != nil {
+		t.Fatalf("build context: %v", err)
+	}
+	if compressor.called != 1 {
+		t.Fatalf("expected compressor to run once before trimming, got %d", compressor.called)
+	}
+	if contextText != compressor.result {
+		t.Fatalf("expected compressed context, got %q", contextText)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("expected sources to retain both original evidence chunks, got %d", len(sources))
+	}
+}
+
 func TestResolveRetrievalParams(t *testing.T) {
 	t.Run("document scope", func(t *testing.T) {
 		params := resolveRetrievalParams(model.ChatCompletionRequest{DocumentID: "doc-1"})

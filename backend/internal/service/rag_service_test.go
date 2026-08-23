@@ -236,7 +236,9 @@ func TestAppServiceIndexDocumentWithExtractedText(t *testing.T) {
 		t.Fatalf("write indexed markdown file: %v", err)
 	}
 
-	service := NewAppService(nil, NewAppStateStore(""), nil, model.ServerConfig{})
+	service := NewAppService(nil, NewAppStateStore(""), nil, model.ServerConfig{
+		IndexedContentDir: t.TempDir(),
+	})
 	service.state.Config.Embedding = model.EmbeddingConfig{
 		Provider: "ollama",
 		BaseURL:  embeddingServer.URL,
@@ -265,6 +267,9 @@ func TestAppServiceIndexDocumentWithExtractedText(t *testing.T) {
 	}
 	if !strings.Contains(indexed.ContentPreview, "示例文本抽取后进入索引链路") {
 		t.Fatalf("expected content preview to come from extracted text, got %q", indexed.ContentPreview)
+	}
+	if !indexed.IndexedContentAvailable || indexed.IndexedContentChars == 0 {
+		t.Fatalf("expected indexed content snapshot metadata, got %+v", indexed)
 	}
 }
 

@@ -133,6 +133,7 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
                     <div><dt>摘要块</dt><dd>{detail.diagnostics.summaryChunkCount}</dd></div>
                     <div><dt>数据行块</dt><dd>{detail.diagnostics.structuredRowCount}</dd></div>
                     <div><dt>向量服务</dt><dd>{detail.diagnostics.qdrantEnabled ? '已启用' : '未启用'}</dd></div>
+                    <div><dt>内容来源</dt><dd>{detail.diagnostics.contentSource === 'indexed' ? '索引快照' : detail.diagnostics.contentSource === 'source' ? '原始文件' : '不可用'}</dd></div>
                   </dl>
                 </section>
 

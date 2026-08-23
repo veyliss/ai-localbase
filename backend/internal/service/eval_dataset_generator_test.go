@@ -585,9 +585,9 @@ func TestEvalCaseHitRequiresAllCrossDocumentSources(t *testing.T) {
 
 func TestBuildEvalRunMetrics(t *testing.T) {
 	metrics := buildEvalRunMetrics([]model.EvalRunCaseResult{
-		{Hit: true, HitRank: 1, ReciprocalRank: 1, ElapsedMs: 10, EvidenceSupport: true, DirectEvidence: true},
+		{Hit: true, HitRank: 1, ReciprocalRank: 1, ElapsedMs: 10, EvidenceSupport: true, DirectEvidence: true, EvidenceGateInputCount: 2, EvidenceGateOutputCount: 1, EvidenceGateDroppedCount: 1},
 		{Hit: true, HitRank: 2, ReciprocalRank: 0.5, ElapsedMs: 20, LowConfidence: true, EvidenceSupport: false, EvidenceIssue: "命中来源但未覆盖答案证据片段"},
-		{Hit: false, HitRank: -1, ElapsedMs: 30, Error: "未命中", EvidenceSupport: false},
+		{Hit: false, HitRank: -1, ElapsedMs: 30, Error: "未命中", EvidenceSupport: false, EvidenceGateInputCount: 2, EvidenceGateOutputCount: 0, EvidenceGateDroppedCount: 2},
 	}, 2)
 
 	if metrics.TotalCases != 3 || metrics.HitCount != 2 || metrics.MissCount != 1 {
@@ -607,6 +607,9 @@ func TestBuildEvalRunMetrics(t *testing.T) {
 	}
 	if metrics.EvidenceSupportRate < 0.33 || metrics.EvidenceSupportRate > 0.34 {
 		t.Fatalf("unexpected evidence support rate: %#v", metrics)
+	}
+	if metrics.EvidenceGateDroppedCount != 3 || metrics.EvidenceGateAffectedCases != 2 || metrics.EvidenceGateEmptyResults != 1 {
+		t.Fatalf("unexpected evidence gate metrics: %#v", metrics)
 	}
 	if metrics.LatencyP50Ms != 20 || metrics.LatencyP95Ms != 20 {
 		t.Fatalf("unexpected latency percentiles: %#v", metrics)

@@ -534,14 +534,17 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 			runSearchMode = response.SearchMode
 		}
 		caseResult := model.EvalRunCaseResult{
-			CaseID:         item.ID,
-			Question:       item.Question,
-			ExpectedAnswer: item.Answer,
-			HitRank:        -1,
-			ElapsedMs:      response.ElapsedMs,
-			LowConfidence:  response.LowConfidence,
-			Confidence:     response.Confidence,
-			Retrieved:      response.Items,
+			CaseID:                   item.ID,
+			Question:                 item.Question,
+			ExpectedAnswer:           item.Answer,
+			HitRank:                  -1,
+			ElapsedMs:                response.ElapsedMs,
+			LowConfidence:            response.LowConfidence,
+			Confidence:               response.Confidence,
+			EvidenceGateInputCount:   response.EvidenceGateInputCount,
+			EvidenceGateOutputCount:  response.EvidenceGateOutputCount,
+			EvidenceGateDroppedCount: response.EvidenceGateDroppedCount,
+			Retrieved:                response.Items,
 		}
 		if err != nil {
 			caseResult.Error = err.Error()
@@ -800,6 +803,13 @@ func buildEvalRunMetrics(results []model.EvalRunCaseResult, skippedDisabled int)
 		}
 		if result.DirectEvidence {
 			metrics.DirectEvidenceHitCount++
+		}
+		if result.EvidenceGateDroppedCount > 0 {
+			metrics.EvidenceGateAffectedCases++
+			metrics.EvidenceGateDroppedCount += result.EvidenceGateDroppedCount
+		}
+		if result.EvidenceGateInputCount > 0 && result.EvidenceGateOutputCount == 0 {
+			metrics.EvidenceGateEmptyResults++
 		}
 		if result.LowConfidence {
 			metrics.LowConfidence++

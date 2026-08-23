@@ -3,6 +3,7 @@ package offline
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -32,7 +33,7 @@ func NewEvaluator(retrieval RetrievalFunc, generation GenerationFunc, cfg Evalua
 	if cfg.HitThreshold == 0 {
 		cfg.HitThreshold = 0.5
 	}
-	if cfg.MaxConcurrency == 0 {
+	if cfg.MaxConcurrency <= 0 {
 		cfg.MaxConcurrency = 1 // 默认串行
 	}
 	return &Evaluator{
@@ -49,21 +50,43 @@ func (e *Evaluator) Run(ctx context.Context, dataset *Dataset) ([]CaseResult, er
 	}
 
 	results := make([]CaseResult, len(dataset.Cases))
-	// Phase 1 暂时只支持串行，后续可扩展并发
-	for i, gtCase := range dataset.Cases {
+	workerCount := e.config.MaxConcurrency
+	if workerCount > len(dataset.Cases) {
+		workerCount = len(dataset.Cases)
+	}
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				gtCase := dataset.Cases[index]
+				result, err := e.EvaluateCase(ctx, gtCase)
+				if err != nil {
+					result.Error = err.Error()
+				}
+				failure := ClassifyFailure(result, gtCase, e.config.HitThreshold)
+				result.FailureCategory = failure.Category
+				result.FailureReason = failure.Reason
+				results[index] = result
+			}
+		}()
+	}
+
+	for index := range dataset.Cases {
 		select {
 		case <-ctx.Done():
+			close(jobs)
+			workers.Wait()
 			return nil, ctx.Err()
-		default:
-			result, err := e.EvaluateCase(ctx, gtCase)
-			if err != nil {
-				result.Error = err.Error()
-			}
-			failure := ClassifyFailure(result, gtCase, e.config.HitThreshold)
-			result.FailureCategory = failure.Category
-			result.FailureReason = failure.Reason
-			results[i] = result
+		case jobs <- index:
 		}
+	}
+	close(jobs)
+	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return results, nil
 }
@@ -92,6 +115,7 @@ func (e *Evaluator) EvaluateCase(ctx context.Context, gt GroundTruthCase) (CaseR
 		return result, fmt.Errorf("generation failed: %w", err)
 	}
 	result.LLMAnswer = answer
+	ApplyFaithfulness(&result)
 
 	// 3. 计算命中指标
 	classification := ClassifyHit(result, gt, e.config.HitThreshold)

@@ -106,8 +106,8 @@ func TestClassifyHitSeparatesDocumentHitFromDirectEvidence(t *testing.T) {
 }
 
 func TestIsHitUsesThresholdForPartialAnswerSnippet(t *testing.T) {
-	gt := GroundTruthCase{AnswerSnippets: []string{"北京大学成立于1900年"}}
-	result := CaseResult{RetrievedChunks: []RetrievedChunkInfo{{Text: "北京大学成立于1898年，位于北京。"}}}
+	gt := GroundTruthCase{AnswerSnippets: []string{"示例机构成立于1900年"}}
+	result := CaseResult{RetrievedChunks: []RetrievedChunkInfo{{Text: "示例机构成立于1898年，位于示例城市。"}}}
 
 	hit, _ := IsHit(result, gt, 0.4)
 	if !hit {

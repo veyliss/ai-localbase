@@ -10,22 +10,27 @@ import (
 
 // CaseResult 单个用例的评估结果
 type CaseResult struct {
-	CaseID            string
-	Question          string
-	GroundTruth       GroundTruthCase
-	RetrievedChunks   []RetrievedChunkInfo // 检索到的文档信息
-	LLMAnswer         string
-	RetrievalLatency  time.Duration
-	GenerationLatency time.Duration
-	DocumentHit       bool
-	ChunkHit          bool
-	AnswerSnippetHit  bool
-	DirectEvidenceHit bool
-	HitRank           int     // 第一个命中的排名，-1 表示未命中
-	ReciprocalRank    float64 // 1/HitRank，未命中为 0
-	Error             string  // 运行时错误信息（若有）
-	FailureCategory   string  // 失败根因分类
-	FailureReason     string  // 失败根因说明
+	CaseID                string
+	Question              string
+	GroundTruth           GroundTruthCase
+	RetrievedChunks       []RetrievedChunkInfo // 检索到的文档信息
+	LLMAnswer             string
+	RetrievalLatency      time.Duration
+	GenerationLatency     time.Duration
+	DocumentHit           bool
+	ChunkHit              bool
+	AnswerSnippetHit      bool
+	DirectEvidenceHit     bool
+	FaithfulnessScore     float64
+	AnswerClaimCount      int
+	SupportedClaimCount   int
+	UnsupportedClaimCount int
+	FaithfulnessEvaluated bool
+	HitRank               int     // 第一个命中的排名，-1 表示未命中
+	ReciprocalRank        float64 // 1/HitRank，未命中为 0
+	Error                 string  // 运行时错误信息（若有）
+	FailureCategory       string  // 失败根因分类
+	FailureReason         string  // 失败根因说明
 }
 
 // RetrievedChunkInfo 检索结果摘要（不依赖 service 包，避免循环依赖）
@@ -39,17 +44,22 @@ type RetrievedChunkInfo struct {
 
 // AggregateMetrics 聚合后的评估指标
 type AggregateMetrics struct {
-	TotalCases            int
-	HitRate               float64
-	DocumentHitRate       float64
-	ChunkHitRate          float64
-	AnswerSnippetHitRate  float64
-	DirectEvidenceHitRate float64
-	MRR                   float64
-	LatencyRetrievalP50   time.Duration
-	LatencyRetrievalP95   time.Duration
-	LatencyGenerationP50  time.Duration
-	LatencyGenerationP95  time.Duration
+	TotalCases                 int
+	HitRate                    float64
+	DocumentHitRate            float64
+	ChunkHitRate               float64
+	AnswerSnippetHitRate       float64
+	DirectEvidenceHitRate      float64
+	FaithfulnessScore          float64
+	HallucinationRate          float64
+	UnsupportedClaimRate       float64
+	FaithfulnessEvaluatedCases int
+	UnsupportedAnswerCases     int
+	MRR                        float64
+	LatencyRetrievalP50        time.Duration
+	LatencyRetrievalP95        time.Duration
+	LatencyGenerationP50       time.Duration
+	LatencyGenerationP95       time.Duration
 }
 
 type HitClassification struct {
@@ -69,6 +79,7 @@ const (
 	FailureCategoryTableIntentMiss   = "table_intent_miss"
 	FailureCategoryFilenameScopeMiss = "filename_scope_miss"
 	FailureCategoryNoAnswerPolicy    = "no_answer_policy_miss"
+	FailureCategoryUnsupportedAnswer = "unsupported_answer"
 	FailureCategoryDatasetIssue      = "dataset_issue"
 	FailureCategoryRuntimeError      = "runtime_error"
 )
@@ -249,6 +260,13 @@ func ClassifyFailure(result CaseResult, gt GroundTruthCase, threshold float64) F
 		}
 	}
 	if classification.Hit {
+		faithfulness := AnalyzeCaseFaithfulness(result)
+		if faithfulness.UnsupportedClaimCount > 0 {
+			return FailureClassification{
+				Category: FailureCategoryUnsupportedAnswer,
+				Reason:   "答案包含未被检索证据支撑的陈述",
+			}
+		}
 		return FailureClassification{}
 	}
 	if len(gt.SourceDocuments) == 0 && len(gt.AnswerSnippets) == 0 {
@@ -398,6 +416,31 @@ func computeClassificationRates(results []CaseResult, gts []GroundTruthCase, thr
 		float64(directHits) / float64(evaluated)
 }
 
+func computeFaithfulnessMetrics(results []CaseResult) (score, hallucinationRate, unsupportedClaimRate float64, evaluatedCases, unsupportedCases int) {
+	var supportedClaims, totalClaims int
+	for _, result := range results {
+		analysis := AnalyzeCaseFaithfulness(result)
+		if !analysis.Evaluated || analysis.ClaimCount == 0 {
+			continue
+		}
+		evaluatedCases++
+		supportedClaims += analysis.SupportedClaimCount
+		totalClaims += analysis.ClaimCount
+		if analysis.UnsupportedClaimCount > 0 {
+			unsupportedCases++
+		}
+	}
+	if evaluatedCases == 0 {
+		return 0, 0, 0, 0, 0
+	}
+	if totalClaims > 0 {
+		score = float64(supportedClaims) / float64(totalClaims)
+		unsupportedClaimRate = float64(totalClaims-supportedClaims) / float64(totalClaims)
+	}
+	hallucinationRate = float64(unsupportedCases) / float64(evaluatedCases)
+	return score, hallucinationRate, unsupportedClaimRate, evaluatedCases, unsupportedCases
+}
+
 func groundTruthIndex(gts []GroundTruthCase) map[string]GroundTruthCase {
 	index := make(map[string]GroundTruthCase, len(gts))
 	for _, gt := range gts {
@@ -474,18 +517,24 @@ func Aggregate(results []CaseResult, gts []GroundTruthCase, threshold float64) A
 	hitRate := ComputeHitRate(results, gts, threshold)
 	mrr := ComputeMRR(results, gts, threshold)
 	documentHitRate, chunkHitRate, answerSnippetHitRate, directEvidenceHitRate := computeClassificationRates(results, gts, threshold)
+	faithfulnessScore, hallucinationRate, unsupportedClaimRate, faithfulnessEvaluatedCases, unsupportedAnswerCases := computeFaithfulnessMetrics(results)
 
 	return AggregateMetrics{
-		TotalCases:            totalCases,
-		HitRate:               hitRate,
-		DocumentHitRate:       documentHitRate,
-		ChunkHitRate:          chunkHitRate,
-		AnswerSnippetHitRate:  answerSnippetHitRate,
-		DirectEvidenceHitRate: directEvidenceHitRate,
-		MRR:                   mrr,
-		LatencyRetrievalP50:   retrievalP50,
-		LatencyRetrievalP95:   retrievalP95,
-		LatencyGenerationP50:  generationP50,
-		LatencyGenerationP95:  generationP95,
+		TotalCases:                 totalCases,
+		HitRate:                    hitRate,
+		DocumentHitRate:            documentHitRate,
+		ChunkHitRate:               chunkHitRate,
+		AnswerSnippetHitRate:       answerSnippetHitRate,
+		DirectEvidenceHitRate:      directEvidenceHitRate,
+		FaithfulnessScore:          faithfulnessScore,
+		HallucinationRate:          hallucinationRate,
+		UnsupportedClaimRate:       unsupportedClaimRate,
+		FaithfulnessEvaluatedCases: faithfulnessEvaluatedCases,
+		UnsupportedAnswerCases:     unsupportedAnswerCases,
+		MRR:                        mrr,
+		LatencyRetrievalP50:        retrievalP50,
+		LatencyRetrievalP95:        retrievalP95,
+		LatencyGenerationP50:       generationP50,
+		LatencyGenerationP95:       generationP95,
 	}
 }

@@ -13,13 +13,15 @@ type MetricComparison struct {
 
 // CaseRegression identifies a case that lost a hit or direct evidence.
 type CaseRegression struct {
-	CaseID          string
-	BaselineHit     bool
-	CandidateHit    bool
-	BaselineDirect  bool
-	CandidateDirect bool
-	Category        string
-	Reason          string
+	CaseID               string
+	BaselineHit          bool
+	CandidateHit         bool
+	BaselineDirect       bool
+	CandidateDirect      bool
+	BaselineUnsupported  bool
+	CandidateUnsupported bool
+	Category             string
+	Reason               string
 }
 
 // ReportComparison is intentionally free of question text and answer content,
@@ -49,6 +51,9 @@ func Compare(baseline, candidate *Report) ReportComparison {
 		metric("hit_rate", baseline.Metrics.HitRate, candidate.Metrics.HitRate, true),
 		metric("mrr", baseline.Metrics.MRR, candidate.Metrics.MRR, true),
 		metric("direct_evidence_hit_rate", baseline.Metrics.DirectEvidenceHitRate, candidate.Metrics.DirectEvidenceHitRate, true),
+		metric("faithfulness_score", baseline.Metrics.FaithfulnessScore, candidate.Metrics.FaithfulnessScore, true),
+		metric("hallucination_rate", baseline.Metrics.HallucinationRate, candidate.Metrics.HallucinationRate, false),
+		metric("unsupported_claim_rate", baseline.Metrics.UnsupportedClaimRate, candidate.Metrics.UnsupportedClaimRate, false),
 		metric("retrieval_latency_p95_ms", baseline.Metrics.RetrievalLatencyP95Ms, candidate.Metrics.RetrievalLatencyP95Ms, false),
 		metric("generation_latency_p95_ms", baseline.Metrics.GenerationLatencyP95Ms, candidate.Metrics.GenerationLatencyP95Ms, false),
 	}
@@ -62,15 +67,17 @@ func Compare(baseline, candidate *Report) ReportComparison {
 		if !ok {
 			continue
 		}
-		if previous.Hit && !item.Hit || previous.DirectEvidenceHit && !item.DirectEvidenceHit {
+		if previous.Hit && !item.Hit || previous.DirectEvidenceHit && !item.DirectEvidenceHit || !previous.UnsupportedAnswer && item.UnsupportedAnswer {
 			comparison.Regressions = append(comparison.Regressions, CaseRegression{
-				CaseID:          item.CaseID,
-				BaselineHit:     previous.Hit,
-				CandidateHit:    item.Hit,
-				BaselineDirect:  previous.DirectEvidenceHit,
-				CandidateDirect: item.DirectEvidenceHit,
-				Category:        item.FailureCategory,
-				Reason:          item.FailureReason,
+				CaseID:               item.CaseID,
+				BaselineHit:          previous.Hit,
+				CandidateHit:         item.Hit,
+				BaselineDirect:       previous.DirectEvidenceHit,
+				CandidateDirect:      item.DirectEvidenceHit,
+				BaselineUnsupported:  previous.UnsupportedAnswer,
+				CandidateUnsupported: item.UnsupportedAnswer,
+				Category:             item.FailureCategory,
+				Reason:               item.FailureReason,
 			})
 		}
 		if !previous.Hit && item.Hit {

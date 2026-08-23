@@ -5,10 +5,12 @@
 本模块为 ai-localbase 的离线 RAG 评估框架 Phase 1，提供：
 
 - **数据集管理**：从 JSON 文件加载 Ground Truth 测试用例
-- **评估指标**：Hit Rate、MRR、检索/生成时延 P50/P95
-- **核心评估器**：通过接口注入检索和生成函数，支持 mock 测试
+- **评估指标**：Hit Rate、MRR、检索/生成时延 P50/P95，以及确定性的 Faithfulness/未支撑答案检测
+- **核心评估器**：通过接口注入检索和生成函数，支持 mock 测试和受控并发
 - **报告输出**：生成 JSON 和 Markdown 格式报告
 - **CLI 入口**：命令行运行评估流程
+
+> 评测数据、评估结果和本地上传文件只允许在本机使用，`backend/eval/data/`、`backend/eval/results/` 和 `backend/data/` 已加入 Git 忽略规则，禁止提交、推送或上传。
 
 ---
 
@@ -80,6 +82,9 @@ backend/eval/
 | **Chunk Hit Rate** | 命中标准答案指定 Chunk 的用例比例 |
 | **Answer Snippet Hit Rate** | 检索片段包含答案片段的用例比例 |
 | **Direct Evidence Hit Rate** | 命中指定 Chunk 或答案片段的用例比例 |
+| **Faithfulness** | 生成答案中能在检索片段中找到支撑的陈述比例；使用确定性词法基线，不调用额外模型 |
+| **Hallucination Rate** | 包含至少一条未被检索证据支撑陈述的答案比例；只在有可评估陈述的答案中统计 |
+| **Unsupported Claim Rate** | 未被检索证据支撑的陈述占全部可评估陈述的比例 |
 | **MRR** | Mean Reciprocal Rank，首个命中结果的排名倒数均值 |
 | **Retrieval Latency P50/P95** | 检索时延的第 50/95 百分位数 |
 | **Generation Latency P50/P95** | LLM 生成时延的第 50/95 百分位数 |
@@ -89,6 +94,8 @@ backend/eval/
 2. `source_documents` 只有文档信息、没有 `chunk_id` 时，退回文档级匹配，兼容历史评估集。
 3. 没有 `source_documents` 时，使用 `answer_snippets` 做文本包含匹配。
 4. 没有 `source_documents` 时，`answer_snippets` 使用归一化文本和二元片段覆盖率判断，`EvaluatorConfig.HitThreshold` 会实际参与命中计算；完整包含仍视为精确命中。
+
+Faithfulness 检测会按句号、问号、感叹号和分号拆分答案，跳过明确的“无法确认/信息不足”拒答句；数字和 ASCII 标识必须在证据中保持一致，避免把“1898 年”与“1900 年”误判为同一事实。该指标是低成本回归信号，不能替代人工审核或模型辅助评审。
 
 ---
 
@@ -232,6 +239,28 @@ go run ./eval/cmd/ \
   -run-label phase1-baseline
 ```
 
+### 本地运行四组策略矩阵
+
+仓库提供了只负责编排命令的本地脚本。数据集路径和报告目录由调用者提供，脚本不会把它们复制到仓库：
+
+```bash
+cd backend
+./eval/run_strategy_matrix.sh /绝对路径/到/本地审核数据集.json eval/results/strategy-matrix
+```
+
+可选环境变量：`EVAL_KB_ID`、`EVAL_EMBEDDING_BASE_URL`、`EVAL_CHAT_BASE_URL`、`EVAL_PATH_MAP`、`EVAL_CONCURRENCY`。四组报告生成后，使用推荐命令按质量、证据、错误数和 P95 延迟门槛选择默认策略：
+
+```bash
+cd backend
+go run ./eval/cmd/recommend_strategy \
+  -baseline eval/results/strategy-matrix/matrix_YYYYMMDD-HHMMSS_dense-keyword-no-rewrite.json \
+  -candidate hybrid=eval/results/strategy-matrix/matrix_YYYYMMDD-HHMMSS_hybrid-keyword-no-rewrite.json \
+  -candidate semantic=eval/results/strategy-matrix/matrix_YYYYMMDD-HHMMSS_hybrid-semantic-no-rewrite.json \
+  -candidate advanced=eval/results/strategy-matrix/matrix_YYYYMMDD-HHMMSS_hybrid-semantic-rewrite.json
+```
+
+推荐器默认要求 Hit Rate、MRR、Faithfulness、直接证据命中率不下降，未支撑答案/陈述率和错误数不增加，检索与生成 P95 不超过 baseline 的 130%。没有候选通过时继续使用 baseline，不会自动修改生产配置。
+
 如需直接覆盖评估时使用的检索参数，可追加：
 
 ```bash
@@ -282,6 +311,7 @@ go run ./eval/cmd/ \
 | `-eval-chat-base-url` | 空 | 覆盖评估请求使用的 Chat Base URL，适合 Query Rewrite 或真实 LLM 评估 |
 | `-eval-path-map` | 空 | 临时映射 app-state 中的文档路径，例如 Docker dev 中宿主机运行可用 `/app=.` |
 | `-eval-allow-missing-sources` | `false` | 允许 `source_documents` 引用当前 app-state 中不存在的知识库或文档；只建议兼容旧数据时使用 |
+| `-eval-concurrency` | `1` | 评估用例并发数；默认串行，真实模式建议从 2 开始逐步验证服务承载能力 |
 
 真实模式会在运行前校验数据集的 `source_documents` 是否仍存在于当前 app-state。若发现失效来源，默认直接停止并列出问题用例，避免把脏评估集误判为检索召回下降。确认要兼容历史数据时，再显式添加 `-eval-allow-missing-sources`。
 

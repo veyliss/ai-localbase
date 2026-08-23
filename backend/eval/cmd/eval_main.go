@@ -53,6 +53,7 @@ func main() {
 		evalPathMap                    = flag.String("eval-path-map", "", "真实模式下临时映射 app-state 中的文档路径，格式 from=to，多个映射用逗号分隔")
 		evalAllowMissingSources        = flag.Bool("eval-allow-missing-sources", false, "真实模式下允许数据集 source_documents 引用不存在的知识库或文档")
 		includeDisabled                = flag.Bool("include-disabled", false, "包含 disabled 或 rejected 的评估用例；默认只运行启用样本")
+		evalConcurrency                = flag.Int("eval-concurrency", 1, "评估并发数；默认 1，适合真实模式逐步放大")
 	)
 	flag.Parse()
 
@@ -146,8 +147,9 @@ func main() {
 
 	cfg := offline.EvaluatorConfig{
 		HitThreshold:   *hitThreshold,
-		MaxConcurrency: 1,
+		MaxConcurrency: *evalConcurrency,
 	}
+	log.Printf("[eval] 评估并发数: %d", cfg.MaxConcurrency)
 	evaluator := offline.NewEvaluator(retrievalFn, generationFn, cfg)
 
 	ctx := context.Background()
@@ -879,6 +881,9 @@ func printSummary(rpt *report.Report) {
 	fmt.Printf("Chunk 命中率:    %.2f%%\n", rpt.Metrics.ChunkHitRate*100)
 	fmt.Printf("答案片段命中率: %.2f%%\n", rpt.Metrics.AnswerSnippetHitRate*100)
 	fmt.Printf("直接证据命中率: %.2f%%\n", rpt.Metrics.DirectEvidenceHitRate*100)
+	fmt.Printf("Faithfulness:   %.2f%%\n", rpt.Metrics.FaithfulnessScore*100)
+	fmt.Printf("未支撑答案率:   %.2f%%\n", rpt.Metrics.HallucinationRate*100)
+	fmt.Printf("未支撑陈述率:   %.2f%%\n", rpt.Metrics.UnsupportedClaimRate*100)
 	fmt.Printf("MRR:            %.4f\n", rpt.Metrics.MRR)
 	fmt.Printf("检索时延 P50:   %.0fms\n", rpt.Metrics.RetrievalLatencyP50Ms)
 	fmt.Printf("检索时延 P95:   %.0fms\n", rpt.Metrics.RetrievalLatencyP95Ms)

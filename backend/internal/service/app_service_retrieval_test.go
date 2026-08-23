@@ -308,6 +308,109 @@ func TestIsLowConfidenceSelection(t *testing.T) {
 	})
 }
 
+func TestApplyEvidenceGatePrefersDirectEvidenceOverUnrelatedHighScore(t *testing.T) {
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-related",
+				Text:       "示例机构团队规模超过3800人，核心团队负责平台建设。",
+			},
+			Score:    0.22,
+			RawScore: 0.16,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-unrelated",
+				Text:       "缓存集群通过连接池参数提升吞吐能力。",
+			},
+			Score:    0.95,
+			RawScore: 0.91,
+		},
+	}
+
+	filtered := applyEvidenceGate("示例机构团队规模是多少", chunks)
+	if len(filtered) != 1 || filtered[0].DocumentID != "doc-related" {
+		t.Fatalf("expected direct evidence only, got %#v", filtered)
+	}
+}
+
+func TestApplyEvidenceGateReportsDroppedCandidates(t *testing.T) {
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-related",
+				Text:       "示例机构团队规模超过3800人。",
+			},
+			Score:    0.42,
+			RawScore: 0.36,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-unrelated",
+				Text:       "缓存集群通过连接池参数提升吞吐能力。",
+			},
+			Score:    0.91,
+			RawScore: 0.89,
+		},
+	}
+
+	filtered, stats := applyEvidenceGateWithStats("示例机构团队规模是多少", chunks)
+	if len(filtered) != 1 || stats.InputCount != 2 || stats.OutputCount != 1 || stats.DroppedCount != 1 {
+		t.Fatalf("expected one dropped candidate, got filtered=%#v stats=%#v", filtered, stats)
+	}
+
+	filtered, stats = applyEvidenceGateWithStats("完全未知主题", []RetrievedChunk{
+		{DocumentChunk: DocumentChunk{DocumentID: "doc-1", Text: "无关片段一"}, RawScore: 0.31, Score: 0.31},
+		{DocumentChunk: DocumentChunk{DocumentID: "doc-2", Text: "无关片段二"}, RawScore: 0.24, Score: 0.24},
+	})
+	if len(filtered) != 0 || stats.InputCount != 2 || stats.OutputCount != 0 || stats.DroppedCount != 2 {
+		t.Fatalf("expected all low-signal candidates to be dropped, got filtered=%#v stats=%#v", filtered, stats)
+	}
+}
+
+func TestApplyEvidenceGateAllowsStrongSemanticOnlyMatch(t *testing.T) {
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-semantic",
+				Text:       "项目沿革记录了早期建设阶段和后续发展方向。",
+			},
+			Score:    0.88,
+			RawScore: 0.84,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-weak",
+				Text:       "系统包含若干运行参数。",
+			},
+			Score:    0.70,
+			RawScore: 0.68,
+		},
+	}
+
+	filtered := applyEvidenceGate("产品演进脉络", chunks)
+	if len(filtered) != 1 || filtered[0].DocumentID != "doc-semantic" {
+		t.Fatalf("expected strong semantic evidence only, got %#v", filtered)
+	}
+}
+
+func TestApplyEvidenceGateKeepsDeterministicStructuredResults(t *testing.T) {
+	chunks := []RetrievedChunk{{
+		DocumentChunk: DocumentChunk{
+			DocumentID: "doc-table",
+			Kind:       "structured_query",
+			Text:       "第2行：姓名：甲。工资：18000。",
+		},
+		Score:    1,
+		RawScore: 1,
+	}}
+
+	filtered := applyEvidenceGate("工资最高是谁", chunks)
+	if len(filtered) != 1 || filtered[0].Kind != "structured_query" {
+		t.Fatalf("expected structured result to bypass gate, got %#v", filtered)
+	}
+}
+
 func TestQueryEvidenceTermsDoNotInjectFactAliases(t *testing.T) {
 	terms := strings.Join(queryEvidenceTerms("张三的手机号是多少？"), "\n")
 	for _, alias := range []string{"联系电话", "联系方式", "办公电话"} {

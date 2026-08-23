@@ -674,6 +674,88 @@ func keywordCoverage(query, text string) float64 {
 	return float64(evidenceHitCount(queryTerms, text)) / float64(len(queryTerms))
 }
 
+const (
+	retrievalEvidenceCoverageThreshold  = 0.16
+	retrievalSemanticOnlyScoreThreshold = 0.78
+	retrievalSemanticScoreMargin        = 0.08
+)
+
+type evidenceGateStats struct {
+	InputCount   int
+	OutputCount  int
+	DroppedCount int
+}
+
+// applyEvidenceGate prevents low-signal vector matches from entering the
+// answer context. Structured results already come from deterministic table
+// queries and therefore bypass this gate.
+func applyEvidenceGate(query string, chunks []RetrievedChunk) []RetrievedChunk {
+	filtered, _ := applyEvidenceGateWithStats(query, chunks)
+	return filtered
+}
+
+func applyEvidenceGateWithStats(query string, chunks []RetrievedChunk) ([]RetrievedChunk, evidenceGateStats) {
+	stats := evidenceGateStats{InputCount: len(chunks), OutputCount: len(chunks)}
+	if len(chunks) == 0 || strings.TrimSpace(query) == "" {
+		return chunks, stats
+	}
+
+	queryTerms := queryEvidenceTerms(query)
+	if len(queryTerms) == 0 {
+		return chunks, stats
+	}
+
+	type evidenceDecision struct {
+		chunk    RetrievedChunk
+		direct   bool
+		rawScore float64
+	}
+	decisions := make([]evidenceDecision, 0, len(chunks))
+	topRawScore := math.Inf(-1)
+	hasDirectEvidence := false
+	for _, chunk := range chunks {
+		if chunk.Kind == "structured_query" || containsString(chunk.RetrievalChannels, "structured") {
+			decisions = append(decisions, evidenceDecision{chunk: chunk, direct: true, rawScore: chunkRawScore(chunk)})
+			hasDirectEvidence = true
+			continue
+		}
+
+		hits := evidenceHitCount(queryTerms, chunk.Text)
+		coverage := float64(hits) / float64(len(queryTerms))
+		factScore := factEvidenceScore(query, chunk)
+		direct := factScore >= 5 || hits >= 2 || coverage >= retrievalEvidenceCoverageThreshold
+		rawScore := chunkRawScore(chunk)
+		decisions = append(decisions, evidenceDecision{
+			chunk:    chunk,
+			direct:   direct,
+			rawScore: rawScore,
+		})
+		if direct {
+			hasDirectEvidence = true
+		}
+		if rawScore > topRawScore {
+			topRawScore = rawScore
+		}
+	}
+
+	if !hasDirectEvidence && topRawScore < retrievalSemanticOnlyScoreThreshold {
+		stats.OutputCount = 0
+		stats.DroppedCount = stats.InputCount
+		return nil, stats
+	}
+
+	kept := make([]RetrievedChunk, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision.direct ||
+			(!hasDirectEvidence && decision.rawScore >= topRawScore-retrievalSemanticScoreMargin && decision.rawScore >= retrievalSemanticOnlyScoreThreshold) {
+			kept = append(kept, decision.chunk)
+		}
+	}
+	stats.OutputCount = len(kept)
+	stats.DroppedCount = stats.InputCount - stats.OutputCount
+	return kept, stats
+}
+
 func maxTextSimilarity(text string, selected []RetrievedChunk) float64 {
 	if len(selected) == 0 {
 		return 0

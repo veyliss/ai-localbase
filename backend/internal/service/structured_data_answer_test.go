@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"ai-localbase/internal/model"
+	"ai-localbase/internal/util"
 )
 
 func TestQueryStructuredDataPreview(t *testing.T) {
@@ -123,6 +124,67 @@ func TestQueryStructuredDataMaxAverageAndGroup(t *testing.T) {
 	}
 	if len(groupResult.Rows) != 3 {
 		t.Fatalf("expected group evidence rows, got %#v", groupResult.Rows)
+	}
+}
+
+func TestStructuredFieldResolverUsesSchemaAliases(t *testing.T) {
+	documents := []structuredTableDocument{{
+		Tables: []util.StructuredTable{{
+			Headers: []string{"学校名称", "成立日期", "更新时间", "工资"},
+			Rows: []util.StructuredTableRow{{
+				Number: 2,
+				Values: []string{"甲校", "1998", "2024", "18000"},
+			}},
+		}},
+	}}
+
+	if field := detectStructuredTargetField("学校的建校时间", documents); field != "成立日期" {
+		t.Fatalf("expected schema alias to resolve to 成立日期, got %q matches=%#v", field, structuredFieldMatches("学校的建校时间", documents))
+	}
+	if field := detectStructuredTargetField("平均工资", documents); field != "工资" {
+		t.Fatalf("expected salary alias to resolve to 工资, got %q", field)
+	}
+}
+
+func TestStructuredFieldResolverRejectsAmbiguousGenericField(t *testing.T) {
+	documents := []structuredTableDocument{{
+		Tables: []util.StructuredTable{{
+			Headers: []string{"学校名称", "成立日期", "更新时间"},
+			Rows: []util.StructuredTableRow{{
+				Number: 2,
+				Values: []string{"甲校", "1998", "2024"},
+			}},
+		}},
+	}}
+
+	if field := detectStructuredTargetField("时间是多少", documents); field != "" {
+		t.Fatalf("expected ambiguous time field to fall back, got %q matches=%#v", field, structuredFieldMatches("时间是多少", documents))
+	}
+}
+
+func TestStructuredResultChunksCarryStableRowEvidence(t *testing.T) {
+	result := StructuredDataQueryResult{
+		TotalRows:   1,
+		MatchedRows: 1,
+		Columns:     []string{"姓名", "工资"},
+		Rows: []StructuredDataResultRow{{
+			KnowledgeBaseID: "kb-1",
+			DocumentID:      "doc-1",
+			DocumentName:    "staff.csv",
+			RowNumber:       2,
+			Values:          map[string]string{"姓名": "甲", "工资": "18000"},
+		}},
+	}
+
+	chunks := structuredDataResultChunks(result, nil)
+	if len(chunks) != 1 {
+		t.Fatalf("expected one structured evidence chunk, got %#v", chunks)
+	}
+	if chunks[0].EvidenceID == "" || chunks[0].EvidenceID != evidenceIDForChunk(chunks[0].DocumentChunk) {
+		t.Fatalf("expected stable structured evidence id, got %#v", chunks[0])
+	}
+	if chunks[0].TableRow != 2 || len(chunks[0].TableColumns) != 2 {
+		t.Fatalf("expected row and table metadata, got %#v", chunks[0])
 	}
 }
 

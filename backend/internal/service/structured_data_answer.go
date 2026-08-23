@@ -145,9 +145,13 @@ func looksLikeStructuredDataQuery(query string) bool {
 		"表格", "工作表", ".csv", ".xlsx", ".xls", "数据", "记录", "字段", "列名", "数据行", "行数",
 		"筛选", "统计", "分布", "平均", "均值", "最大", "最小", "最高", "最低", "最多", "最少",
 		"姓名", "名字", "名称", "学校", "单位", "项目", "负责人", "联系人", "电话", "手机号", "邮箱",
-		"地址", "时间", "日期", "年龄", "编号", "职称", "职位", "岗位", "薪资", "工资", "薪水", "薪酬",
+		"地址", "时间", "日期", "年份", "建校", "创办", "成立", "创建", "办学", "年龄", "编号", "职称", "职位", "岗位", "薪资", "工资", "薪水", "薪酬",
+		"分数", "成绩", "得分", "评分", "学历", "学位", "状态", "分类",
 	}
-	return containsAnyText(trimmed, markers)
+	if containsAnyText(trimmed, markers) {
+		return true
+	}
+	return false
 }
 
 func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionRequest) []model.Document {
@@ -309,11 +313,11 @@ func buildStructuredQueryPlan(query string, documents []structuredTableDocument)
 
 func detectStructuredAggregateIntent(query string) structuredQueryIntent {
 	switch {
-	case containsAnyText(query, []string{"最高", "最大", "最多"}):
+	case containsAnyText(query, []string{"最高", "最高值", "最大", "最大值", "最多", "highest", "maximum"}):
 		return structuredIntentMax
-	case containsAnyText(query, []string{"最低", "最小", "最少"}):
+	case containsAnyText(query, []string{"最低", "最低值", "最小", "最小值", "最少", "lowest", "minimum"}):
 		return structuredIntentMin
-	case containsAnyText(query, []string{"平均", "均值"}):
+	case containsAnyText(query, []string{"平均", "平均值", "均值", "平均数", "average", "mean"}):
 		return structuredIntentAverage
 	default:
 		return ""
@@ -392,27 +396,37 @@ func normalizeStructuredComparable(value string) string {
 }
 
 func detectStructuredFilter(query string, documents []structuredTableDocument) (string, string) {
-	for _, header := range allStructuredHeaders(documents) {
-		index := strings.Index(query, header)
+	for _, match := range structuredFieldMatches(query, documents) {
+		if value := detectStructuredExplicitFilter(query, match.Header, documents); value != "" {
+			return match.Header, value
+		}
+	}
+	return "", ""
+}
+
+func detectStructuredExplicitFilter(query, header string, documents []structuredTableDocument) string {
+	terms := structuredFieldTerms(header)
+	for _, term := range terms {
+		index := strings.Index(strings.ToLower(query), strings.ToLower(term))
 		if index < 0 {
 			continue
 		}
-		rest := strings.TrimSpace(query[index+len(header):])
+		rest := strings.TrimSpace(query[index+len(term):])
 		for _, marker := range []string{"等于", "为", "是", "=", "：", ":"} {
 			if !strings.HasPrefix(rest, marker) {
 				continue
 			}
 			valueText := strings.TrimSpace(strings.TrimPrefix(rest, marker))
 			if value := findStructuredFieldValueInQuery(valueText, header, documents); value != "" {
-				return header, value
+				return value
 			}
 			value := trimQueryValue(valueText)
 			if value != "" && !isStructuredQuestionValue(value) {
-				return header, value
+				return value
 			}
 		}
 	}
-	return "", ""
+	return ""
 }
 
 func findStructuredFieldValueInQuery(query, field string, documents []structuredTableDocument) string {
@@ -465,27 +479,13 @@ func isStructuredQuestionValue(value string) bool {
 }
 
 func detectStructuredTargetField(query string, documents []structuredTableDocument) string {
-	headers := allStructuredHeaders(documents)
-	for _, header := range headers {
-		if strings.Contains(query, header) {
-			return header
+	if matches := structuredFieldMatches(query, documents); len(matches) > 0 {
+		if structuredFieldMatchesAmbiguous(matches) {
+			return ""
 		}
-	}
-	for _, header := range headers {
-		if strings.Contains(header, "薪资") && containsAnyText(query, []string{"工资", "收入", "薪水"}) {
-			return header
-		}
-		if strings.Contains(header, "年龄") && strings.Contains(query, "年纪") {
-			return header
-		}
-		if strings.Contains(header, "教龄") && containsAnyText(query, []string{"教学年限", "任教年限", "工作年限"}) {
-			return header
-		}
-		if strings.Contains(header, "编号") && containsAnyText(query, []string{"工号", "员工号", "教师号"}) {
-			return header
-		}
-		if strings.Contains(header, "姓名") && containsAnyText(query, []string{"名字", "人员", "教师", "老师", "员工"}) {
-			return header
+		best := matches[0]
+		if len(matches) == 1 || matches[1].Score < best.Score {
+			return best.Header
 		}
 	}
 	if inferred := inferNumericStructuredTargetField(query, documents); inferred != "" {
@@ -495,33 +495,172 @@ func detectStructuredTargetField(query string, documents []structuredTableDocume
 }
 
 func inferNumericStructuredTargetField(query string, documents []structuredTableDocument) string {
-	if containsAnyText(query, []string{"薪资", "工资", "收入", "薪水", "薪酬"}) {
-		return firstHeaderContaining(documents, []string{"薪资", "工资", "收入", "薪水", "薪酬"})
-	}
-	if containsAnyText(query, []string{"年龄", "年纪", "岁数"}) {
-		return firstHeaderContaining(documents, []string{"年龄", "年纪", "岁数"})
-	}
-	if containsAnyText(query, []string{"教龄", "教学年限", "任教年限"}) {
-		return firstHeaderContaining(documents, []string{"教龄", "教学年限", "任教年限"})
-	}
-	if containsAnyText(query, []string{"分数", "成绩", "得分"}) {
-		return firstHeaderContaining(documents, []string{"分数", "成绩", "得分"})
-	}
-	if containsAnyText(query, []string{"价格", "金额", "费用", "成本"}) {
-		return firstHeaderContaining(documents, []string{"价格", "金额", "费用", "成本"})
+	if matches := structuredFieldMatches(query, documents); len(matches) > 0 {
+		numericMatches := make([]structuredFieldMatch, 0, len(matches))
+		for _, match := range matches {
+			if structuredFieldHasNumericValue(documents, match.Header) {
+				numericMatches = append(numericMatches, match)
+			}
+		}
+		if len(numericMatches) == 1 {
+			return numericMatches[0].Header
+		}
+		if len(numericMatches) > 1 && numericMatches[0].Score > numericMatches[1].Score {
+			return numericMatches[0].Header
+		}
 	}
 	return ""
 }
 
-func firstHeaderContaining(documents []structuredTableDocument, markers []string) string {
+type structuredFieldMatch struct {
+	Header     string
+	Score      int
+	GroupIndex int
+	QueryAlias string
+}
+
+func structuredFieldMatches(query string, documents []structuredTableDocument) []structuredFieldMatch {
+	normalizedQuery := normalizeStructuredComparable(query)
+	if normalizedQuery == "" {
+		return nil
+	}
+
+	matches := make([]structuredFieldMatch, 0)
 	for _, header := range allStructuredHeaders(documents) {
-		for _, marker := range markers {
-			if strings.Contains(header, marker) {
-				return header
+		headerNormalized := normalizeStructuredComparable(header)
+		if headerNormalized == "" {
+			continue
+		}
+
+		score := 0
+		matchedGroupIndex := -1
+		matchedQueryAlias := ""
+		if strings.Contains(normalizedQuery, headerNormalized) {
+			score = 10000 + len([]rune(headerNormalized))*10
+		}
+		for groupIndex, group := range structuredFieldAliasGroups() {
+			headerAlias := longestStructuredAliasMatch(headerNormalized, group)
+			queryAlias := longestStructuredAliasMatch(normalizedQuery, group)
+			if headerAlias == "" || queryAlias == "" {
+				continue
+			}
+			candidate := 3000 + len([]rune(queryAlias))*50 + len([]rune(headerAlias))*10
+			if queryAlias == headerAlias {
+				candidate += 100
+			}
+			if candidate > score {
+				score = candidate
+				matchedGroupIndex = groupIndex
+				matchedQueryAlias = queryAlias
+			}
+		}
+		if score > 0 {
+			matches = append(matches, structuredFieldMatch{
+				Header:     header,
+				Score:      score,
+				GroupIndex: matchedGroupIndex,
+				QueryAlias: matchedQueryAlias,
+			})
+		}
+	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Score == matches[j].Score {
+			if len([]rune(matches[i].Header)) == len([]rune(matches[j].Header)) {
+				return matches[i].Header < matches[j].Header
+			}
+			return len([]rune(matches[i].Header)) > len([]rune(matches[j].Header))
+		}
+		return matches[i].Score > matches[j].Score
+	})
+	return matches
+}
+
+func structuredFieldTerms(header string) []string {
+	terms := []string{strings.TrimSpace(header)}
+	for _, group := range structuredFieldAliasGroups() {
+		if longestStructuredAliasMatch(normalizeStructuredComparable(header), group) == "" {
+			continue
+		}
+		terms = append(terms, group...)
+	}
+	sort.SliceStable(terms, func(i, j int) bool {
+		return len([]rune(terms[i])) > len([]rune(terms[j]))
+	})
+	return mergeRetrievalQueries(terms)
+}
+
+func longestStructuredAliasMatch(value string, aliases []string) string {
+	best := ""
+	for _, alias := range aliases {
+		normalizedAlias := normalizeStructuredComparable(alias)
+		if normalizedAlias == "" || !strings.Contains(value, normalizedAlias) {
+			continue
+		}
+		if len([]rune(normalizedAlias)) > len([]rune(best)) {
+			best = normalizedAlias
+		}
+	}
+	return best
+}
+
+func structuredFieldHasNumericValue(documents []structuredTableDocument, header string) bool {
+	for _, row := range collectStructuredRows(documents, "", "") {
+		index := headerIndex(row.Table.Headers, header)
+		if index < 0 || index >= len(row.Row.Values) {
+			continue
+		}
+		if _, ok := parseStructuredNumber(row.Row.Values[index]); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func structuredFieldMatchesAmbiguous(matches []structuredFieldMatch) bool {
+	if len(matches) < 2 {
+		return false
+	}
+	best := matches[0]
+	if isGenericStructuredAlias(best.QueryAlias) && best.GroupIndex >= 0 {
+		for _, match := range matches[1:] {
+			if match.GroupIndex == best.GroupIndex && match.QueryAlias == best.QueryAlias {
+				return true
 			}
 		}
 	}
-	return ""
+	return matches[1].Score == best.Score
+}
+
+func isGenericStructuredAlias(alias string) bool {
+	switch normalizeStructuredComparable(alias) {
+	case "时间", "日期", "年份", "年月", "时点":
+		return true
+	default:
+		return false
+	}
+}
+
+func structuredFieldAliasGroups() [][]string {
+	return [][]string{
+		{"薪资", "工资", "薪水", "薪酬", "收入", "报酬", "待遇", "价格", "金额", "费用", "成本"},
+		{"年龄", "年纪", "岁数"},
+		{"教龄", "教学年限", "任教年限", "工作年限", "工龄", "服务年限"},
+		{"建校时间", "建校日期", "创办时间", "创办日期", "成立时间", "成立日期", "创建时间", "创建日期", "建立时间", "办学时间", "办学日期", "办学年份"},
+		{"时间", "日期", "年份", "年月", "时点"},
+		{"电话", "手机号", "手机号码", "联系电话", "联系方式", "客服电话", "热线"},
+		{"邮箱", "电子邮箱", "邮件", "email"},
+		{"地址", "注册地址", "办公地址", "联系地址", "所在地", "位置", "地点"},
+		{"编号", "工号", "员工编号", "教师编号", "学号", "身份证号", "证件号", "代码", "编码"},
+		{"职称", "职位", "岗位", "职务", "角色", "级别", "等级"},
+		{"姓名", "名字", "名称", "人员", "联系人", "负责人", "校长", "法人", "法定代表人"},
+		{"性别", "男女"},
+		{"学校", "学校名称", "单位", "机构", "院校"},
+		{"城市", "地区", "区域", "省份", "城市名称"},
+		{"分数", "成绩", "得分", "评分"},
+		{"学历", "学位", "教育程度"},
+		{"状态", "类别", "类型", "分类"},
+	}
 }
 
 func allStructuredHeaders(documents []structuredTableDocument) []string {
@@ -831,7 +970,7 @@ func structuredDataResultChunks(result StructuredDataQueryResult, sources []map[
 		chunks := make([]RetrievedChunk, 0, len(result.Rows))
 		for index, row := range result.Rows {
 			text := structuredDataResultText(result, &row)
-			chunks = append(chunks, RetrievedChunk{
+			chunk := RetrievedChunk{
 				DocumentChunk: DocumentChunk{
 					ID:              fmt.Sprintf("structured-query-%s-%d", row.DocumentID, row.RowNumber),
 					KnowledgeBaseID: row.KnowledgeBaseID,
@@ -846,7 +985,9 @@ func structuredDataResultChunks(result StructuredDataQueryResult, sources []map[
 				Score:             1,
 				RawScore:          1,
 				RetrievalChannels: []string{"structured"},
-			})
+			}
+			chunk.EvidenceID = evidenceIDForChunk(chunk.DocumentChunk)
+			chunks = append(chunks, chunk)
 		}
 		return chunks
 	}
@@ -857,7 +998,7 @@ func structuredDataResultChunks(result StructuredDataQueryResult, sources []map[
 	}
 	chunks := make([]RetrievedChunk, 0, maxInt(len(sources), 1))
 	if len(sources) == 0 {
-		chunks = append(chunks, RetrievedChunk{
+		chunk := RetrievedChunk{
 			DocumentChunk: DocumentChunk{
 				ID:    "structured-query-result",
 				Text:  text,
@@ -867,12 +1008,14 @@ func structuredDataResultChunks(result StructuredDataQueryResult, sources []map[
 			Score:             1,
 			RawScore:          1,
 			RetrievalChannels: []string{"structured"},
-		})
+		}
+		chunk.EvidenceID = evidenceIDForChunk(chunk.DocumentChunk)
+		chunks = append(chunks, chunk)
 		return chunks
 	}
 	for index, source := range sources {
 		documentID := strings.TrimSpace(source["documentId"])
-		chunks = append(chunks, RetrievedChunk{
+		chunk := RetrievedChunk{
 			DocumentChunk: DocumentChunk{
 				ID:              fmt.Sprintf("structured-query-%s-%d", documentID, index),
 				KnowledgeBaseID: strings.TrimSpace(source["knowledgeBaseId"]),
@@ -881,11 +1024,14 @@ func structuredDataResultChunks(result StructuredDataQueryResult, sources []map[
 				Text:            text,
 				Index:           index,
 				Kind:            "structured_query",
+				TableColumns:    append([]string(nil), result.Columns...),
 			},
 			Score:             1,
 			RawScore:          1,
 			RetrievalChannels: []string{"structured"},
-		})
+		}
+		chunk.EvidenceID = evidenceIDForChunk(chunk.DocumentChunk)
+		chunks = append(chunks, chunk)
 	}
 	return chunks
 }

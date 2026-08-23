@@ -588,39 +588,45 @@ type RunEvalDatasetRequest struct {
 }
 
 type EvalRunMetrics struct {
-	TotalCases             int     `json:"totalCases"`
-	HitCount               int     `json:"hitCount"`
-	MissCount              int     `json:"missCount"`
-	HitRate                float64 `json:"hitRate"`
-	MRR                    float64 `json:"mrr"`
-	LatencyP50Ms           int64   `json:"latencyP50Ms"`
-	LatencyP95Ms           int64   `json:"latencyP95Ms"`
-	LowConfidence          int     `json:"lowConfidence"`
-	ErrorCount             int     `json:"errorCount"`
-	SkippedDisabled        int     `json:"skippedDisabled"`
-	EvidenceSupportedCount int     `json:"evidenceSupportedCount"`
-	EvidenceSupportRate    float64 `json:"evidenceSupportRate"`
-	CitationMismatchCount  int     `json:"citationMismatchCount"`
-	DirectEvidenceHitCount int     `json:"directEvidenceHitCount"`
-	DirectEvidenceHitRate  float64 `json:"directEvidenceHitRate"`
+	TotalCases                int     `json:"totalCases"`
+	HitCount                  int     `json:"hitCount"`
+	MissCount                 int     `json:"missCount"`
+	HitRate                   float64 `json:"hitRate"`
+	MRR                       float64 `json:"mrr"`
+	LatencyP50Ms              int64   `json:"latencyP50Ms"`
+	LatencyP95Ms              int64   `json:"latencyP95Ms"`
+	LowConfidence             int     `json:"lowConfidence"`
+	ErrorCount                int     `json:"errorCount"`
+	SkippedDisabled           int     `json:"skippedDisabled"`
+	EvidenceSupportedCount    int     `json:"evidenceSupportedCount"`
+	EvidenceSupportRate       float64 `json:"evidenceSupportRate"`
+	CitationMismatchCount     int     `json:"citationMismatchCount"`
+	DirectEvidenceHitCount    int     `json:"directEvidenceHitCount"`
+	DirectEvidenceHitRate     float64 `json:"directEvidenceHitRate"`
+	EvidenceGateDroppedCount  int     `json:"evidenceGateDroppedCount"`
+	EvidenceGateAffectedCases int     `json:"evidenceGateAffectedCases"`
+	EvidenceGateEmptyResults  int     `json:"evidenceGateEmptyResults"`
 }
 
 type EvalRunCaseResult struct {
-	CaseID          string                   `json:"caseId"`
-	Question        string                   `json:"question"`
-	ExpectedAnswer  string                   `json:"expectedAnswer"`
-	Hit             bool                     `json:"hit"`
-	HitRank         int                      `json:"hitRank"`
-	ReciprocalRank  float64                  `json:"reciprocalRank"`
-	MatchedBy       string                   `json:"matchedBy,omitempty"`
-	ElapsedMs       int64                    `json:"elapsedMs"`
-	LowConfidence   bool                     `json:"lowConfidence"`
-	Confidence      RetrievalDebugConfidence `json:"confidence,omitempty"`
-	EvidenceSupport bool                     `json:"evidenceSupport"`
-	EvidenceIssue   string                   `json:"evidenceIssue,omitempty"`
-	DirectEvidence  bool                     `json:"directEvidence"`
-	Error           string                   `json:"error,omitempty"`
-	Retrieved       []RetrievalDebugChunk    `json:"retrieved"`
+	CaseID                   string                   `json:"caseId"`
+	Question                 string                   `json:"question"`
+	ExpectedAnswer           string                   `json:"expectedAnswer"`
+	Hit                      bool                     `json:"hit"`
+	HitRank                  int                      `json:"hitRank"`
+	ReciprocalRank           float64                  `json:"reciprocalRank"`
+	MatchedBy                string                   `json:"matchedBy,omitempty"`
+	ElapsedMs                int64                    `json:"elapsedMs"`
+	LowConfidence            bool                     `json:"lowConfidence"`
+	Confidence               RetrievalDebugConfidence `json:"confidence,omitempty"`
+	EvidenceSupport          bool                     `json:"evidenceSupport"`
+	EvidenceIssue            string                   `json:"evidenceIssue,omitempty"`
+	DirectEvidence           bool                     `json:"directEvidence"`
+	EvidenceGateInputCount   int                      `json:"evidenceGateInputCount"`
+	EvidenceGateOutputCount  int                      `json:"evidenceGateOutputCount"`
+	EvidenceGateDroppedCount int                      `json:"evidenceGateDroppedCount"`
+	Error                    string                   `json:"error,omitempty"`
+	Retrieved                []RetrievalDebugChunk    `json:"retrieved"`
 }
 
 type RunEvalDatasetResponse struct {
@@ -711,23 +717,26 @@ type RetrievalDebugConfidence struct {
 }
 
 type RetrievalDebugResponse struct {
-	Query            string                        `json:"query"`
-	KnowledgeBaseID  string                        `json:"knowledgeBaseId,omitempty"`
-	DocumentID       string                        `json:"documentId,omitempty"`
-	SearchMode       string                        `json:"searchMode"`
-	RerankStrategy   string                        `json:"rerankStrategy"`
-	QueryRewriteUsed bool                          `json:"queryRewriteUsed"`
-	QueryVariants    []string                      `json:"queryVariants,omitempty"`
-	ElapsedMs        int64                         `json:"elapsedMs"`
-	Count            int                           `json:"count"`
-	LowConfidence    bool                          `json:"lowConfidence"`
-	Confidence       RetrievalDebugConfidence      `json:"confidence"`
-	ContextPreview   string                        `json:"contextPreview"`
-	Sources          []map[string]string           `json:"sources"`
-	EvalCandidate    *EvalGroundTruthCase          `json:"evalCandidate,omitempty"`
-	Trace            []RetrievalDebugTraceStep     `json:"trace,omitempty"`
-	Items            []RetrievalDebugChunk         `json:"items"`
-	VerboseDetails   *RetrievalDebugVerboseDetails `json:"verboseDetails,omitempty"`
+	Query                    string                        `json:"query"`
+	KnowledgeBaseID          string                        `json:"knowledgeBaseId,omitempty"`
+	DocumentID               string                        `json:"documentId,omitempty"`
+	SearchMode               string                        `json:"searchMode"`
+	RerankStrategy           string                        `json:"rerankStrategy"`
+	QueryRewriteUsed         bool                          `json:"queryRewriteUsed"`
+	QueryVariants            []string                      `json:"queryVariants,omitempty"`
+	ElapsedMs                int64                         `json:"elapsedMs"`
+	Count                    int                           `json:"count"`
+	LowConfidence            bool                          `json:"lowConfidence"`
+	Confidence               RetrievalDebugConfidence      `json:"confidence"`
+	EvidenceGateInputCount   int                           `json:"evidenceGateInputCount"`
+	EvidenceGateOutputCount  int                           `json:"evidenceGateOutputCount"`
+	EvidenceGateDroppedCount int                           `json:"evidenceGateDroppedCount"`
+	ContextPreview           string                        `json:"contextPreview"`
+	Sources                  []map[string]string           `json:"sources"`
+	EvalCandidate            *EvalGroundTruthCase          `json:"evalCandidate,omitempty"`
+	Trace                    []RetrievalDebugTraceStep     `json:"trace,omitempty"`
+	Items                    []RetrievalDebugChunk         `json:"items"`
+	VerboseDetails           *RetrievalDebugVerboseDetails `json:"verboseDetails,omitempty"`
 }
 
 type RetrievalDebugVerboseDetails struct {

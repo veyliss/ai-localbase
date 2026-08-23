@@ -100,6 +100,29 @@ func (o *RetrievalOrchestrator) BuildContext(ctx context.Context, req model.Chat
 }
 
 func (o *RetrievalOrchestrator) Evaluate(ctx context.Context, req model.ChatCompletionRequest) ([]RetrievedChunk, error) {
+	chunks, _, err := o.evaluateWithEvidenceGate(ctx, req)
+	return chunks, err
+}
+
+func (o *RetrievalOrchestrator) evaluateWithEvidenceGate(ctx context.Context, req model.ChatCompletionRequest) ([]RetrievedChunk, evidenceGateStats, error) {
+	chunks, err := o.evaluateRaw(ctx, req)
+	if err != nil {
+		return nil, evidenceGateStats{}, err
+	}
+
+	query := latestUserMessage(req.Messages)
+	gateStartedAt := time.Now()
+	filtered, stats := applyEvidenceGateWithStats(query, chunks)
+	logRetrievalStageMetrics(req, query, "evidence_gate", gateStartedAt, map[string]any{
+		"status":         "ok",
+		"input_count":    stats.InputCount,
+		"output_count":   stats.OutputCount,
+		"dropped_chunks": stats.DroppedCount,
+	})
+	return filtered, stats, nil
+}
+
+func (o *RetrievalOrchestrator) evaluateRaw(ctx context.Context, req model.ChatCompletionRequest) ([]RetrievedChunk, error) {
 	if o == nil || o.appService == nil {
 		return nil, fmt.Errorf("retrieval orchestrator is unavailable")
 	}
@@ -174,7 +197,10 @@ func (o *RetrievalOrchestrator) Evaluate(ctx context.Context, req model.ChatComp
 		"status":          retrievalStatus(err),
 		"selected_chunks": len(chunks),
 	})
-	return chunks, err
+	if err != nil {
+		return nil, err
+	}
+	return chunks, nil
 }
 
 func (o *RetrievalOrchestrator) Debug(ctx context.Context, req model.RetrievalDebugRequest) (model.RetrievalDebugResponse, error) {
@@ -227,10 +253,16 @@ func (o *RetrievalOrchestrator) Debug(ctx context.Context, req model.RetrievalDe
 	} else if req.Verbose {
 		chunks, verboseDetails, queryVariants, err = service.debugRetrieveVerboseWithContext(ctx, chatReq, query)
 	} else {
-		chunks, err = o.Evaluate(ctx, chatReq)
+		chunks, err = o.evaluateRaw(ctx, chatReq)
 	}
 	if err != nil {
 		return model.RetrievalDebugResponse{}, err
+	}
+
+	chunks, gateStats := applyEvidenceGateWithStats(query, chunks)
+	if verboseDetails != nil && gateStats.DroppedCount > 0 {
+		verboseDetails.AfterMMRCount = gateStats.OutputCount
+		verboseDetails.TopAfterMMR = convertToDebugChunks(chunks, query, 5)
 	}
 
 	trace := make([]model.RetrievalDebugTraceStep, 0, 6)
@@ -238,8 +270,8 @@ func (o *RetrievalOrchestrator) Debug(ctx context.Context, req model.RetrievalDe
 		trace = append(trace, model.RetrievalDebugTraceStep{
 			Stage:       "structured_retrieve",
 			Status:      "ok",
-			Reason:      fmt.Sprintf("结构化确定性查询直接返回 %d 个证据片段，无需向量召回", len(chunks)),
-			OutputCount: len(chunks),
+			Reason:      fmt.Sprintf("结构化确定性查询直接返回 %d 个证据片段，无需向量召回", gateStats.InputCount),
+			OutputCount: gateStats.InputCount,
 		})
 	} else if structuredErr != nil {
 		trace = append(trace, model.RetrievalDebugTraceStep{
@@ -252,7 +284,18 @@ func (o *RetrievalOrchestrator) Debug(ctx context.Context, req model.RetrievalDe
 		Stage:       "retrieve",
 		Status:      "ok",
 		Reason:      "基础检索、重排、MMR 和相关性过滤后的候选",
-		OutputCount: len(chunks),
+		OutputCount: gateStats.InputCount,
+	})
+	gateReason := "所有候选均通过证据门控"
+	if gateStats.DroppedCount > 0 {
+		gateReason = fmt.Sprintf("证据门控移除了 %d 个低信号片段", gateStats.DroppedCount)
+	}
+	trace = append(trace, model.RetrievalDebugTraceStep{
+		Stage:       "evidence_gate",
+		Status:      "ok",
+		Reason:      gateReason,
+		InputCount:  gateStats.InputCount,
+		OutputCount: gateStats.OutputCount,
 	})
 	if structuredUsed {
 		trace = append(trace, model.RetrievalDebugTraceStep{
@@ -319,22 +362,25 @@ func (o *RetrievalOrchestrator) Debug(ctx context.Context, req model.RetrievalDe
 	}
 
 	return model.RetrievalDebugResponse{
-		Query:            query,
-		KnowledgeBaseID:  chatReq.KnowledgeBaseID,
-		DocumentID:       chatReq.DocumentID,
-		SearchMode:       service.resolvedRetrievalSearchMode(chatReq),
-		RerankStrategy:   service.rerankStrategyForRequest(chatReq),
-		QueryRewriteUsed: service.queryRewriteEnabledForRequest(chatReq),
-		QueryVariants:    queryVariants,
-		ElapsedMs:        time.Since(startedAt).Milliseconds(),
-		Count:            len(items),
-		LowConfidence:    retrievalLowConfidence,
-		Confidence:       confidence,
-		ContextPreview:   contextText,
-		Sources:          sources,
-		EvalCandidate:    evalCandidate,
-		Trace:            trace,
-		Items:            items,
-		VerboseDetails:   verboseDetails,
+		Query:                    query,
+		KnowledgeBaseID:          chatReq.KnowledgeBaseID,
+		DocumentID:               chatReq.DocumentID,
+		SearchMode:               service.resolvedRetrievalSearchMode(chatReq),
+		RerankStrategy:           service.rerankStrategyForRequest(chatReq),
+		QueryRewriteUsed:         service.queryRewriteEnabledForRequest(chatReq),
+		QueryVariants:            queryVariants,
+		ElapsedMs:                time.Since(startedAt).Milliseconds(),
+		Count:                    len(items),
+		LowConfidence:            retrievalLowConfidence,
+		Confidence:               confidence,
+		EvidenceGateInputCount:   gateStats.InputCount,
+		EvidenceGateOutputCount:  gateStats.OutputCount,
+		EvidenceGateDroppedCount: gateStats.DroppedCount,
+		ContextPreview:           contextText,
+		Sources:                  sources,
+		EvalCandidate:            evalCandidate,
+		Trace:                    trace,
+		Items:                    items,
+		VerboseDetails:           verboseDetails,
 	}, nil
 }

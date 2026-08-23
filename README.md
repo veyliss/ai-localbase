@@ -109,7 +109,7 @@ Docker 自托管建议设置：
 
 生产 Compose 已配置容器自动重启、日志轮转和资源上限。后端业务进程以非 root 用户运行，首次启动会自动修正持久化数据目录的文件属主并写入迁移标记；相关资源变量见 [`DOCKER_DEPLOY.md`](DOCKER_DEPLOY.md)。如果外层还有受控 HTTPS 反向代理，请设置 `TRUST_EXTERNAL_PROXY_HEADERS=true` 并保留 `X-Forwarded-Proto` 和 `X-Forwarded-Host`；前端端口直接暴露时保持默认值 `false`。
 
-当前应用层按**单实例**设计：本地 SQLite 聊天记录、应用状态文件和内存中的 MCP Job 不支持多个后端副本共享写入。生产 Compose 默认使用已发布的固定 `v1.4.5` 镜像版本，升级或回滚时通过 `AI_LOCALBASE_IMAGE_TAG` 显式切换；本地源码修改请使用开发或本地构建编排验证，不要直接依赖 `latest`，也不要使用 `docker compose scale backend=2`。
+当前应用层按**单实例**设计：本地 SQLite 聊天记录、应用状态文件和内存中的 MCP Job 不支持多个后端副本共享写入。生产 Compose 默认使用已发布的固定 `v1.4.6` 镜像版本，升级或回滚时通过 `AI_LOCALBASE_IMAGE_TAG` 显式切换；本地源码修改请使用开发或本地构建编排验证，不要直接依赖 `latest`，也不要使用 `docker compose scale backend=2`。
 
 默认数据目录由 `.env` 控制，主要包括上传文件、应用状态、聊天 SQLite 数据库和 Qdrant 持久化目录。升级或迁移前建议先备份这些路径，详见 [`docs/backup-restore.md`](docs/backup-restore.md)。
 
@@ -118,7 +118,7 @@ Docker 自托管建议设置：
 如果不想本地编译，可直接使用预构建镜像：
 
 ```bash
-AI_LOCALBASE_IMAGE_TAG=v1.4.5 docker compose -f docker-compose.prod.yml up -d
+AI_LOCALBASE_IMAGE_TAG=v1.4.6 docker compose -f docker-compose.prod.yml up -d
 ```
 
 生产 Compose 在未提供 `ENABLE_AUTH` 时默认开启认证；如果使用 `.env.example`，请在启动前确认 `ENABLE_AUTH=true`，并设置 `AUTH_PASSWORD` 或 `AUTH_SETUP_TOKEN`。后端默认只绑定宿主机本机，浏览器通过前端 `4173` 端口访问；如确需直接访问后端，再显式设置 `BACKEND_BIND_ADDRESS=0.0.0.0`。

@@ -41,7 +41,7 @@ cd ai-localbase
 
 # 使用生产环境 docker-compose (使用 GHCR 镜像)
 # 请先在 .env 中确认 ENABLE_AUTH=true，并设置 AUTH_PASSWORD 或 AUTH_SETUP_TOKEN。
-AI_LOCALBASE_IMAGE_TAG=v1.4.5 docker compose -f docker-compose.prod.yml up -d
+AI_LOCALBASE_IMAGE_TAG=v1.4.6 docker compose -f docker-compose.prod.yml up -d
 
 # 查看应用
 # 前端: http://localhost:4173
@@ -70,8 +70,8 @@ docker compose -f docker-compose.prod.yml up -d
 - `ENABLE_HYBRID_SEARCH`：开启 dense + sparse 混合检索。开启前建议切换新的 `QDRANT_COLLECTION_PREFIX` 并重建索引，让 Qdrant collection 使用 named dense/sparse vectors。
 - `QDRANT_API_KEY`：Qdrant API 密钥，可选
 - `QDRANT_BIND_ADDRESS`：Qdrant 暴露端口绑定地址，默认 `127.0.0.1`；改为非回环地址时必须同时设置 `QDRANT_API_KEY`，否则容器拒绝启动
-- `AI_LOCALBASE_IMAGE_TAG`：预构建镜像版本，生产环境建议使用具体 tag，例如 `v1.4.5`，不要依赖 `latest`
-- 生产 Compose 默认使用已发布的固定 `v1.4.5` 镜像；升级或回滚时通过 `AI_LOCALBASE_IMAGE_TAG` 显式切换。本地源码修改请使用开发或本地构建编排验证。
+- `AI_LOCALBASE_IMAGE_TAG`：预构建镜像版本，生产环境建议使用具体 tag，例如 `v1.4.6`，不要依赖 `latest`
+- 生产 Compose 默认使用已发布的固定 `v1.4.6` 镜像；升级或回滚时通过 `AI_LOCALBASE_IMAGE_TAG` 显式切换。本地源码修改请使用开发或本地构建编排验证。
 - `BACKEND_BIND_ADDRESS`：后端端口绑定地址，默认 `127.0.0.1`；前端容器通过内部网络访问后端
 - `TRUST_EXTERNAL_PROXY_HEADERS`：是否信任外层代理的 `X-Forwarded-Proto` / `X-Forwarded-Host`，默认 `false`；只有前端端口不直接暴露且前置代理受控时才设为 `true`
 - `ENABLE_AUTH`：生产 Compose 在变量未提供时默认 `true`；使用 `.env.example` 时也必须显式确认其为 `true`
@@ -154,11 +154,11 @@ git push origin v1.0.0
 
 ```bash
 # 拉取指定版本镜像
-export AI_LOCALBASE_IMAGE_TAG=v1.4.5
+export AI_LOCALBASE_IMAGE_TAG=v1.4.6
 docker compose -f docker-compose.prod.yml pull
 
 # 启动指定版本
-AI_LOCALBASE_IMAGE_TAG=v1.4.5 docker compose -f docker-compose.prod.yml up -d
+AI_LOCALBASE_IMAGE_TAG=v1.4.6 docker compose -f docker-compose.prod.yml up -d
 
 # 测试
 curl http://localhost:8080/readyz

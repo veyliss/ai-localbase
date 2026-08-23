@@ -285,6 +285,7 @@ export interface ReindexDocumentResponse {
 
 export interface RetrievalDebugChunk {
   id: string
+  evidenceId?: string
   knowledgeBaseId: string
   documentId: string
   documentName: string
@@ -292,6 +293,12 @@ export interface RetrievalDebugChunk {
   kind: string
   score: number
   text: string
+  charStart?: number
+  charEnd?: number
+  lineStart?: number
+  lineEnd?: number
+  tableRow?: number
+  tableColumns?: string[]
   matchReasons?: string[]
   retrievalChannels?: string[]
   denseRank?: number
@@ -325,6 +332,13 @@ export interface EvalGroundTruthCase {
     knowledge_base_id: string
     document_id: string
     chunk_id: string
+    evidence_id?: string
+    char_start?: number
+    char_end?: number
+    line_start?: number
+    line_end?: number
+    table_row?: number
+    table_columns?: string[]
   }>
   answer_type: string
   difficulty: string

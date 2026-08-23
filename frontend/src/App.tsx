@@ -74,12 +74,19 @@ export interface ChatSourceMetadata {
   documentId?: string
   documentName?: string
   chunkId?: string
+  evidenceId?: string
   chunkIndex?: string
   chunkKind?: string
   score?: string
   snippet?: string
   sourceType?: string
   toolName?: string
+  charStart?: string
+  charEnd?: string
+  lineStart?: string
+  lineEnd?: string
+  tableRow?: string
+  tableColumns?: string
 }
 
 export interface CitationNavigationTarget {

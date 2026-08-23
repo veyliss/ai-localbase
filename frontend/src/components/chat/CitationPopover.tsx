@@ -73,6 +73,34 @@ const CitationPopover: React.FC<CitationPopoverProps> = ({
             </div>
           )}
 
+          {source.evidenceId && (
+            <div className="citation-field">
+              <label>证据 ID</label>
+              <div className="citation-value">{source.evidenceId}</div>
+            </div>
+          )}
+
+          {(source.lineStart || source.charStart || source.tableRow) && (
+            <div className="citation-field">
+              <label>原文位置</label>
+              <div className="citation-value">
+                {source.lineStart
+                  ? `第 ${source.lineStart}-${source.lineEnd || source.lineStart} 行`
+                  : source.charStart
+                    ? `字符 ${source.charStart}-${source.charEnd || source.charStart}`
+                    : ''}
+                {source.tableRow ? `，表格第 ${source.tableRow} 行` : ''}
+              </div>
+            </div>
+          )}
+
+          {source.tableColumns && (
+            <div className="citation-field">
+              <label>表格字段</label>
+              <div className="citation-value">{source.tableColumns}</div>
+            </div>
+          )}
+
           {source.score && (
             <div className="citation-field">
               <label>相关度分数</label>

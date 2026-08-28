@@ -260,6 +260,7 @@ func buildRetrievalDebugConfidence(query string, chunks []RetrievedChunk) model.
 	}
 	avgScore := averageScore(chunks)
 	evidenceCoverage := queryEvidenceCoverage(query, chunks)
+	factSpecs := strictFactQuerySpecs(query)
 	reasons := make([]string, 0, 4)
 	suggestions := make([]string, 0, 4)
 
@@ -289,7 +290,15 @@ func buildRetrievalDebugConfidence(query string, chunks []RetrievedChunk) model.
 		reasons = append(reasons, fmt.Sprintf("平均命中分 %.4f 低于阈值 %.2f", avgScore, lowConfidenceAvgScoreThreshold))
 		suggestions = append(suggestions, "扩大候选 TopK 或检查文档切分是否过碎")
 	}
-	if evidenceCoverage < 0.2 {
+	if len(factSpecs) > 0 && evidenceCoverage < 1 {
+		if evidenceCoverage == 0 {
+			reasons = append(reasons, "证据片段未出现问题要求的事实属性或可靠别名")
+		} else {
+			reasons = append(reasons, fmt.Sprintf("问题要求的事实属性覆盖率 %.1f%%，仍有属性缺失", evidenceCoverage*100))
+		}
+		suggestions = append(suggestions, "确认文档包含所询问的字段或属性，不要只依据主题相似度判断")
+	}
+	if len(factSpecs) == 0 && evidenceCoverage < 0.2 {
 		reasons = append(reasons, fmt.Sprintf("问题实体覆盖率 %.1f%% 低于 20%%", evidenceCoverage*100))
 		suggestions = append(suggestions, "启用 Query Rewrite 或改用更贴近文档原文的问法")
 	}
@@ -342,6 +351,19 @@ func buildRetrievalDebugMatchReasons(query string, chunk RetrievedChunk) []strin
 			reasons = append(reasons, fmt.Sprintf("匹配查询证据词 %d/%d", hits, len(terms)))
 		} else {
 			reasons = append(reasons, "未直接匹配查询证据词，依赖向量相似度")
+		}
+	}
+	if specs := strictFactQuerySpecs(query); len(specs) > 0 {
+		matched := false
+		for _, spec := range specs {
+			if evidence, ok := matchFactEvidence(spec, chunk.Text); ok {
+				matched = true
+				reasons = append(reasons, fmt.Sprintf("匹配问题属性：%s", evidence.AttributeAlias))
+				break
+			}
+		}
+		if !matched {
+			reasons = append(reasons, "未匹配问题要求的事实属性")
 		}
 	}
 

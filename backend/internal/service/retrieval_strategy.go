@@ -701,9 +701,11 @@ func applyEvidenceGateWithStats(query string, chunks []RetrievedChunk) ([]Retrie
 	}
 
 	queryTerms := queryEvidenceTerms(query)
-	if len(queryTerms) == 0 {
+	factSpecs := strictFactQuerySpecs(query)
+	if len(queryTerms) == 0 && len(factSpecs) == 0 {
 		return chunks, stats
 	}
+	isFactQuery := len(factSpecs) > 0
 
 	type evidenceDecision struct {
 		chunk    RetrievedChunk
@@ -721,9 +723,18 @@ func applyEvidenceGateWithStats(query string, chunks []RetrievedChunk) ([]Retrie
 		}
 
 		hits := evidenceHitCount(queryTerms, chunk.Text)
-		coverage := float64(hits) / float64(len(queryTerms))
-		factScore := factEvidenceScore(query, chunk)
-		direct := factScore >= 5 || hits >= 2 || coverage >= retrievalEvidenceCoverageThreshold
+		coverage := 0.0
+		if len(queryTerms) > 0 {
+			coverage = float64(hits) / float64(len(queryTerms))
+		}
+		direct := false
+		if isFactQuery {
+			// 事实型问题必须在片段中找到所问属性（或可靠别名）。
+			// 这样可以阻止“同主题但缺少目标字段”的高分片段进入回答上下文。
+			direct = factEvidenceScore(query, chunk) >= 5
+		} else {
+			direct = hits >= 2 || coverage >= retrievalEvidenceCoverageThreshold
+		}
 		rawScore := chunkRawScore(chunk)
 		decisions = append(decisions, evidenceDecision{
 			chunk:    chunk,
@@ -738,7 +749,7 @@ func applyEvidenceGateWithStats(query string, chunks []RetrievedChunk) ([]Retrie
 		}
 	}
 
-	if !hasDirectEvidence && topRawScore < retrievalSemanticOnlyScoreThreshold {
+	if !hasDirectEvidence && (isFactQuery || topRawScore < retrievalSemanticOnlyScoreThreshold) {
 		stats.OutputCount = 0
 		stats.DroppedCount = stats.InputCount
 		return nil, stats
@@ -747,7 +758,7 @@ func applyEvidenceGateWithStats(query string, chunks []RetrievedChunk) ([]Retrie
 	kept := make([]RetrievedChunk, 0, len(decisions))
 	for _, decision := range decisions {
 		if decision.direct ||
-			(!hasDirectEvidence && decision.rawScore >= topRawScore-retrievalSemanticScoreMargin && decision.rawScore >= retrievalSemanticOnlyScoreThreshold) {
+			(!isFactQuery && !hasDirectEvidence && decision.rawScore >= topRawScore-retrievalSemanticScoreMargin && decision.rawScore >= retrievalSemanticOnlyScoreThreshold) {
 			kept = append(kept, decision.chunk)
 		}
 	}
@@ -865,13 +876,98 @@ func entityCoverage(query string, chunks []RetrievedChunk) float64 {
 }
 
 func queryEvidenceCoverage(query string, chunks []RetrievedChunk) float64 {
+	if specs := strictFactQuerySpecs(query); len(specs) > 0 {
+		return factEvidenceCoverage(specs, chunks)
+	}
 	return entityCoverage(query, chunks)
 }
 
+func strictFactQuerySpecs(query string) []factQuerySpec {
+	specs := parseFactQuerySpecs(query)
+	if len(specs) == 0 {
+		return nil
+	}
+	strict := make([]factQuerySpec, 0, len(specs))
+	for _, spec := range specs {
+		// 只有已识别且有可靠别名的属性才启用严格门控。
+		// 未知属性不能被当成事实字段，否则普通的开放式问题会因为
+		// 解析出的自然语言谓词未逐字出现在片段中而丢失全部证据。
+		if isKnownFactAttribute(spec.Attribute) {
+			strict = append(strict, spec)
+		}
+	}
+	return strict
+}
+
+func factEvidenceCoverage(specs []factQuerySpec, chunks []RetrievedChunk) float64 {
+	if len(specs) == 0 || len(chunks) == 0 {
+		return 0
+	}
+
+	// 多属性问题按属性分别计算，避免某一个属性命中就把整体覆盖率
+	// 误报为完整支持。
+	type requirementKey struct {
+		name    string
+		aliases string
+	}
+	requirements := make([]factAttributeRequirement, 0)
+	seen := make(map[requirementKey]struct{})
+	for _, spec := range specs {
+		current := spec.Requirements
+		if len(current) == 0 {
+			current = []factAttributeRequirement{{Name: spec.Attribute, Aliases: mergeRetrievalQueries([]string{spec.Attribute}, spec.Aliases)}}
+		}
+		for _, requirement := range current {
+			key := requirementKey{
+				name:    strings.ToLower(strings.TrimSpace(requirement.Name)),
+				aliases: strings.Join(mergeRetrievalQueries(requirement.Aliases), "\x00"),
+			}
+			if key.name == "" || key.aliases == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			requirements = append(requirements, requirement)
+		}
+	}
+	if len(requirements) == 0 {
+		return 0
+	}
+
+	matched := 0
+	for _, requirement := range requirements {
+		for _, chunk := range chunks {
+			if _, ok := matchFactEvidence(factQuerySpec{
+				Attribute:    requirement.Name,
+				Requirements: []factAttributeRequirement{requirement},
+			}, chunk.Text); ok {
+				matched++
+				break
+			}
+		}
+	}
+	return float64(matched) / float64(len(requirements))
+}
+
 type factQuerySpec struct {
-	Subject   string
-	Attribute string
-	Aliases   []string
+	Subject      string
+	Attribute    string
+	Aliases      []string
+	Requirements []factAttributeRequirement
+}
+
+type factAttributeRequirement struct {
+	Name    string
+	Aliases []string
+}
+
+type factEvidenceMatch struct {
+	SubjectMatched   bool
+	AttributeMatched bool
+	AttributeExact   bool
+	AttributeAlias   string
 }
 
 func factEvidenceScore(query string, chunk RetrievedChunk) int {
@@ -885,19 +981,19 @@ func factEvidenceScore(query string, chunk RetrievedChunk) int {
 	}
 	best := 0
 	for _, spec := range specs {
-		score := 0
-		if spec.Subject != "" && strings.Contains(text, strings.ToLower(spec.Subject)) {
+		match, ok := matchFactEvidence(spec, text)
+		if !ok {
+			continue
+		}
+
+		// 属性命中是事实证据的必要条件；主题词命中只能提高置信度，
+		// 不能替代属性本身。
+		score := 2
+		if match.AttributeExact {
+			score++
+		}
+		if match.SubjectMatched {
 			score += 3
-		}
-		attributeMatched := false
-		for _, alias := range mergeRetrievalQueries([]string{spec.Attribute}, spec.Aliases) {
-			if strings.Contains(text, strings.ToLower(alias)) {
-				attributeMatched = true
-				break
-			}
-		}
-		if attributeMatched {
-			score += 2
 		}
 		if strings.Contains(text, "概况") || strings.Contains(text, "信息") || strings.Contains(text, "详情") || strings.Contains(text, "简介") {
 			score++
@@ -907,6 +1003,37 @@ func factEvidenceScore(query string, chunk RetrievedChunk) int {
 		}
 	}
 	return best
+}
+
+func matchFactEvidence(spec factQuerySpec, text string) (factEvidenceMatch, bool) {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return factEvidenceMatch{}, false
+	}
+
+	match := factEvidenceMatch{}
+	if spec.Subject != "" && strings.Contains(text, strings.ToLower(spec.Subject)) {
+		match.SubjectMatched = true
+	}
+
+	requirements := spec.Requirements
+	if len(requirements) == 0 {
+		requirements = []factAttributeRequirement{{Name: spec.Attribute, Aliases: mergeRetrievalQueries([]string{spec.Attribute}, spec.Aliases)}}
+	}
+	for _, requirement := range requirements {
+		aliases := mergeRetrievalQueries([]string{requirement.Name}, requirement.Aliases)
+		for _, alias := range aliases {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" || !strings.Contains(text, alias) {
+				continue
+			}
+			match.AttributeMatched = true
+			match.AttributeAlias = alias
+			match.AttributeExact = strings.EqualFold(alias, spec.Attribute)
+			return match, true
+		}
+	}
+	return factEvidenceMatch{}, false
 }
 
 func evidenceHitCount(terms []string, text string) int {
@@ -975,12 +1102,23 @@ func parseFactQuerySpecs(query string) []factQuerySpec {
 	}
 
 	specs := make([]factQuerySpec, 0, 2)
-	if index := strings.LastIndex(normalized, "的"); index > 0 && index < len(normalized)-len("的") {
-		subject := cleanFactSubject(normalized[:index])
-		attribute := cleanFactAttribute(normalized[index+len("的"):])
-		if subject != "" && attribute != "" {
-			specs = append(specs, newFactQuerySpec(subject, attribute))
+	for searchStart := 0; searchStart < len(normalized); {
+		relativeIndex := strings.Index(normalized[searchStart:], "的")
+		if relativeIndex < 0 {
+			break
 		}
+		index := searchStart + relativeIndex
+		if index > 0 && index < len(normalized)-len("的") {
+			subject := cleanFactSubject(normalized[:index])
+			attribute := cleanFactAttribute(normalized[index+len("的"):])
+			if subject != "" && attribute != "" {
+				// 优先使用第一个“对象的属性”分界点，避免把
+				// “类型的信息”等属性内部短语误识别为目标属性。
+				specs = append(specs, newFactQuerySpec(subject, attribute))
+				break
+			}
+		}
+		searchStart = index + len("的")
 	}
 
 	specs = append(specs, parseDelimitedFactQuerySpecs(normalized)...)
@@ -1047,7 +1185,7 @@ func parseBoundaryFactQuerySpecs(query string) []factQuerySpec {
 		}
 		subject := cleanFactSubject(core[:subjectEnd])
 		attribute := cleanFactAttribute(core[subjectEnd:])
-		if subject != "" && attribute != "" {
+		if subject != "" && attribute != "" && isKnownFactAttribute(attribute) {
 			return []factQuerySpec{newFactQuerySpec(subject, attribute)}
 		}
 	}
@@ -1066,25 +1204,88 @@ func factSubjectBoundaryTokens() []string {
 func newFactQuerySpec(subject, attribute string) factQuerySpec {
 	attribute = cleanFactAttribute(attribute)
 	return factQuerySpec{
-		Subject:   cleanFactSubject(subject),
-		Attribute: attribute,
-		Aliases:   factAttributeAliases(attribute),
+		Subject:      cleanFactSubject(subject),
+		Attribute:    attribute,
+		Aliases:      factAttributeAliases(attribute),
+		Requirements: factAttributeRequirements(attribute),
 	}
 }
 
 func factAttributeAliases(attribute string) []string {
+	requirements := factAttributeRequirements(attribute)
+	aliases := make([]string, 0)
+	for _, requirement := range requirements {
+		aliases = append(aliases, requirement.Aliases...)
+	}
+	return mergeRetrievalQueries(aliases)
+}
+
+func isKnownFactAttribute(attribute string) bool {
+	attribute = strings.ToLower(strings.TrimSpace(attribute))
+	if attribute == "" {
+		return false
+	}
+	for _, group := range factAttributeAliasGroups() {
+		for _, alias := range group {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" || (alias == "时间" && attribute != alias) {
+				continue
+			}
+			if attribute == alias || strings.Contains(attribute, alias) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func factAttributeRequirements(attribute string) []factAttributeRequirement {
 	attribute = strings.ToLower(strings.TrimSpace(attribute))
 	if attribute == "" {
 		return nil
 	}
+
+	requirements := make([]factAttributeRequirement, 0, 2)
 	for _, group := range factAttributeAliasGroups() {
+		matched := false
+		longest := ""
 		for _, alias := range group {
-			if strings.Contains(attribute, alias) || strings.Contains(alias, attribute) {
-				return mergeRetrievalQueries([]string{attribute}, group)
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" {
+				continue
+			}
+			// “时间”等单字概念过于宽泛，只有在用户明确询问该属性时
+			// 才作为别名；复合属性必须优先使用完整短语或可靠别名。
+			if alias == "时间" && attribute != alias {
+				continue
+			}
+			if attribute == alias || strings.Contains(attribute, alias) {
+				matched = true
+				if len([]rune(alias)) > len([]rune(longest)) {
+					longest = alias
+				}
 			}
 		}
+		if !matched {
+			continue
+		}
+		aliases := make([]string, 0, len(group)+1)
+		for _, alias := range mergeRetrievalQueries([]string{attribute}, group) {
+			if alias == "时间" && attribute != alias {
+				continue
+			}
+			aliases = append(aliases, alias)
+		}
+		requirements = append(requirements, factAttributeRequirement{
+			Name:    longest,
+			Aliases: aliases,
+		})
 	}
-	return []string{attribute}
+
+	if len(requirements) == 0 {
+		return []factAttributeRequirement{{Name: attribute, Aliases: []string{attribute}}}
+	}
+	return requirements
 }
 
 func allFactAttributeAliases() []string {
@@ -1104,13 +1305,17 @@ func factAttributeAliasGroups() [][]string {
 		{"电话", "手机号", "手机号码", "联系电话", "联系方式", "客服电话", "热线"},
 		{"地址", "注册地址", "办公地址", "联系地址", "位置", "所在地", "地点"},
 		{"邮箱", "电子邮箱", "邮件", "email"},
+		{"payload", "载荷", "有效载荷"},
 		{"价格", "售价", "费用", "金额", "单价", "总价", "薪资", "工资", "收入"},
 		{"年龄", "岁数"},
 		{"编号", "工号", "教师编号", "员工编号", "学号", "身份证号", "证件号"},
 		{"负责人", "联系人", "校长", "法人", "法定代表人", "负责人姓名"},
 		{"时间", "日期", "年份", "年度"},
+		{"响应时间", "在线响应时间", "延迟时间", "时延", "延迟", "耗时", "处理时间"},
+		{"吞吐量", "在线吞吐量", "处理吞吐量", "并发量"},
+		{"发布日期", "发布时间", "发布于", "上线时间", "上线日期"},
 		{"数量", "人数", "规模", "总数", "个数"},
-		{"职称", "职位", "岗位", "职务", "角色", "人物"},
+		{"职称", "职位", "岗位", "职务", "角色"},
 		{"名称", "姓名", "名字"},
 	}
 }
@@ -1142,6 +1347,12 @@ func cleanFactSubject(subject string) string {
 	for _, prefix := range []string{"请问", "查询", "告诉我", "帮我查", "我想知道", "想知道"} {
 		subject = strings.TrimPrefix(subject, prefix)
 	}
+	for _, marker := range []string{"是否", "能否", "有没有", "有无"} {
+		if index := strings.Index(subject, marker); index > 0 {
+			subject = subject[:index]
+			break
+		}
+	}
 	subject = strings.Trim(subject, " ，,。.!！?？：:；;“”\"'`")
 	subject = strings.TrimSuffix(subject, "的")
 	subject = strings.TrimSuffix(subject, "是")
@@ -1155,11 +1366,25 @@ func cleanFactSubject(subject string) string {
 
 func cleanFactAttribute(attribute string) string {
 	attribute = strings.TrimSpace(strings.ToLower(attribute))
-	for _, suffix := range []string{"是什么", "是多少", "是哪一年", "是什么时候", "是几几年", "有多少", "吗", "呢"} {
+	for _, marker := range []string{"可以", "能够", "是否", "能否", "支持", "提供", "包含", "包括", "具有"} {
+		if index := strings.Index(attribute, marker); index > 0 {
+			attribute = attribute[:index]
+			break
+		}
+	}
+	for _, suffix := range []string{"是什么时候", "是哪一年", "是几几年", "是什么", "是多少", "有多少", "是谁", "哪位", "哪一个", "吗", "呢"} {
 		attribute = strings.TrimSuffix(attribute, suffix)
 	}
 	attribute = strings.Trim(attribute, " ，,。.!！?？：:；;“”\"'`")
 	attribute = strings.TrimPrefix(attribute, "是")
+	if strings.HasPrefix(attribute, "什么时候") || strings.HasPrefix(attribute, "何时") {
+		attribute = strings.TrimPrefix(attribute, "什么时候")
+		attribute = strings.TrimPrefix(attribute, "何时")
+		attribute = strings.TrimSpace(attribute)
+		if attribute != "" {
+			attribute += "时间"
+		}
+	}
 	attribute = strings.TrimSpace(attribute)
 	if len([]rune(attribute)) < 2 {
 		return ""

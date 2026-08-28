@@ -42,6 +42,18 @@ func TestLooksLikeStructuredDataQueryRequiresTableSignal(t *testing.T) {
 	}
 }
 
+func TestLooksLikeStructuredDataQueryIgnoresGenericDocumentWords(t *testing.T) {
+	queries := []string{
+		"Qdrant 的数据点通常包含哪些内容？",
+		"评估数据集为什么要记录 source_documents？",
+	}
+	for _, query := range queries {
+		if looksLikeStructuredDataQuery(query) {
+			t.Fatalf("expected ordinary knowledge question not to trigger structured data handling: %q", query)
+		}
+	}
+}
+
 func TestQueryStructuredDataFilter(t *testing.T) {
 	service := newStructuredQueryTestService(t)
 	result, _, ok, err := service.QueryStructuredData(model.ChatCompletionRequest{

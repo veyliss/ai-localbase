@@ -454,6 +454,184 @@ func TestApplyEvidenceGateKeepsDeterministicStructuredResults(t *testing.T) {
 	}
 }
 
+func TestApplyEvidenceGateRequiresFactAttributeEvidence(t *testing.T) {
+	tests := []string{
+		"Hugging Face Transformers 官方文档是否提供了每个模型的在线响应时间？",
+		"Hugging Face Transformers 官方文档是否提供了每个模型的在线吞吐量？",
+	}
+	for _, query := range tests {
+		t.Run(query, func(t *testing.T) {
+			chunks := []RetrievedChunk{{
+				DocumentChunk: DocumentChunk{
+					DocumentID: "doc-transformers",
+					Text:       "Hugging Face Transformers 是一个面向文本、计算机视觉、音频、视频和多模态模型的机器学习模型定义框架。",
+				},
+				Score:    0.96,
+				RawScore: 0.95,
+			}}
+
+			filtered, stats := applyEvidenceGateWithStats(query, chunks)
+			if len(filtered) != 0 || stats.OutputCount != 0 || stats.DroppedCount != 1 {
+				t.Fatalf("expected missing requested attribute to drop the high-score match, got filtered=%#v stats=%#v", filtered, stats)
+			}
+			if score := factEvidenceScore(query, chunks[0]); score != 0 {
+				t.Fatalf("expected no fact evidence without requested attribute, got score=%d", score)
+			}
+		})
+	}
+}
+
+func TestOpenEndedDescriptionQueriesDoNotRequireUnknownFactAttribute(t *testing.T) {
+	queries := []string{
+		"请说明 Redis 的核心特点",
+		"请介绍 Agent Tools 的稳定处理能力包括哪些？",
+		"概述示例系统的主要用途",
+		"简述产品的运行机制",
+	}
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			if specs := strictFactQuerySpecs(query); len(specs) != 0 {
+				t.Fatalf("expected open-ended description query to skip unknown strict attributes, got %#v", specs)
+			}
+		})
+	}
+}
+
+func TestApplyEvidenceGateKeepsOpenEndedDescriptionEvidence(t *testing.T) {
+	query := "请介绍 Agent Tools 的稳定处理能力包括哪些？"
+	chunks := []RetrievedChunk{{
+		DocumentChunk: DocumentChunk{
+			DocumentID: "doc-agent-tools",
+			Text:       "Agent Tools 支持缓存、队列和持久化能力，用于稳定处理知识库任务。",
+		},
+		Score:    0.72,
+		RawScore: 0.68,
+	}}
+
+	filtered := applyEvidenceGate(query, chunks)
+	if len(filtered) != 1 || filtered[0].DocumentID != "doc-agent-tools" {
+		t.Fatalf("expected semantic evidence for open-ended description to remain, got %#v", filtered)
+	}
+}
+
+func TestApplyEvidenceGateAcceptsReliableFactAttributeAlias(t *testing.T) {
+	query := "示例学校的建校时间是多少？"
+	chunks := []RetrievedChunk{{
+		DocumentChunk: DocumentChunk{
+			DocumentID: "doc-school",
+			Text:       "示例学校始建于1998年，现有多个校区。",
+		},
+		Score:    0.42,
+		RawScore: 0.38,
+	}}
+
+	filtered := applyEvidenceGate(query, chunks)
+	if len(filtered) != 1 || filtered[0].DocumentID != "doc-school" {
+		t.Fatalf("expected reliable attribute alias to count as direct evidence, got %#v", filtered)
+	}
+}
+
+func TestApplyEvidenceGateUsesTechnicalAttributeFromNaturalQuestion(t *testing.T) {
+	query := "Qdrant 的 payload 可以存储什么类型的信息？"
+	specs := strictFactQuerySpecs(query)
+	if len(specs) != 1 || specs[0].Attribute != "payload" {
+		t.Fatalf("expected predicate to be reduced to the payload attribute, got %#v", specs)
+	}
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-payload",
+				Text:       "Qdrant 的 payload 可以存储能够表示为 JSON 的任意信息。",
+			},
+			Score:    0.44,
+			RawScore: 0.4,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-collection",
+				Text:       "Qdrant collection 是一组带有向量的命名集合，可以在其中进行搜索。",
+			},
+			Score:    0.97,
+			RawScore: 0.95,
+		},
+	}
+
+	filtered := applyEvidenceGate(query, chunks)
+	if len(filtered) != 1 || filtered[0].DocumentID != "doc-payload" {
+		t.Fatalf("expected the payload evidence only, got %#v", filtered)
+	}
+}
+
+func TestApplyEvidenceGateRecognizesTimeQuestionWithoutDe(t *testing.T) {
+	query := "示例学校什么时候成立？"
+	specs := strictFactQuerySpecs(query)
+	if len(specs) != 1 || specs[0].Attribute != "成立时间" {
+		t.Fatalf("expected time question to normalize to a fact attribute, got %#v", specs)
+	}
+
+	filtered := applyEvidenceGate(query, []RetrievedChunk{{
+		DocumentChunk: DocumentChunk{
+			DocumentID: "doc-school",
+			Text:       "示例学校成立于1998年。",
+		},
+		Score:    0.4,
+		RawScore: 0.36,
+	}})
+	if len(filtered) != 1 {
+		t.Fatalf("expected established-time alias to be accepted, got %#v", filtered)
+	}
+}
+
+func TestApplyEvidenceGateKeepsEachRequestedAttribute(t *testing.T) {
+	query := "成员甲的手机号和地址是什么？"
+	chunks := []RetrievedChunk{
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-member",
+				Text:       "成员甲的手机号是13800000000。",
+			},
+			Score:    0.52,
+			RawScore: 0.48,
+		},
+		{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-member",
+				Text:       "成员甲的地址是城市甲。",
+			},
+			Score:    0.51,
+			RawScore: 0.47,
+		},
+	}
+
+	filtered := applyEvidenceGate(query, chunks)
+	if len(filtered) != 2 {
+		t.Fatalf("expected both requested attributes to remain available, got %#v", filtered)
+	}
+	if coverage := queryEvidenceCoverage(query, filtered); coverage != 1 {
+		t.Fatalf("expected complete multi-attribute coverage, got %.2f", coverage)
+	}
+}
+
+func TestBuildRetrievalDebugConfidenceReportsMissingFactAttribute(t *testing.T) {
+	confidence := buildRetrievalDebugConfidence(
+		"Hugging Face Transformers 官方文档是否提供了每个模型的在线响应时间？",
+		[]RetrievedChunk{{
+			DocumentChunk: DocumentChunk{
+				DocumentID: "doc-transformers",
+				Text:       "Transformers 的 Pipeline 可用于文本生成、图像分割、自动语音识别和文档问答等任务。",
+			},
+			Score:    0.94,
+			RawScore: 0.93,
+		}},
+	)
+	if confidence.Status != "low" {
+		t.Fatalf("expected missing fact attribute to be low confidence, got %#v", confidence)
+	}
+	if !strings.Contains(strings.Join(confidence.Reasons, " "), "事实属性") {
+		t.Fatalf("expected missing fact attribute reason, got %#v", confidence.Reasons)
+	}
+}
+
 func TestQueryEvidenceTermsDoNotInjectFactAliases(t *testing.T) {
 	terms := strings.Join(queryEvidenceTerms("成员甲的手机号是多少？"), "\n")
 	for _, alias := range []string{"联系电话", "联系方式", "办公电话"} {

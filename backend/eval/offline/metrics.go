@@ -45,6 +45,10 @@ type RetrievedChunkInfo struct {
 // AggregateMetrics 聚合后的评估指标
 type AggregateMetrics struct {
 	TotalCases                 int
+	AnswerableCases            int
+	NoAnswerCases              int
+	NoAnswerCorrectCases       int
+	NoAnswerAccuracy           float64
 	HitRate                    float64
 	DocumentHitRate            float64
 	ChunkHitRate               float64
@@ -79,6 +83,7 @@ const (
 	FailureCategoryTableIntentMiss   = "table_intent_miss"
 	FailureCategoryFilenameScopeMiss = "filename_scope_miss"
 	FailureCategoryNoAnswerPolicy    = "no_answer_policy_miss"
+	FailureCategoryNoAnswerConfirmed = "no_answer_confirmed"
 	FailureCategoryUnsupportedAnswer = "unsupported_answer"
 	FailureCategoryDatasetIssue      = "dataset_issue"
 	FailureCategoryRuntimeError      = "runtime_error"
@@ -259,6 +264,12 @@ func ClassifyFailure(result CaseResult, gt GroundTruthCase, threshold float64) F
 			Reason:   "无答案用例返回了可命中的证据",
 		}
 	}
+	if isNoAnswerCase(gt) {
+		return FailureClassification{
+			Category: FailureCategoryNoAnswerConfirmed,
+			Reason:   "无答案用例未命中答案证据，拒答或低置信路径符合预期",
+		}
+	}
 	if classification.Hit {
 		faithfulness := AnalyzeCaseFaithfulness(result)
 		if faithfulness.UnsupportedClaimCount > 0 {
@@ -325,6 +336,12 @@ func isNoAnswerCase(gt GroundTruthCase) bool {
 	return answerType == "no_answer" || answerType == "unanswerable" || answerType == "unknown"
 }
 
+// IsNoAnswerCase reports whether a ground-truth case expects the system to
+// abstain because the answer is intentionally unavailable.
+func IsNoAnswerCase(gt GroundTruthCase) bool {
+	return isNoAnswerCase(gt)
+}
+
 func looksLikeTableCase(gt GroundTruthCase) bool {
 	answerType := strings.ToLower(strings.TrimSpace(gt.AnswerType))
 	notes := strings.ToLower(strings.TrimSpace(gt.Notes))
@@ -343,6 +360,9 @@ func ComputeHitRate(results []CaseResult, gts []GroundTruthCase, threshold float
 	for i, res := range results {
 		gt, ok := groundTruthForResult(res, i, gts, groundTruthByID)
 		if !ok {
+			continue
+		}
+		if isNoAnswerCase(gt) {
 			continue
 		}
 		evaluated++
@@ -370,6 +390,9 @@ func ComputeMRR(results []CaseResult, gts []GroundTruthCase, threshold float64) 
 		if !ok {
 			continue
 		}
+		if isNoAnswerCase(gt) {
+			continue
+		}
 		evaluated++
 		if hit, rank := IsHit(res, gt, threshold); hit && rank > 0 {
 			sumReciprocalRank += 1.0 / float64(rank)
@@ -390,6 +413,9 @@ func computeClassificationRates(results []CaseResult, gts []GroundTruthCase, thr
 	for index, result := range results {
 		gt, ok := groundTruthForResult(result, index, gts, groundTruthByID)
 		if !ok {
+			continue
+		}
+		if isNoAnswerCase(gt) {
 			continue
 		}
 		evaluated++
@@ -439,6 +465,41 @@ func computeFaithfulnessMetrics(results []CaseResult) (score, hallucinationRate,
 	}
 	hallucinationRate = float64(unsupportedCases) / float64(evaluatedCases)
 	return score, hallucinationRate, unsupportedClaimRate, evaluatedCases, unsupportedCases
+}
+
+func computeCaseTypeMetrics(results []CaseResult, gts []GroundTruthCase, threshold float64) (answerableCases, noAnswerCases, noAnswerCorrectCases int) {
+	groundTruthByID := groundTruthIndex(gts)
+	for index, result := range results {
+		gt, ok := groundTruthForResult(result, index, gts, groundTruthByID)
+		if !ok {
+			continue
+		}
+		if !isNoAnswerCase(gt) {
+			answerableCases++
+			continue
+		}
+		noAnswerCases++
+		if isNoAnswerCorrect(result, gt, threshold) {
+			noAnswerCorrectCases++
+		}
+	}
+	return answerableCases, noAnswerCases, noAnswerCorrectCases
+}
+
+func isNoAnswerCorrect(result CaseResult, gt GroundTruthCase, threshold float64) bool {
+	if !isNoAnswerCase(gt) {
+		return false
+	}
+	if strings.TrimSpace(result.Error) != "" && strings.TrimSpace(result.Error) != "未命中" {
+		return false
+	}
+	return !ClassifyHit(result, gt, threshold).Hit
+}
+
+// IsNoAnswerCorrect reports whether an unanswerable case avoided a positive
+// evidence hit and did not fail at runtime.
+func IsNoAnswerCorrect(result CaseResult, gt GroundTruthCase, threshold float64) bool {
+	return isNoAnswerCorrect(result, gt, threshold)
 }
 
 func groundTruthIndex(gts []GroundTruthCase) map[string]GroundTruthCase {
@@ -517,10 +578,19 @@ func Aggregate(results []CaseResult, gts []GroundTruthCase, threshold float64) A
 	hitRate := ComputeHitRate(results, gts, threshold)
 	mrr := ComputeMRR(results, gts, threshold)
 	documentHitRate, chunkHitRate, answerSnippetHitRate, directEvidenceHitRate := computeClassificationRates(results, gts, threshold)
+	answerableCases, noAnswerCases, noAnswerCorrectCases := computeCaseTypeMetrics(results, gts, threshold)
 	faithfulnessScore, hallucinationRate, unsupportedClaimRate, faithfulnessEvaluatedCases, unsupportedAnswerCases := computeFaithfulnessMetrics(results)
+	noAnswerAccuracy := 0.0
+	if noAnswerCases > 0 {
+		noAnswerAccuracy = float64(noAnswerCorrectCases) / float64(noAnswerCases)
+	}
 
 	return AggregateMetrics{
 		TotalCases:                 totalCases,
+		AnswerableCases:            answerableCases,
+		NoAnswerCases:              noAnswerCases,
+		NoAnswerCorrectCases:       noAnswerCorrectCases,
+		NoAnswerAccuracy:           noAnswerAccuracy,
 		HitRate:                    hitRate,
 		DocumentHitRate:            documentHitRate,
 		ChunkHitRate:               chunkHitRate,

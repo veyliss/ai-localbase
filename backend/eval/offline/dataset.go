@@ -16,7 +16,7 @@ type GroundTruthCase struct {
 	Answer          string           `json:"answer"`
 	AnswerSnippets  []string         `json:"answer_snippets"`
 	SourceDocuments []SourceDocument `json:"source_documents"`
-	AnswerType      string           `json:"answer_type"` // extractive|abstractive|yesno|numeric
+	AnswerType      string           `json:"answer_type"` // extractive|abstractive|yesno|numeric|no_answer
 	Difficulty      string           `json:"difficulty"`  // easy|medium|hard
 	Notes           string           `json:"notes"`
 	ReviewStatus    string           `json:"review_status,omitempty"`

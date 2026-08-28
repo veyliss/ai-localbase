@@ -23,6 +23,10 @@ type Report struct {
 // Metrics 报告中的聚合指标
 type Metrics struct {
 	TotalCases                 int     `json:"total_cases"`
+	AnswerableCases            int     `json:"answerable_cases"`
+	NoAnswerCases              int     `json:"no_answer_cases"`
+	NoAnswerCorrectCases       int     `json:"no_answer_correct_cases"`
+	NoAnswerAccuracy           float64 `json:"no_answer_accuracy"`
 	HitRate                    float64 `json:"hit_rate"`
 	DocumentHitRate            float64 `json:"document_hit_rate"`
 	ChunkHitRate               float64 `json:"chunk_hit_rate"`
@@ -45,6 +49,8 @@ type CaseReport struct {
 	CaseID                string  `json:"case_id"`
 	Question              string  `json:"question"`
 	Hit                   bool    `json:"hit"`
+	NoAnswer              bool    `json:"no_answer"`
+	NoAnswerCorrect       bool    `json:"no_answer_correct"`
 	HitRank               int     `json:"hit_rank"`
 	DocumentHit           bool    `json:"document_hit"`
 	ChunkHit              bool    `json:"chunk_hit"`
@@ -67,13 +73,28 @@ func BuildReport(runID string, datasetPath string, results []offline.CaseResult,
 	aggMetrics := offline.Aggregate(results, dataset.Cases, hitThreshold)
 
 	caseReports := make([]CaseReport, len(results))
+	groundTruthByID := make(map[string]offline.GroundTruthCase, len(dataset.Cases))
+	for _, item := range dataset.Cases {
+		if item.ID != "" {
+			groundTruthByID[item.ID] = item
+		}
+	}
 	for i, res := range results {
 		hit := res.HitRank != -1
+		groundTruth := res.GroundTruth
+		if item, ok := groundTruthByID[res.CaseID]; ok {
+			groundTruth = item
+		} else if groundTruth.ID == "" && i < len(dataset.Cases) {
+			groundTruth = dataset.Cases[i]
+		}
+		noAnswer := offline.IsNoAnswerCase(groundTruth)
 		faithfulness := offline.AnalyzeCaseFaithfulness(res)
 		caseReports[i] = CaseReport{
 			CaseID:                res.CaseID,
 			Question:              res.Question,
 			Hit:                   hit,
+			NoAnswer:              noAnswer,
+			NoAnswerCorrect:       offline.IsNoAnswerCorrect(res, groundTruth, hitThreshold),
 			HitRank:               res.HitRank,
 			DocumentHit:           res.DocumentHit,
 			ChunkHit:              res.ChunkHit,
@@ -98,6 +119,10 @@ func BuildReport(runID string, datasetPath string, results []offline.CaseResult,
 		DatasetPath: datasetPath,
 		Metrics: Metrics{
 			TotalCases:                 aggMetrics.TotalCases,
+			AnswerableCases:            aggMetrics.AnswerableCases,
+			NoAnswerCases:              aggMetrics.NoAnswerCases,
+			NoAnswerCorrectCases:       aggMetrics.NoAnswerCorrectCases,
+			NoAnswerAccuracy:           aggMetrics.NoAnswerAccuracy,
 			HitRate:                    aggMetrics.HitRate,
 			DocumentHitRate:            aggMetrics.DocumentHitRate,
 			ChunkHitRate:               aggMetrics.ChunkHitRate,
@@ -158,6 +183,9 @@ func (r *Report) WriteMarkdown(path string) error {
 	md.WriteString("| 指标 | 值 |\n")
 	md.WriteString("|------|----| \n")
 	md.WriteString(fmt.Sprintf("| 总用例数 | %d |\n", r.Metrics.TotalCases))
+	md.WriteString(fmt.Sprintf("| 可回答用例数 | %d |\n", r.Metrics.AnswerableCases))
+	md.WriteString(fmt.Sprintf("| 无答案用例数 | %d |\n", r.Metrics.NoAnswerCases))
+	md.WriteString(fmt.Sprintf("| 无答案正确率 | %.2f%% |\n", r.Metrics.NoAnswerAccuracy*100))
 	md.WriteString(fmt.Sprintf("| 命中率 (Hit Rate) | %.2f%% |\n", r.Metrics.HitRate*100))
 	md.WriteString(fmt.Sprintf("| 文档命中率 | %.2f%% |\n", r.Metrics.DocumentHitRate*100))
 	md.WriteString(fmt.Sprintf("| Chunk 命中率 | %.2f%% |\n", r.Metrics.ChunkHitRate*100))
@@ -175,7 +203,7 @@ func (r *Report) WriteMarkdown(path string) error {
 
 	failedCases := make([]CaseReport, 0)
 	for _, c := range r.Cases {
-		if !c.Hit || c.Error != "" || c.UnsupportedAnswer {
+		if !c.NoAnswerCorrect && (!c.Hit || c.Error != "" || c.UnsupportedAnswer || (c.FailureCategory != "" && c.FailureCategory != offline.FailureCategoryNoAnswerConfirmed)) {
 			failedCases = append(failedCases, c)
 		}
 	}
@@ -190,6 +218,26 @@ func (r *Report) WriteMarkdown(path string) error {
 				errorMsg = "未命中"
 			}
 			md.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d | %s |\n", c.CaseID, c.Question, c.FailureCategory, c.FailureReason, c.UnsupportedClaimCount, errorMsg))
+		}
+	}
+
+	noAnswerCases := make([]CaseReport, 0)
+	for _, c := range r.Cases {
+		if c.NoAnswer {
+			noAnswerCases = append(noAnswerCases, c)
+		}
+	}
+	if len(noAnswerCases) > 0 {
+		md.WriteString("## 无答案评估\n")
+		md.WriteString("| ID | 问题 | 结果 | 说明 |\n")
+		md.WriteString("|----|----|------|------|\n")
+		for _, c := range noAnswerCases {
+			status := "策略误命中"
+			reason := c.FailureReason
+			if c.NoAnswerCorrect {
+				status = "正确拒答"
+			}
+			md.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", c.CaseID, c.Question, status, reason))
 		}
 	}
 

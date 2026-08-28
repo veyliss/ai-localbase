@@ -361,5 +361,226 @@
     "difficulty": "hard",
     "notes": "公开合成补充样本，无固定来源，使用答案片段匹配",
     "review_status": "approved"
+  },
+  {
+    "id": "case-21",
+    "question": "在 Qdrant 中，collection 是什么？",
+    "answer": "在 Qdrant 中，collection 是一组带有向量和 payload 的点的命名集合，可以在其中进行搜索。",
+    "answer_snippets": [
+      "带有向量和 payload 的点",
+      "命名集合",
+      "进行搜索"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/overview/what-is-qdrant/index.md；fixture：ai-tech-facts.md#qdrant-collection-definition；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-22",
+    "question": "同一个 Qdrant collection 中的向量需要满足什么条件？",
+    "answer": "同一个 Qdrant collection 中每个点的向量必须具有相同的维度，并使用同一个距离度量进行比较。",
+    "answer_snippets": [
+      "相同的维度",
+      "同一个距离度量"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/manage-data/collections/index.md；fixture：ai-tech-facts.md#qdrant-vector-constraints；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-23",
+    "question": "Qdrant 支持哪些常用的向量距离度量？",
+    "answer": "Qdrant 支持点积、余弦相似度、欧氏距离和曼哈顿距离。",
+    "answer_snippets": [
+      "点积",
+      "余弦相似度",
+      "欧氏距离",
+      "曼哈顿距离"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/manage-data/collections/index.md；fixture：ai-tech-facts.md#qdrant-distance-metrics；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-24",
+    "question": "Qdrant 的 payload 可以存储什么类型的信息？",
+    "answer": "Qdrant 的 payload 可以存储能够表示为 JSON 的任意信息。",
+    "answer_snippets": [
+      "payload",
+      "JSON",
+      "任意信息"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/manage-data/payload/index.md；fixture：ai-tech-facts.md#qdrant-payload；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-25",
+    "question": "Qdrant 的混合搜索为什么要组合 dense 和 sparse 向量？",
+    "answer": "在 Qdrant 的文本搜索中，组合 dense 和 sparse 向量可以同时利用语义理解和精确词匹配。",
+    "answer_snippets": [
+      "dense 和 sparse 向量",
+      "语义理解",
+      "精确词匹配"
+    ],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "hard",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/search/hybrid-queries/index.md；fixture：ai-tech-facts.md#qdrant-hybrid-search；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-26",
+    "question": "Hugging Face Transformers 是什么？",
+    "answer": "Hugging Face Transformers 是一个面向文本、计算机视觉、音频、视频和多模态模型的机器学习模型定义框架，可用于推理和训练。",
+    "answer_snippets": [
+      "机器学习模型定义框架",
+      "文本、计算机视觉、音频、视频和多模态模型",
+      "推理和训练"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/index.md；fixture：ai-tech-facts.md#transformers-definition；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-27",
+    "question": "Transformers 的 Pipeline 可以处理哪些任务？",
+    "answer": "Transformers 的 Pipeline 可用于文本生成、图像分割、自动语音识别和文档问答等任务。",
+    "answer_snippets": [
+      "文本生成",
+      "图像分割",
+      "自动语音识别",
+      "文档问答"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/index.md；fixture：ai-tech-facts.md#transformers-pipeline；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-28",
+    "question": "Transformers 的 Trainer 支持哪些训练能力？",
+    "answer": "Transformers 的 Trainer 支持混合精度、torch.compile 和 FlashAttention 等训练能力。",
+    "answer_snippets": [
+      "混合精度",
+      "torch.compile",
+      "FlashAttention"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/index.md；fixture：ai-tech-facts.md#transformers-trainer；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-29",
+    "question": "Transformers 中的模型主要由哪三个类组成？",
+    "answer": "Transformers 中的模型主要由配置、模型和预处理器三个类组成。",
+    "answer_snippets": [
+      "配置",
+      "模型",
+      "预处理器"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/index.md；fixture：ai-tech-facts.md#transformers-model-classes；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-30",
+    "question": "Hugging Face Transformers 官方文档是否提供了每个模型的在线响应时间？",
+    "answer": "Hugging Face Transformers 官方文档没有提供每个模型的在线响应时间，无法确认。",
+    "answer_snippets": [],
+    "source_documents": [],
+    "answer_type": "no_answer",
+    "difficulty": "medium",
+    "notes": "公开官方文档无答案样本；系统应拒答而不是从相关页面推测性能数据",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-31",
+    "question": "scikit-learn 是什么？",
+    "answer": "scikit-learn 是一个开源机器学习库，支持监督学习和无监督学习。",
+    "answer_snippets": [
+      "开源机器学习库",
+      "监督学习",
+      "无监督学习"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://scikit-learn.org/stable/getting_started.html；fixture：ai-tech-facts.md#scikit-learn-definition；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-32",
+    "question": "scikit-learn 提供哪些常用工具？",
+    "answer": "scikit-learn 提供模型拟合、数据预处理、模型选择和模型评估等工具。",
+    "answer_snippets": [
+      "模型拟合",
+      "数据预处理",
+      "模型选择",
+      "模型评估"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://scikit-learn.org/stable/getting_started.html；fixture：ai-tech-facts.md#scikit-learn-tools；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-33",
+    "question": "PyTorch 的 torch.Tensor 是什么？",
+    "answer": "PyTorch 的 torch.Tensor 是一个包含单一数据类型元素的多维矩阵。",
+    "answer_snippets": [
+      "单一数据类型",
+      "多维矩阵"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://pytorch.org/docs/2.9/tensors.html；fixture：ai-tech-facts.md#pytorch-tensor；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-34",
+    "question": "TensorFlow 的 tf.function 可以做什么？",
+    "answer": "TensorFlow 的 tf.function 可以让程序从即时执行切换到图执行。",
+    "answer_snippets": [
+      "tf.function",
+      "即时执行",
+      "图执行"
+    ],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://www.tensorflow.org/guide/intro_to_graphs；fixture：ai-tech-facts.md#tensorflow-tf-function；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-35",
+    "question": "TensorFlow 图执行相比即时执行有什么特点？",
+    "answer": "TensorFlow 官方文档指出，图执行可以脱离 Python 使用，并且通常能够提供更好的性能。",
+    "answer_snippets": [
+      "脱离 Python 使用",
+      "更好的性能"
+    ],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://www.tensorflow.org/guide/intro_to_graphs；fixture：ai-tech-facts.md#tensorflow-graph-execution；访问日期：2026-08-26；自动校验通过",
+    "review_status": "approved"
   }
 ]

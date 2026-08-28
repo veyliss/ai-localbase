@@ -10,7 +10,7 @@
 - **报告输出**：生成 JSON 和 Markdown 格式报告
 - **CLI 入口**：命令行运行评估流程
 
-> 真实评测数据、评估结果和本地上传文件只允许在本机使用。`backend/eval/results/`、`backend/data/` 以及 `backend/eval/data/` 中除公开合成样本外的文件均已加入 Git 忽略规则，禁止提交、推送或上传。当前允许公开提交的回归样本只有 `backend/eval/data/ground_truth_v1.small.json`，不包含真实用户数据。
+> 真实评测数据、评估结果和本地上传文件只允许在本机使用。`backend/eval/results/`、`backend/data/` 以及 `backend/eval/data/` 中除公开样本外的文件均已加入 Git 忽略规则，禁止提交、推送或上传。当前允许公开提交的回归样本是 `backend/eval/data/ground_truth_v1.small.json`，其中只包含公开合成事实和经过整理的官方技术文档短事实，不包含真实用户数据。
 
 ---
 
@@ -27,9 +27,15 @@ backend/eval/
 ├── cmd/
 │   └── eval_main.go    # CLI 入口
 ├── data/
-│   └── ground_truth_v1.small.json  # 公开合成回归数据集
+│   └── ground_truth_v1.small.json  # 公开回归数据集
+├── fixtures/
+│   └── public-v1/       # 公开、可重复上传的测试夹具
 └── README.md
 ```
+
+### 公开 fixture
+
+`eval/fixtures/public-v1/` 提供与公开评测集配套的短 Markdown 夹具和 manifest，覆盖 Qdrant、Hugging Face Transformers、scikit-learn、PyTorch 与 TensorFlow 的公开技术事实。夹具不包含网页缓存、用户文件、知识库快照或评测运行结果，并且整个目录保持 Git 忽略，不随项目上传。`public_dataset_test.go` 在本机发现夹具时会校验样本、答案片段、来源映射和 Markdown 锚点是否一致；在干净 checkout 中会明确跳过这项本地 fixture 校验，公开 JSON 数据集的校验仍然默认执行。
 
 ---
 
@@ -77,6 +83,9 @@ backend/eval/
 
 | 指标 | 说明 |
 |------|------|
+| **Answerable Cases** | 可回答样本数；Hit Rate、MRR 和证据命中率的统计基数 |
+| **No-answer Cases** | 明确标注为 `no_answer`/`unanswerable`/`unknown` 的无答案样本数 |
+| **No-answer Accuracy** | 无答案样本正确进入拒答或低置信路径的比例 |
 | **Hit Rate** | 命中率，检索结果中包含正确答案片段的用例比例 |
 | **Document Hit Rate** | 命中文档的用例比例；仅代表范围命中，不代表证据准确 |
 | **Chunk Hit Rate** | 命中标准答案指定 Chunk 的用例比例 |
@@ -96,6 +105,8 @@ backend/eval/
 4. 没有 `source_documents` 时，`answer_snippets` 使用归一化文本和二元片段覆盖率判断，`EvaluatorConfig.HitThreshold` 会实际参与命中计算；完整包含仍视为精确命中。
 
 Faithfulness 检测会按句号、问号、感叹号和分号拆分答案，跳过明确的“无法确认/信息不足”拒答句；数字和 ASCII 标识必须在证据中保持一致，避免把“1898 年”与“1900 年”误判为同一事实。该指标是低成本回归信号，不能替代人工审核或模型辅助评审。
+
+对于 `answer_type` 为 `no_answer`、`unanswerable` 或 `unknown` 的样本，评估器不会把“没有命中答案”当作普通召回失败，也不会将其计入 Hit Rate、MRR 和证据命中率的分母；报告会单独输出无答案样本数、正确数和正确率。若无答案样本返回了可命中的标注证据，仍会标记为 `no_answer_policy_miss`。
 
 ---
 

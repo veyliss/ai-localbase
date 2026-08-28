@@ -63,3 +63,34 @@ func TestEvaluatorUsesConfiguredConcurrencyAndPreservesOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluatorTreatsExpectedNoAnswerAsCorrect(t *testing.T) {
+	answer := "无法确认，现有资料没有提供该信息。"
+	retrieval := func(ctx context.Context, question string) ([]RetrievedChunkInfo, time.Duration, error) {
+		return nil, time.Millisecond, nil
+	}
+	generation := func(ctx context.Context, question string, chunks []RetrievedChunkInfo) (string, time.Duration, error) {
+		return answer, time.Millisecond, nil
+	}
+
+	evaluator := NewEvaluator(retrieval, generation, EvaluatorConfig{})
+	results, err := evaluator.Run(context.Background(), &Dataset{Cases: []GroundTruthCase{{
+		ID:         "unanswerable",
+		Question:   "资料是否提供了该指标？",
+		Answer:     answer,
+		AnswerType: "no_answer",
+		Difficulty: "medium",
+	}}})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one result, got %d", len(results))
+	}
+	if results[0].Error != "" {
+		t.Fatalf("expected no runtime or miss error for a correct no-answer case, got %q", results[0].Error)
+	}
+	if results[0].FailureCategory != FailureCategoryNoAnswerConfirmed {
+		t.Fatalf("expected confirmed no-answer category, got %q", results[0].FailureCategory)
+	}
+}

@@ -246,6 +246,61 @@ func TestClassifyFailureDistinguishesRecallRankAndCitation(t *testing.T) {
 	assert.Equal(t, FailureCategoryCitationMismatch, citation.Category)
 }
 
+func TestNoAnswerCasesAreSeparatedFromRetrievalMetrics(t *testing.T) {
+	groundTruth := []GroundTruthCase{
+		{
+			ID:             "answerable",
+			AnswerSnippets: []string{"目标答案"},
+			AnswerType:     "extractive",
+		},
+		{
+			ID:         "unanswerable",
+			Answer:     "无法确认",
+			AnswerType: "no_answer",
+		},
+	}
+	results := []CaseResult{
+		{CaseID: "answerable", RetrievedChunks: []RetrievedChunkInfo{{Text: "包含目标答案的片段"}}},
+		{CaseID: "unanswerable"},
+	}
+
+	metrics := Aggregate(results, groundTruth, 0.5)
+	if metrics.TotalCases != 2 || metrics.AnswerableCases != 1 || metrics.NoAnswerCases != 1 {
+		t.Fatalf("unexpected case counts: %#v", metrics)
+	}
+	if metrics.NoAnswerCorrectCases != 1 || metrics.NoAnswerAccuracy != 1 {
+		t.Fatalf("expected one correctly handled no-answer case: %#v", metrics)
+	}
+	if metrics.HitRate != 1 || metrics.MRR != 1 || metrics.DirectEvidenceHitRate != 1 {
+		t.Fatalf("no-answer case should not lower answerable retrieval metrics: %#v", metrics)
+	}
+
+	classification := ClassifyFailure(results[1], groundTruth[1], 0.5)
+	if classification.Category != FailureCategoryNoAnswerConfirmed {
+		t.Fatalf("expected confirmed no-answer category, got %#v", classification)
+	}
+}
+
+func TestNoAnswerPolicyMissRemainsFailure(t *testing.T) {
+	groundTruth := GroundTruthCase{
+		ID:         "unanswerable",
+		Answer:     "无法确认",
+		AnswerType: "no_answer",
+		SourceDocuments: []SourceDocument{{
+			DocumentID: "doc-1",
+		}},
+	}
+	result := CaseResult{RetrievedChunks: []RetrievedChunkInfo{{DocumentID: "doc-1"}}}
+
+	classification := ClassifyFailure(result, groundTruth, 0.5)
+	if classification.Category != FailureCategoryNoAnswerPolicy {
+		t.Fatalf("expected no-answer policy failure, got %#v", classification)
+	}
+	if IsNoAnswerCorrect(result, groundTruth, 0.5) {
+		t.Fatal("a positive hit must not count as a correct no-answer result")
+	}
+}
+
 func TestEnabledCasesKeepsLegacyAndApprovedCases(t *testing.T) {
 	dataset := (&Dataset{Cases: []GroundTruthCase{
 		{ID: "legacy"},

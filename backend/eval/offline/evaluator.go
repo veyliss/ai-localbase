@@ -126,7 +126,7 @@ func (e *Evaluator) EvaluateCase(ctx context.Context, gt GroundTruthCase) (CaseR
 	if classification.Hit {
 		result.HitRank = classification.Rank
 		result.ReciprocalRank = 1.0 / float64(classification.Rank)
-	} else {
+	} else if !isNoAnswerCase(gt) {
 		result.Error = "未命中"
 	}
 	failure := ClassifyFailure(result, gt, e.config.HitThreshold)

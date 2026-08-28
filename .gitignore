@@ -102,6 +102,9 @@ backend/eval/data/*
 EVALUATION_FIX.md
 EVALUATION_FIX_SUMMARY.md
 
+# Local evaluation fixtures (public facts used only for local live tests)
+backend/eval/fixtures/
+
 # Logs
 *.log
 logs/

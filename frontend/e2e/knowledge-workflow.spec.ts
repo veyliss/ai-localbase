@@ -1,16 +1,33 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const uploadFile = process.env.E2E_UPLOAD_FILE
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const publicFixtureFile = path.join(
+  repositoryRoot,
+  'backend/eval/fixtures/public-v1/ai-tech-facts.md',
+)
+const publicFixtureEnabled = process.env.E2E_PUBLIC_FIXTURE === '1'
+const publicFixtureQuery = 'Qdrant 的 payload 可以存储什么类型的信息？'
+const publicNoAnswerQuery = 'Hugging Face Transformers 官方文档是否提供了每个模型的在线响应时间？'
+const externalFileAllowed = process.env.E2E_ALLOW_EXTERNAL_FILE === '1'
+const externalUploadFile = process.env.E2E_UPLOAD_FILE
   ? path.resolve(process.env.E2E_UPLOAD_FILE)
   : ''
-const retrievalQuery = process.env.E2E_QUERY?.trim() || ''
+const uploadFile = publicFixtureEnabled ? publicFixtureFile : externalUploadFile
+const retrievalQuery = publicFixtureEnabled
+  ? publicFixtureQuery
+  : process.env.E2E_QUERY?.trim() || ''
 const chatQuery = process.env.E2E_CHAT_QUERY?.trim() || ''
-const username = process.env.E2E_USERNAME?.trim() || 'root'
+const configuredUsername = process.env.E2E_USERNAME?.trim() || ''
 const password = process.env.E2E_PASSWORD || ''
-const externalFileAllowed = process.env.E2E_ALLOW_EXTERNAL_FILE === '1'
-const workflowEnabled = Boolean(externalFileAllowed && uploadFile && fs.existsSync(uploadFile) && retrievalQuery)
+const workflowEnabled = Boolean(
+  uploadFile &&
+  fs.existsSync(uploadFile) &&
+  retrievalQuery &&
+  (publicFixtureEnabled || externalFileAllowed),
+)
 
 const loginIfRequired = async (page: Page, testInfo: TestInfo) => {
   await page.goto('/')
@@ -34,16 +51,25 @@ const loginIfRequired = async (page: Page, testInfo: TestInfo) => {
     testInfo.skip(true, '检测到登录保护，请设置 E2E_PASSWORD 后运行浏览器工作流测试')
   }
 
-  await page.getByRole('textbox', { name: '用户名' }).fill(username)
+  const usernameInput = page.getByRole('textbox', { name: '用户名' })
+  const defaultUsername = (await usernameInput.inputValue()).trim() || 'root'
+  await usernameInput.fill(configuredUsername || defaultUsername)
   await page.getByRole('textbox', { name: '密码' }).fill(password)
   await loginButton.click()
-  await expect(page.getByRole('button', { name: '知识库' })).toBeVisible()
+
+  const workspaceButton = page.getByRole('button', { name: '知识库', exact: true })
+  try {
+    await expect(workspaceButton).toBeVisible({ timeout: 30_000 })
+  } catch {
+    const loginError = await page.locator('.login-error').first().textContent().catch(() => '')
+    throw new Error(loginError?.trim() || '登录后未进入工作区，请检查 E2E_USERNAME 和 E2E_PASSWORD')
+  }
 }
 
 const createTemporaryKnowledgeBase = async (page: Page) => {
   const name = `E2E 临时知识库 ${Date.now()}`
-  await page.getByRole('button', { name: '知识库' }).click()
-  await page.getByRole('button', { name: '新建知识库' }).click()
+  await page.locator('.app-rail-nav').getByRole('button', { name: '知识库', exact: true }).click()
+  await page.locator('.kb-header').getByRole('button', { name: '新建知识库', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '新建知识库' })).toBeVisible()
   await page.locator('#kb-name-input').fill(name)
   await page.getByRole('dialog', { name: '新建知识库' }).getByRole('button', { name: '创建知识库' }).click()
@@ -90,7 +116,7 @@ test.describe('知识库核心浏览器工作流', () => {
 
   test.skip(
     !workflowEnabled,
-    '仅在明确设置 E2E_ALLOW_EXTERNAL_FILE=1、E2E_UPLOAD_FILE 和 E2E_QUERY 后运行浏览器工作流测试',
+    '请设置 E2E_PUBLIC_FIXTURE=1，或明确设置 E2E_ALLOW_EXTERNAL_FILE=1、E2E_UPLOAD_FILE 和 E2E_QUERY 后运行浏览器工作流测试',
   )
 
   test.beforeEach(async ({ page }, testInfo) => {
@@ -116,12 +142,50 @@ test.describe('知识库核心浏览器工作流', () => {
     await expect(page.getByText(/命中结果|没有命中 Chunk/)).toBeVisible()
     await expect(page.getByText('检索失败', { exact: true })).toHaveCount(0)
 
+    if (publicFixtureEnabled) {
+      const evidenceHit = page.locator('.kb-retrieval-hit').filter({ hasText: 'Qdrant 的 payload' }).first()
+      await expect(evidenceHit).toBeVisible()
+      await expect(evidenceHit).toContainText('JSON')
+      await expect(evidenceHit).toContainText('任意信息')
+    }
+
     await page.getByRole('tab', { name: '文档' }).click()
     const documentRow = page.locator('.kb-doc-item').filter({ hasText: fileName }).first()
     await expect(documentRow).toBeVisible()
     await documentRow.getByRole('button', { name: `打开 ${fileName} 的操作菜单` }).click()
     await page.getByRole('menuitem', { name: '查看详情' }).click()
-    await expect(page.getByRole('dialog', { name: '文档详情' })).toBeVisible()
+    const detailDialog = page.locator('.kb-detail-dialog')
+    await expect(detailDialog).toBeVisible()
+
+    if (publicFixtureEnabled) {
+      await detailDialog.getByRole('tab', { name: '原文', exact: true }).click()
+      await expect(detailDialog.locator('.kb-detail-pre')).toContainText('Qdrant 的 payload')
+      await expect(detailDialog.locator('.kb-detail-pre')).toContainText('JSON')
+
+      await detailDialog.getByRole('tab', { name: /^Chunks/ }).click()
+      await expect(detailDialog.locator('.kb-detail-chunks')).toContainText('任意信息')
+    }
+  })
+
+  test('公开资料没有答案时进入低置信路径', async ({ page }) => {
+    test.skip(!publicFixtureEnabled, '仅公开 fixture 模式验证无答案保护')
+
+    await uploadAndWaitForIndex(page)
+    await page.getByRole('tab', { name: '检索测试' }).click()
+    await page.getByRole('textbox', { name: '检索测试问题' }).fill(publicNoAnswerQuery)
+
+    const retrievalResponse = page.waitForResponse((response) => (
+      response.url().includes('/retrieval/debug') &&
+      response.request().method() === 'POST'
+    ))
+    await page.getByRole('button', { name: '运行检索' }).click()
+    const response = await retrievalResponse
+    expect(response.ok()).toBeTruthy()
+
+    const payload = await response.json() as { count?: number; lowConfidence?: boolean }
+    expect(payload.lowConfidence || payload.count === 0).toBeTruthy()
+    await expect(page.getByText('需要复核', { exact: true })).toBeVisible({ timeout: 120_000 })
+    await expect(page.getByText('检索失败', { exact: true })).toHaveCount(0)
   })
 
   test('在配置了问答模型时，引用可以打开文档定位', async ({ page }) => {

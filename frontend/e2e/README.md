@@ -11,7 +11,19 @@ Playwright 测试只在显式提供本地环境变量时运行，默认不会读
 npx playwright install chromium
 ```
 
-3. 使用本地文件和问题运行上传、索引、检索调试、文档详情流程：
+3. 使用仓库内公开 fixture 运行可重复的上传、索引、检索和证据详情流程：
+
+```bash
+E2E_BASE_URL=http://localhost:4173 \
+E2E_PUBLIC_FIXTURE=1 \
+npm run test:e2e
+```
+
+公开模式使用 `backend/eval/fixtures/public-v1/ai-tech-facts.md` 和固定的 Qdrant 事实问题，不需要指定本地文件，也不会读取用户文件。测试仍会创建临时知识库，并在每个用例结束后尝试删除。
+
+公开模式还会验证无答案问题进入低置信路径，不把相关但未提供答案的页面当作确定证据。
+
+4. 如需使用专门准备的本地合成文件和问题运行完整流程：
 
 ```bash
 E2E_BASE_URL=http://localhost:4173 \
@@ -21,6 +33,6 @@ E2E_QUERY='输入一个与本地文件内容相关的问题' \
 npm run test:e2e
 ```
 
-启用认证时再提供 `E2E_USERNAME` 和 `E2E_PASSWORD`。聊天引用流程还需要提供 `E2E_CHAT_QUERY`，并确保当前配置的聊天模型可用。
+启用认证时提供 `E2E_PASSWORD`；测试会读取登录页返回的默认用户名，也可以用 `E2E_USERNAME` 显式覆盖。聊天引用流程还需要提供 `E2E_CHAT_QUERY`，并确保当前配置的聊天模型可用。公开 fixture 模式也可以额外提供 `E2E_CHAT_QUERY` 运行聊天引用用例。
 
 测试会创建带有 `E2E` 前缀的临时知识库，并在每个用例结束后尝试删除。外部文件上传必须显式设置 `E2E_ALLOW_EXTERNAL_FILE=1`，请只使用专门准备的合成文件。**本地文件、问题、模型凭据和测试结果都不会写入仓库。**

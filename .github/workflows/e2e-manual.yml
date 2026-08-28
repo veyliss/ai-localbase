@@ -55,6 +55,7 @@ jobs:
         run: npm run test:e2e
         env:
           E2E_BASE_URL: ${{ inputs.base_url }}
+          E2E_ALLOW_EXTERNAL_FILE: '1'
           E2E_UPLOAD_FILE: ${{ inputs.upload_file }}
           E2E_QUERY: ${{ inputs.query }}
           E2E_CHAT_QUERY: ${{ inputs.chat_query }}

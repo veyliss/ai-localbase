@@ -258,7 +258,15 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 	}
 	assistantMessage := firstAssistantChoice(response)
 	if assistantMessage != nil {
-		sources = calibrateCitationSources(latestUserQuestion(req.Messages), assistantMessage.Content, sources, req.KnowledgeBaseID, req.DocumentID)
+		citationSupport := service.AssessCitationSupport(
+			latestUserQuestion(req.Messages),
+			assistantMessage.Content,
+			sources,
+			req.KnowledgeBaseID,
+			req.DocumentID,
+		)
+		sources = citationSupport.SupportedSources
+		response.Metadata["citationSupport"] = citationSupport
 	}
 	response.Metadata["sources"] = sources
 	response.Metadata["knowledgeBaseId"] = req.KnowledgeBaseID
@@ -618,7 +626,15 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 	}
 	assistantMessage := firstAssistantChoice(response)
 	if assistantMessage != nil {
-		sources = calibrateCitationSources(latestUserQuestion(req.Messages), assistantMessage.Content, sources, req.KnowledgeBaseID, req.DocumentID)
+		citationSupport := service.AssessCitationSupport(
+			latestUserQuestion(req.Messages),
+			assistantMessage.Content,
+			sources,
+			req.KnowledgeBaseID,
+			req.DocumentID,
+		)
+		sources = citationSupport.SupportedSources
+		response.Metadata["citationSupport"] = citationSupport
 	}
 	response.Metadata["sources"] = sources
 	response.Metadata["knowledgeBaseId"] = req.KnowledgeBaseID
@@ -690,12 +706,20 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 	}
 
 	fullAssistantContent := assistantContent.String()
-	sources = calibrateCitationSources(latestUserQuestion(req.Messages), fullAssistantContent, sources, req.KnowledgeBaseID, req.DocumentID)
+	citationSupport := service.AssessCitationSupport(
+		latestUserQuestion(req.Messages),
+		fullAssistantContent,
+		sources,
+		req.KnowledgeBaseID,
+		req.DocumentID,
+	)
+	sources = citationSupport.SupportedSources
 	responseMetadata := map[string]any{
 		"sources":         sources,
 		"knowledgeBaseId": req.KnowledgeBaseID,
 		"documentId":      req.DocumentID,
 		"toolUse":         buildToolUseMetadata(sources),
+		"citationSupport": citationSupport,
 	}
 	_, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
 		ID:              req.ConversationID,

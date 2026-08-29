@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-localbase/internal/model"
 	"ai-localbase/internal/service"
@@ -246,6 +247,50 @@ func TestNormalizeToolCallResultAlwaysHasContractContent(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolCallResultMarksExplicitErrorAsError(t *testing.T) {
+	result := normalizeToolCallResult(ToolCallResult{
+		Error: &ToolCallError{Code: string(MCPErrorNotFound), Message: "document not found"},
+	}, "req-2")
+	if !result.IsError || result.Error == nil {
+		t.Fatalf("expected explicit error to set isError, got %#v", result)
+	}
+	if result.Error.Code != string(MCPErrorNotFound) || result.Error.RequestID != "req-2" {
+		t.Fatalf("expected normalized error metadata, got %#v", result.Error)
+	}
+}
+
+func TestBuildMCPCapabilitiesPublishesErrorCatalogAndScopeVariants(t *testing.T) {
+	capabilities := buildMCPCapabilities(model.AppConfig{}, []ToolDefinition{
+		{Name: "list_knowledge_bases", ReadOnly: true, PermissionLevel: ToolPermissionReadOnly},
+		{Name: "start_import_job", PermissionLevel: ToolPermissionWrite},
+	})
+
+	if capabilities["resultContractVersion"] != resultContractVersion {
+		t.Fatalf("expected result contract version, got %#v", capabilities["resultContractVersion"])
+	}
+	errorCodes, ok := capabilities["errorCodes"].([]MCPErrorDescriptor)
+	if !ok || len(errorCodes) != len(mcpErrorDescriptors) {
+		t.Fatalf("expected complete error catalog, got %#v", capabilities["errorCodes"])
+	}
+
+	tools, ok := capabilities["tools"].([]map[string]any)
+	if !ok || len(tools) != 2 {
+		t.Fatalf("expected capability tool summaries, got %#v", capabilities["tools"])
+	}
+	for _, item := range tools {
+		if item["resultContractVersion"] != resultContractVersion {
+			t.Fatalf("expected tool contract version, got %#v", item)
+		}
+		if item["name"] != "start_import_job" {
+			continue
+		}
+		variants, ok := item["scopeVariants"].(map[string][]string)
+		if !ok || variants["reindex"][0] != scopeMCPWrite || variants["eval_dataset"][0] != scopeMCPEval {
+			t.Fatalf("expected dynamic import scopes, got %#v", item["scopeVariants"])
+		}
+	}
+}
+
 func TestStartImportJobScopesFollowJobType(t *testing.T) {
 	definition := ToolDefinition{Name: "start_import_job", PermissionLevel: ToolPermissionWrite}
 	tests := []struct {
@@ -317,6 +362,57 @@ func TestMCPToolArgumentLogsOmitStringValues(t *testing.T) {
 	}
 	if !strings.Contains(summary, `"chars"`) {
 		t.Fatalf("expected tool argument summary to preserve string lengths, got %s", summary)
+	}
+}
+
+func TestMCPErrorCatalogAndPerToolMetricsArePublished(t *testing.T) {
+	catalog := mcpErrorCatalog()
+	if len(catalog) < 10 {
+		t.Fatalf("expected a stable MCP error catalog, got %d entries", len(catalog))
+	}
+	seen := map[MCPErrorCode]bool{}
+	for _, descriptor := range catalog {
+		if descriptor.Code == "" || seen[descriptor.Code] {
+			t.Fatalf("expected unique non-empty error code, got %+v", descriptor)
+		}
+		seen[descriptor.Code] = true
+	}
+	for _, required := range []MCPErrorCode{MCPErrorInvalidArgument, MCPErrorNotFound, MCPErrorIndexNotReady, MCPErrorTimeout, MCPErrorRateLimited} {
+		if !seen[required] {
+			t.Fatalf("expected catalog to contain %q", required)
+		}
+	}
+
+	server := &Server{metrics: mcpMetricsState{
+		startedAt:   time.Now().UTC(),
+		toolMetrics: map[string]mcpToolMetricState{},
+	}}
+	server.recordMCPToolMetric("search_document", true, 10*time.Millisecond)
+	server.recordMCPToolMetric("search_document", false, 30*time.Millisecond)
+	snapshot := server.metricsSnapshot()
+	if len(snapshot.ToolMetrics) != 1 {
+		t.Fatalf("expected one per-tool metric, got %+v", snapshot.ToolMetrics)
+	}
+	metric := snapshot.ToolMetrics[0]
+	if metric.ToolName != "search_document" || metric.CallsTotal != 2 || metric.CallsSucceeded != 1 || metric.CallsFailed != 1 {
+		t.Fatalf("unexpected per-tool metric: %+v", metric)
+	}
+	if metric.P95Ms < metric.P50Ms || metric.MaxMs != 30 {
+		t.Fatalf("expected ordered per-tool latency metrics, got %+v", metric)
+	}
+}
+
+func TestNormalizeToolCallResultUsesStableErrorCodeAndRequestID(t *testing.T) {
+	result := normalizeToolCallResult(ToolCallResult{
+		IsError: true,
+		Error: &ToolCallError{
+			Code:      "unknown-code",
+			Message:   "内部失败",
+			Retryable: true,
+		},
+	}, "req-42")
+	if result.Error == nil || result.Error.Code != string(MCPErrorInternal) || result.Error.RequestID != "req-42" || result.Error.Retryable {
+		t.Fatalf("expected normalized stable error contract, got %+v", result.Error)
 	}
 }
 

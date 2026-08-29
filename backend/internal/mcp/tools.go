@@ -507,12 +507,22 @@ func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[strin
 	for _, tool := range tools {
 		permission := string(tool.PermissionLevel)
 		permissionCounts[permission]++
-		toolItems = append(toolItems, map[string]any{
-			"name":            tool.Name,
-			"readOnly":        tool.ReadOnly,
-			"permissionLevel": permission,
-			"requiredScopes":  requiredScopesForTool(tool),
-		})
+		toolItem := map[string]any{
+			"name":                  tool.Name,
+			"readOnly":              tool.ReadOnly,
+			"permissionLevel":       permission,
+			"requiredScopes":        requiredScopesForTool(tool),
+			"resultContractVersion": resultContractVersion,
+		}
+		if tool.Name == "start_import_job" {
+			toolItem["scopeVariants"] = map[string][]string{
+				"import":       []string{scopeMCPUpload},
+				"batch_index":  []string{scopeMCPUpload},
+				"reindex":      []string{scopeMCPWrite},
+				"eval_dataset": []string{scopeMCPEval},
+			}
+		}
+		toolItems = append(toolItems, toolItem)
 	}
 
 	return map[string]any{
@@ -546,6 +556,7 @@ func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[strin
 		},
 		"jobSupport":            true,
 		"resultContractVersion": resultContractVersion,
+		"errorCodes":            mcpErrorCatalog(),
 		"auth": map[string]any{
 			"type":                  "api_key_scope",
 			"legacyTokenCompatible": cfg.MCP.LegacyTokenEnabled,

@@ -11,7 +11,7 @@
 - 工具列表：`GET /mcp/tools`
 - 观测指标：`GET /mcp/metrics`
 
-服务信息、`initialize`、工具描述和工具结果都会返回 `resultContractVersion` 或 `contractVersion`，客户端应使用该字段判断扩展兼容性。
+服务信息、`initialize`、`tools/list`、工具描述和工具结果都会返回 `resultContractVersion` 或 `contractVersion`，并公布 `errorCodes` 目录。当前版本仍为 `1.0`；本次新增字段均为向后兼容扩展，客户端应使用版本字段和已知字段判断兼容性，不应因为未知字段失败。
 
 ## 2. 工具成功结果
 
@@ -52,25 +52,31 @@
     "error": {
       "code": "not_found",
       "message": "document not found",
-      "retryable": false
+      "retryable": false,
+      "requestId": "req-xxx"
     }
   }
 }
 ```
 
-当前稳定错误码：
+当前稳定错误码（服务信息和工具描述中的 `errorCodes` 会返回完整目录）：
 
 | 错误码 | 含义 | 是否建议重试 |
 | --- | --- | --- |
 | `invalid_argument` | 参数缺失、类型不正确或值无效 | 否 |
+| `unauthenticated` | 缺少或无法验证 MCP 凭据 | 否 |
 | `not_found` | 知识库、文档、任务等资源不存在 | 否 |
 | `permission_denied` | 权限或 scope 不足 | 否 |
+| `conflict` | 请求与资源当前状态冲突 | 否 |
+| `index_not_ready` | 文档索引尚未就绪 | 是 |
 | `dependency_unavailable` | Qdrant、模型或其他依赖不可用 | 是 |
 | `timeout` | MCP 请求超过服务端超时 | 是 |
+| `rate_limited` | 超过当前身份的频率限制 | 是 |
+| `confirmation_required` | 危险操作缺少有效的一次性确认 | 否 |
 | `cancelled` | 请求被取消 | 是 |
 | `internal_error` | 未分类的服务端错误 | 否 |
 
-客户端不应根据中文错误消息判断错误类型，应优先读取 `error.data.error.code` 和 `retryable`。
+客户端不应根据中文错误消息判断错误类型，应优先读取 `error.data.error.code`、`retryable` 和 `requestId`。HTTP 鉴权、scope、限流和危险操作拒绝也会保留字符串 `error` 兼容字段，同时返回 `errorCode` 与 `requestId`。
 
 ## 4. 权限与敏感信息
 
@@ -88,11 +94,14 @@
 - 工具调用总数、成功数、失败数。
 - 限流、鉴权失败、scope 拒绝次数。
 - 请求和工具调用的 P50、P95、最大耗时，单位为毫秒。
+- `toolMetrics`：按工具名称统计调用量、成功/失败数量和 P50、P95、最大耗时。
 - 服务启动时间和当前契约版本。
 
-延迟样本在进程内保留最近 512 条，仅用于当前进程诊断；重启后重新统计。该端点受 MCP 鉴权和 `mcp:read` scope 保护。
+延迟样本按全局和工具分别在进程内保留最近 512 条，仅用于当前进程诊断；重启后重新统计。该端点受 MCP 鉴权和 `mcp:read` scope 保护。
 
 ## 6. 知识库治理数据
+
+只读工具 `get_mcp_capabilities` 会返回服务能力摘要，并与服务信息端点使用相同的契约版本和 `errorCodes` 目录；其中 `start_import_job` 会公开 `import`、`batch_index`、`reindex` 和 `eval_dataset` 对应的动态 scope。
 
 只读工具 `inspect_knowledge_base_quality` 会返回安全化的索引治理信息：
 

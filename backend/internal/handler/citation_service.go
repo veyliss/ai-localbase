@@ -10,41 +10,51 @@ import (
 // scoredCitationSource keeps citation calibration independent from HTTP request handling.
 // The handler only supplies the question, answer and candidate sources.
 type scoredCitationSource struct {
-	source     map[string]string
-	score      int
-	index      int
-	answerHits int
-	queryHits  int
+	source         map[string]string
+	score          int
+	index          int
+	answerHits     int
+	answerOnlyHits int
+	queryHits      int
 }
 
 func calibrateCitationSources(question, answer string, sources []map[string]string, knowledgeBaseID, documentID string) []map[string]string {
 	if len(sources) == 0 {
 		return nil
 	}
+	if isCitationAbstention(answer) {
+		return nil
+	}
 
 	answerTerms := citationTerms(answer)
 	queryTerms := citationTerms(question)
+	answerOnlyTerms := termsNotIn(answerTerms, queryTerms)
 	scored := make([]scoredCitationSource, 0, len(sources))
 	for index, source := range sources {
 		if !isDocumentCitationSource(source) || !citationSourceMatchesScope(source, knowledgeBaseID, documentID) {
 			continue
 		}
 
-		text := citationSourceText(source)
+		// Only the stored snippet is evidence. Metadata such as a filename can
+		// help users locate a source, but must never make an unrelated source
+		// look like it supports the answer.
+		text := citationSourceEvidenceText(source)
 		answerHits := citationHitCount(answerTerms, text)
+		answerOnlyHits := citationHitCount(answerOnlyTerms, text)
 		queryHits := citationHitCount(queryTerms, text)
 		rawScore := parseCitationRawScore(source["score"])
-		score := answerHits*6 + queryHits*2 + int(rawScore*3)
-		if !sourcePassesCitationGate(answerHits, queryHits, rawScore, len(answerTerms)) {
+		score := answerOnlyHits*8 + answerHits*4 + queryHits*2 + int(rawScore*3)
+		if !sourcePassesCitationGate(answerHits, answerOnlyHits, queryHits, len(answerTerms), len(answerOnlyTerms)) {
 			continue
 		}
 
 		scored = append(scored, scoredCitationSource{
-			source:     cloneStringMap(source),
-			score:      score,
-			index:      index,
-			answerHits: answerHits,
-			queryHits:  queryHits,
+			source:         cloneStringMap(source),
+			score:          score,
+			index:          index,
+			answerHits:     answerHits,
+			answerOnlyHits: answerOnlyHits,
+			queryHits:      queryHits,
 		})
 	}
 
@@ -102,20 +112,91 @@ func isDocumentCitationSource(source map[string]string) bool {
 	return true
 }
 
-func citationSourceText(source map[string]string) string {
-	parts := []string{source["snippet"], source["documentName"], source["chunkKind"]}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+func citationSourceEvidenceText(source map[string]string) string {
+	return strings.TrimSpace(source["snippet"])
 }
 
-func sourcePassesCitationGate(answerHits, queryHits int, rawScore float64, answerTermCount int) bool {
-	if answerHits >= 2 {
+func sourcePassesCitationGate(answerHits, answerOnlyHits, queryHits, answerTermCount, answerOnlyTermCount int) bool {
+	if answerTermCount == 0 || answerHits == 0 {
+		return false
+	}
+	if answerOnlyTermCount > 0 {
+		// At least one answer-only term prevents a source that merely repeats
+		// the question subject from being cited for a different answer.
+		return answerOnlyHits >= 1 && (queryHits >= 1 || answerHits >= 2)
+	}
+	if answerHits >= 2 && queryHits >= 1 {
 		return true
 	}
-	if answerHits >= 1 && queryHits >= 1 {
+	return false
+}
+
+func termsNotIn(values, excluded []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	excludedSet := make(map[string]struct{}, len(excluded))
+	for _, value := range excluded {
+		excludedSet[value] = struct{}{}
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := excludedSet[value]; exists {
+			continue
+		}
+		result = append(result, value)
+	}
+	return removeContainedTerms(result)
+}
+
+func removeContainedTerms(values []string) []string {
+	if len(values) < 2 {
+		return values
+	}
+	result := make([]string, 0, len(values))
+	for index, value := range values {
+		isContained := false
+		for otherIndex, other := range values {
+			// Two-rune fragments are usually generic Chinese word pieces
+			// (for example, "成员" inside "成员甲"). Keep longer fragments
+			// even when a four-rune window contains them, because adjacent
+			// wording often changes between a question and an answer.
+			if index == otherIndex || len([]rune(value)) > 2 || len([]rune(other)) <= len([]rune(value)) {
+				continue
+			}
+			if strings.Contains(other, value) {
+				isContained = true
+				break
+			}
+		}
+		if !isContained {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func isCitationAbstention(answer string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(answer))
+	if normalized == "" {
 		return true
 	}
-	if answerTermCount == 0 && queryHits >= 2 && rawScore >= 0.65 {
-		return true
+	for _, phrase := range []string{
+		"无法确认",
+		"无法确定",
+		"无法回答",
+		"没有足够信息",
+		"缺少足够信息",
+		"未找到可靠证据",
+		"未找到相关证据",
+		"暂无可靠证据",
+		"cannot determine",
+		"cannot answer",
+		"no reliable evidence",
+	} {
+		if strings.Contains(normalized, phrase) {
+			return true
+		}
 	}
 	return false
 }

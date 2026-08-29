@@ -260,9 +260,10 @@ func (s *RagService) BuildDocumentChunks(document model.Document, text string) [
 	chunks := make([]DocumentChunk, 0, len(parts))
 	nextIndex := 0
 	searchFrom := 0
+	evidenceIndex := newEvidenceTextIndex(text)
 	for index, part := range parts {
 		kind := classifyDocumentChunkKind(part)
-		charStart, charEnd, lineStart, lineEnd, nextSearch := locateEvidenceRange(text, part, searchFrom)
+		charStart, charEnd, lineStart, lineEnd, nextSearch := evidenceIndex.locate(part, searchFrom)
 		chunks = append(chunks, DocumentChunk{
 			ID:              fmt.Sprintf("%s-chunk-%d", document.ID, index),
 			KnowledgeBaseID: document.KnowledgeBaseID,
@@ -280,12 +281,12 @@ func (s *RagService) BuildDocumentChunks(document model.Document, text string) [
 		nextIndex++
 	}
 
-	summaryChunks := buildStructuredSummaryChunks(document, text, nextIndex)
+	summaryChunks := buildStructuredSummaryChunks(document, text, nextIndex, evidenceIndex)
 	chunks = append(summaryFirstChunks(summaryChunks), chunks...)
 	return chunks
 }
 
-func buildStructuredSummaryChunks(document model.Document, text string, startIndex int) []DocumentChunk {
+func buildStructuredSummaryChunks(document model.Document, text string, startIndex int, evidenceIndex evidenceTextIndex) []DocumentChunk {
 	blocks := extractStructuredSummaryBlocks(text)
 	if len(blocks) == 0 {
 		return nil
@@ -293,7 +294,7 @@ func buildStructuredSummaryChunks(document model.Document, text string, startInd
 	chunks := make([]DocumentChunk, 0, len(blocks))
 	searchFrom := 0
 	for i, block := range blocks {
-		charStart, charEnd, lineStart, lineEnd, nextSearch := locateEvidenceRange(text, block, searchFrom)
+		charStart, charEnd, lineStart, lineEnd, nextSearch := evidenceIndex.locate(block, searchFrom)
 		chunks = append(chunks, DocumentChunk{
 			ID:              fmt.Sprintf("%s-summary-%d", document.ID, i),
 			KnowledgeBaseID: document.KnowledgeBaseID,

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -171,6 +172,80 @@ func TestBuildDocumentChunksIncludesEvidenceLocation(t *testing.T) {
 	firstID := evidenceIDForChunk(chunks[0])
 	if firstID == "" || firstID != evidenceIDForChunk(chunks[0]) {
 		t.Fatalf("expected deterministic evidence id, got %q", firstID)
+	}
+}
+
+func TestLocateEvidenceRangeIgnoresWhitespaceDifferences(t *testing.T) {
+	documentText := "标题\n\n第一段  内容。\r\n\t第二行证据。"
+	fragment := "第一段 内容。 第二行证据。"
+
+	charStart, charEnd, lineStart, lineEnd, nextByte := locateEvidenceRange(documentText, fragment, 0)
+	if charStart != len([]rune("标题\n\n")) {
+		t.Fatalf("expected normalized match to start after heading, got %d", charStart)
+	}
+	if charEnd != len([]rune(documentText)) {
+		t.Fatalf("expected normalized match to end at the last source character, got %d", charEnd)
+	}
+	if lineStart != 3 || lineEnd != 4 {
+		t.Fatalf("expected source lines 3-4, got %d-%d", lineStart, lineEnd)
+	}
+	if nextByte != len(documentText) {
+		t.Fatalf("expected next search byte %d, got %d", len(documentText), nextByte)
+	}
+}
+
+func TestLocateEvidenceRangeKeepsOverlappingChunksAligned(t *testing.T) {
+	documentText := "甲句。乙句。丙句。"
+	firstStart, firstEnd, _, _, nextByte := locateEvidenceRange(documentText, "甲句。乙句。", 0)
+	if firstStart != 0 || firstEnd != len([]rune("甲句。乙句。")) {
+		t.Fatalf("expected first exact range, got %d-%d", firstStart, firstEnd)
+	}
+
+	secondStart, secondEnd, lineStart, lineEnd, _ := locateEvidenceRange(documentText, "乙句。 丙句。", nextByte)
+	if secondStart != len([]rune("甲句。")) {
+		t.Fatalf("expected overlapping normalized chunk to start at 乙句, got %d", secondStart)
+	}
+	if secondEnd != len([]rune(documentText)) {
+		t.Fatalf("expected overlapping normalized chunk to reach the document end, got %d", secondEnd)
+	}
+	if lineStart != 1 || lineEnd != 1 {
+		t.Fatalf("expected single source line, got %d-%d", lineStart, lineEnd)
+	}
+}
+
+func TestLocateEvidenceRangePrefersOverlapBeforeLaterRepeatedMatch(t *testing.T) {
+	documentText := "相同。相同。相同。相同。"
+	_, _, _, _, nextByte := locateEvidenceRange(documentText, "相同。相同。", 0)
+
+	charStart, charEnd, _, _, _ := locateEvidenceRange(documentText, "相同。相同。", nextByte)
+	if charStart != len([]rune("相同。")) {
+		t.Fatalf("expected the overlapping repeated chunk, got start %d", charStart)
+	}
+	if charEnd != len([]rune("相同。相同。相同。")) {
+		t.Fatalf("expected the overlapping repeated chunk to end after the third phrase, got %d", charEnd)
+	}
+}
+
+func TestBuildDocumentChunksLocatesCollapsedMarkdownChunks(t *testing.T) {
+	rag := NewRagService()
+	document := model.Document{ID: "doc-markdown", KnowledgeBaseID: "kb-1", Name: "long.md"}
+	lines := make([]string, 0, 120)
+	for index := 1; index <= 120; index++ {
+		lines = append(lines, strings.Repeat("  ", index%3)+"第"+strconv.Itoa(index)+"条记录说明了可追溯证据定位。")
+	}
+	documentText := strings.Join(lines, "\r\n")
+
+	chunks := rag.BuildDocumentChunks(document, documentText)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple markdown chunks, got %d", len(chunks))
+	}
+	for index, chunk := range chunks {
+		if chunk.CharEnd <= chunk.CharStart || chunk.LineStart <= 0 || chunk.LineEnd < chunk.LineStart {
+			t.Fatalf("chunk %d is missing a source location: %+v", index, chunk)
+		}
+		if chunk.LineEnd > len(lines) {
+			t.Fatalf("chunk %d points past the source lines: %+v", index, chunk)
+		}
 	}
 }
 

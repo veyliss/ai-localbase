@@ -112,3 +112,51 @@ func TestCalibrateCitationSourcesKeepsShortChineseEntityEvidence(t *testing.T) {
 		t.Fatalf("expected short Chinese entity evidence to remain citable, got %#v", filtered)
 	}
 }
+
+func TestCalibrateCitationSourcesDoesNotTreatDocumentMetadataAsEvidence(t *testing.T) {
+	sources := []map[string]string{{
+		"knowledgeBaseId": "kb-school",
+		"documentId":      "doc-school",
+		"documentName":    "成员甲负责人资料.md",
+		"chunkId":         "chunk-school",
+		"score":           "0.9900",
+		"snippet":         "该文档只介绍资料归档流程，不包含人员信息。",
+	}}
+
+	filtered := calibrateCitationSources("负责人是谁", "负责人是成员甲。", sources, "kb-school", "")
+	if len(filtered) != 0 {
+		t.Fatalf("expected metadata-only overlap to be rejected, got %#v", filtered)
+	}
+}
+
+func TestCalibrateCitationSourcesRejectsConflictingAnswerValue(t *testing.T) {
+	sources := []map[string]string{{
+		"knowledgeBaseId": "kb-school",
+		"documentId":      "doc-school",
+		"documentName":    "学校简介.md",
+		"chunkId":         "chunk-school",
+		"score":           "0.9900",
+		"snippet":         "示例机构现任负责人为成员乙，负责日常管理工作。",
+	}}
+
+	filtered := calibrateCitationSources("示例机构负责人是谁", "示例机构负责人是成员甲。", sources, "kb-school", "")
+	if len(filtered) != 0 {
+		t.Fatalf("expected conflicting answer value to be rejected, got %#v", filtered)
+	}
+}
+
+func TestCalibrateCitationSourcesNeverCitesAbstention(t *testing.T) {
+	sources := []map[string]string{{
+		"knowledgeBaseId": "kb-school",
+		"documentId":      "doc-school",
+		"documentName":    "学校简介.md",
+		"chunkId":         "chunk-school",
+		"score":           "0.9900",
+		"snippet":         "示例机构现任负责人为成员甲。",
+	}}
+
+	filtered := calibrateCitationSources("负责人是谁", "无法确认该问题，暂无可靠证据。", sources, "kb-school", "")
+	if len(filtered) != 0 {
+		t.Fatalf("expected abstention answer to have no citations, got %#v", filtered)
+	}
+}

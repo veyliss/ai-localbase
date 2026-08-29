@@ -1,5 +1,5 @@
 import React from 'react'
-import type { KnowledgeBaseHealthResponse } from '../../services/api'
+import type { IndexedDocumentVerification, KnowledgeBaseHealthResponse } from '../../services/api'
 import AppIcon from '../common/AppIcon'
 import { healthStatusLabel } from './knowledgeLabels'
 
@@ -9,6 +9,10 @@ interface KnowledgeHealthPanelProps {
   error: string
   onReindexDocument: (documentId: string) => void
   reindexingDocumentId: string | null
+  verificationByDocument: Record<string, IndexedDocumentVerification>
+  verificationLoadingKey: string | null
+  verificationError: string
+  onVerifyDocument: (documentId: string) => void
 }
 
 const KnowledgeHealthPanel: React.FC<KnowledgeHealthPanelProps> = ({
@@ -17,6 +21,10 @@ const KnowledgeHealthPanel: React.FC<KnowledgeHealthPanelProps> = ({
   error,
   onReindexDocument,
   reindexingDocumentId,
+  verificationByDocument,
+  verificationLoadingKey,
+  verificationError,
+  onVerifyDocument,
 }) => {
   const badge = health ? healthStatusLabel(health.status) : null
   const needsReindexDocuments = health?.documents.filter((item) => item.needsReindex) ?? []
@@ -32,6 +40,25 @@ const KnowledgeHealthPanel: React.FC<KnowledgeHealthPanelProps> = ({
       case 'index_failed': return '索引失败'
       default: return code || '未分类'
     }
+  }
+
+  const verificationIssueLabel = (issue: string) => {
+    const [code, expected, actual] = issue.split(':')
+    const labels: Record<string, string> = {
+      indexed_content_snapshot_missing: '索引快照缺失',
+      indexed_content_flag_without_snapshot: '索引状态与快照不一致',
+      indexed_content_snapshot_unreadable: '索引快照不可读',
+      content_unavailable: '内容不可用',
+      content_empty: '内容为空',
+      evidence_location_missing: '证据定位缺失',
+      snapshot_character_count_mismatch: '快照字符数不一致',
+      structured_snapshot_unavailable: '结构化快照不可用',
+      structured_table_count_mismatch: '表格数量不一致',
+      indexed_table_count_mismatch: '索引表格数量不一致',
+      index_version_outdated: '索引版本过期',
+    }
+    const label = labels[code] || code
+    return expected && actual ? `${label}（${expected} / ${actual}）` : label
   }
 
   return (
@@ -98,6 +125,66 @@ const KnowledgeHealthPanel: React.FC<KnowledgeHealthPanelProps> = ({
               ))}
             </div>
           )}
+
+          <div className="kb-health-verification">
+            <div className="kb-health-verification-head">
+              <div>
+                <h4>索引校验</h4>
+                <span>验证已保存快照、chunk 数量与证据定位</span>
+              </div>
+              <AppIcon name="shield" size={16} />
+            </div>
+            {verificationError && <div className="kb-health-error" role="alert">{verificationError}</div>}
+            {health.documents.length === 0 ? (
+              <p className="kb-health-verification-empty">暂无文档可校验</p>
+            ) : (
+              <div className="kb-health-verification-list">
+                {health.documents.map((item) => {
+                  const verificationKey = `${health.knowledgeBaseId}:${item.documentId}`
+                  const verification = verificationByDocument[verificationKey]
+                  const isLoading = verificationLoadingKey === verificationKey
+                  const statusLabel = verification
+                    ? verification.valid ? '通过' : '需处理'
+                    : '未校验'
+                  const statusClass = verification
+                    ? verification.valid ? 'is-valid' : 'is-invalid'
+                    : 'is-pending'
+
+                  return (
+                    <div className="kb-health-verification-item" key={item.documentId}>
+                      <div className="kb-health-verification-copy">
+                        <div className="kb-health-verification-title">
+                          <strong>{item.documentName}</strong>
+                          <span className={`kb-health-verification-status ${statusClass}`}>{statusLabel}</span>
+                        </div>
+                        {verification ? (
+                          verification.valid ? (
+                            <span>
+                              {verification.snapshotAvailable ? '已保存快照' : '使用原文'} · {verification.chunkCount} chunks · 证据 {verification.evidenceLocatedCount}/{verification.evidenceLocatedCount + verification.evidenceMissingCount}
+                            </span>
+                          ) : (
+                            <span>{(verification.issues ?? []).map(verificationIssueLabel).join('、') || '发现索引一致性问题'}</span>
+                          )
+                        ) : (
+                          <span>尚未执行完整校验</span>
+                        )}
+                      </div>
+                      <button
+                        aria-label={`校验 ${item.documentName} 的索引`}
+                        disabled={isLoading}
+                        onClick={() => onVerifyDocument(item.documentId)}
+                        title="校验索引快照与证据定位"
+                        type="button"
+                      >
+                        <AppIcon className={isLoading ? 'spin' : undefined} name="shield" size={14} />
+                        {isLoading ? '校验中' : '校验'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
 
           {needsReindexDocuments.length > 0 && (
             <div className="kb-health-docs">

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import type {
+  IndexedDocumentVerification,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
   RetrievalSearchMode,
@@ -8,6 +9,7 @@ import {
   fetchKnowledgeBaseHealth,
   debugKnowledgeBaseRetrieval,
   extractErrorMessage,
+  verifyKnowledgeBaseDocumentIndex,
 } from '../../../services/api'
 
 interface HealthContextValue {
@@ -17,6 +19,12 @@ interface HealthContextValue {
   healthError: string
   fetchHealth: (knowledgeBaseId: string) => Promise<void>
   clearHealthError: () => void
+
+  // Index verification
+  indexVerificationByDocument: Record<string, IndexedDocumentVerification>
+  indexVerificationLoadingKey: string | null
+  indexVerificationError: string
+  verifyDocumentIndex: (knowledgeBaseId: string, documentId: string) => Promise<void>
 
   // Retrieval Debug
   retrievalQuery: string
@@ -68,6 +76,15 @@ export const HealthProvider: React.FC<HealthProviderProps> = ({ children }) => {
   const [healthError, setHealthError] = useState('')
   const healthRequestIdRef = useRef(0)
 
+  // Verification requests are keyed by knowledge base and document so a
+  // response from an older selection cannot overwrite the current result.
+  const [indexVerificationByDocument, setIndexVerificationByDocument] = useState<
+    Record<string, IndexedDocumentVerification>
+  >({})
+  const [indexVerificationLoadingKey, setIndexVerificationLoadingKey] = useState<string | null>(null)
+  const [indexVerificationError, setIndexVerificationError] = useState('')
+  const indexVerificationRequestIdRef = useRef(0)
+
   // Retrieval Debug
   const [retrievalQuery, setRetrievalQuery] = useState('')
   const [retrievalSearchMode, setRetrievalSearchMode] = useState<RetrievalSearchMode>('auto')
@@ -108,6 +125,34 @@ export const HealthProvider: React.FC<HealthProviderProps> = ({ children }) => {
 
   const clearHealthError = useCallback(() => {
     setHealthError('')
+  }, [])
+
+  const verifyDocumentIndex = useCallback(async (knowledgeBaseId: string, documentId: string) => {
+    const key = `${knowledgeBaseId}:${documentId}`
+    const requestId = indexVerificationRequestIdRef.current + 1
+    indexVerificationRequestIdRef.current = requestId
+    setIndexVerificationLoadingKey(key)
+    setIndexVerificationError('')
+
+    try {
+      const verification = await verifyKnowledgeBaseDocumentIndex(knowledgeBaseId, documentId)
+      if (requestId !== indexVerificationRequestIdRef.current) {
+        return
+      }
+      setIndexVerificationByDocument((previous) => ({
+        ...previous,
+        [key]: verification,
+      }))
+    } catch (err) {
+      if (requestId !== indexVerificationRequestIdRef.current) {
+        return
+      }
+      setIndexVerificationError(await getErrorMessage(err, '索引校验失败'))
+    } finally {
+      if (requestId === indexVerificationRequestIdRef.current) {
+        setIndexVerificationLoadingKey(null)
+      }
+    }
   }, [])
 
   // Run Retrieval Debug
@@ -157,6 +202,11 @@ export const HealthProvider: React.FC<HealthProviderProps> = ({ children }) => {
       fetchHealth,
       clearHealthError,
 
+      indexVerificationByDocument,
+      indexVerificationLoadingKey,
+      indexVerificationError,
+      verifyDocumentIndex,
+
       retrievalQuery,
       retrievalSearchMode,
       retrievalDebugKnowledgeBaseId,
@@ -175,6 +225,10 @@ export const HealthProvider: React.FC<HealthProviderProps> = ({ children }) => {
       healthError,
       fetchHealth,
       clearHealthError,
+      indexVerificationByDocument,
+      indexVerificationLoadingKey,
+      indexVerificationError,
+      verifyDocumentIndex,
       retrievalQuery,
       retrievalSearchMode,
       retrievalDebugKnowledgeBaseId,

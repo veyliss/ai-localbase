@@ -92,6 +92,7 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 		api.POST("/knowledge-bases/:id/documents/batch-index", appHandler.BatchIndexDocuments)
 		api.GET("/knowledge-bases/:id/documents/:documentId", appHandler.GetDocumentDetail)
 		api.GET("/knowledge-bases/:id/documents/:documentId/index-status", appHandler.GetDocumentIndexStatus)
+		api.GET("/knowledge-bases/:id/documents/:documentId/index-verification", appHandler.VerifyDocumentIndex)
 		api.POST("/knowledge-bases/:id/documents/:documentId/reindex", appHandler.ReindexDocument)
 		api.DELETE("/knowledge-bases/:id/documents/:documentId", appHandler.DeleteDocument)
 	}

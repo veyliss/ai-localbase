@@ -215,6 +215,26 @@ export interface DocumentDetailResponse {
   chunks: DocumentChunkPreview[]
 }
 
+export interface IndexedDocumentVerification {
+  knowledgeBaseId: string
+  documentId: string
+  documentName: string
+  status: string
+  valid: boolean
+  contentSource: 'indexed' | 'source' | 'unavailable' | string
+  snapshotAvailable: boolean
+  snapshotChars: number
+  snapshotTables: number
+  chunkCount: number
+  expectedChunkCount: number
+  structuredRowCount: number
+  evidenceLocatedCount: number
+  evidenceMissingCount: number
+  indexVersion: number
+  currentIndexVersion: number
+  issues?: string[]
+}
+
 export interface KnowledgeBaseHealthMetrics {
   documentCount: number
   indexedCount: number
@@ -1160,6 +1180,15 @@ export const getDocumentIndexStatus = async (
 ): Promise<DocumentIndexStatusResponse> => (
   requestJson<DocumentIndexStatusResponse>(
     `/api/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/index-status`,
+  )
+)
+
+export const verifyKnowledgeBaseDocumentIndex = async (
+  knowledgeBaseId: string,
+  documentId: string,
+): Promise<IndexedDocumentVerification> => (
+  requestJson<IndexedDocumentVerification>(
+    `/api/knowledge-bases/${knowledgeBaseId}/documents/${documentId}/index-verification`,
   )
 )
 

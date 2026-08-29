@@ -471,6 +471,9 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       activeHealth={activeHealth}
                       healthLoadingId={healthContext.healthLoadingId}
                       healthError={healthContext.healthError}
+                      indexVerificationByDocument={healthContext.indexVerificationByDocument}
+                      indexVerificationLoadingKey={healthContext.indexVerificationLoadingKey}
+                      indexVerificationError={healthContext.indexVerificationError}
                       selectedScopeLabel={selectedScopeLabel}
                       retrievalQuery={healthContext.retrievalQuery}
                       retrievalSearchMode={healthContext.retrievalSearchMode}
@@ -484,6 +487,7 @@ const KnowledgePanel: React.FC<KnowledgePanelProps> = ({
                       onCancelDirectoryUpload={onCancelDirectoryUpload}
                       onContinueDirectoryUpload={onContinueDirectoryUpload}
                       onReindexDocument={(documentId) => void handleReindexDocument(activeKnowledgeBaseId, documentId)}
+                      onVerifyDocumentIndex={(documentId) => void healthContext.verifyDocumentIndex(activeKnowledgeBaseId, documentId)}
                       onSetRetrievalQuery={healthContext.setRetrievalQuery}
                       onSetRetrievalSearchMode={healthContext.setRetrievalSearchMode}
                       onRunRetrievalDebug={() => void handleRunRetrievalDebug(activeKnowledgeBaseId)}

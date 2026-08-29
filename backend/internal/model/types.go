@@ -295,6 +295,28 @@ type DocumentIndexDiagnostics struct {
 	ContentSource         string `json:"contentSource"`
 }
 
+// IndexedDocumentVerification describes whether persisted index snapshots can
+// still provide complete content and trustworthy evidence locations.
+type IndexedDocumentVerification struct {
+	KnowledgeBaseID      string   `json:"knowledgeBaseId"`
+	DocumentID           string   `json:"documentId"`
+	DocumentName         string   `json:"documentName"`
+	Status               string   `json:"status"`
+	Valid                bool     `json:"valid"`
+	ContentSource        string   `json:"contentSource"`
+	SnapshotAvailable    bool     `json:"snapshotAvailable"`
+	SnapshotChars        int      `json:"snapshotChars"`
+	SnapshotTables       int      `json:"snapshotTables"`
+	ChunkCount           int      `json:"chunkCount"`
+	ExpectedChunkCount   int      `json:"expectedChunkCount"`
+	StructuredRowCount   int      `json:"structuredRowCount"`
+	EvidenceLocatedCount int      `json:"evidenceLocatedCount"`
+	EvidenceMissingCount int      `json:"evidenceMissingCount"`
+	IndexVersion         int      `json:"indexVersion"`
+	CurrentIndexVersion  int      `json:"currentIndexVersion"`
+	Issues               []string `json:"issues,omitempty"`
+}
+
 type DocumentDetailResponse struct {
 	KnowledgeBaseID string                   `json:"knowledgeBaseId"`
 	Document        Document                 `json:"document"`

@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import type { KnowledgeBase, DirectoryUploadTask } from '../../App'
 import type {
+  IndexedDocumentVerification,
   KnowledgeBaseHealthResponse,
   RetrievalDebugResponse,
   RetrievalSearchMode,
@@ -30,6 +31,9 @@ interface MainWorkspaceProps {
   activeHealth: KnowledgeBaseHealthResponse | undefined
   healthLoadingId: string | null
   healthError: string
+  indexVerificationByDocument: Record<string, IndexedDocumentVerification>
+  indexVerificationLoadingKey: string | null
+  indexVerificationError: string
   selectedScopeLabel: string
   retrievalQuery: string
   retrievalSearchMode: RetrievalSearchMode
@@ -43,6 +47,7 @@ interface MainWorkspaceProps {
   onCancelDirectoryUpload: () => void
   onContinueDirectoryUpload: () => void
   onReindexDocument: (documentId: string) => void
+  onVerifyDocumentIndex: (documentId: string) => void
   onSetRetrievalQuery: (query: string) => void
   onSetRetrievalSearchMode: (mode: RetrievalSearchMode) => void
   onRunRetrievalDebug: () => void
@@ -155,6 +160,9 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
   activeHealth,
   healthLoadingId,
   healthError,
+  indexVerificationByDocument,
+  indexVerificationLoadingKey,
+  indexVerificationError,
   selectedScopeLabel,
   retrievalQuery,
   retrievalSearchMode,
@@ -168,6 +176,7 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
   onCancelDirectoryUpload,
   onContinueDirectoryUpload,
   onReindexDocument,
+  onVerifyDocumentIndex,
   onSetRetrievalQuery,
   onSetRetrievalSearchMode,
   onRunRetrievalDebug,
@@ -286,6 +295,10 @@ const MainWorkspace: React.FC<MainWorkspaceProps> = ({
                 error={healthError}
                 onReindexDocument={onReindexDocument}
                 reindexingDocumentId={docContext.reindexingDocumentId}
+                verificationByDocument={indexVerificationByDocument}
+                verificationLoadingKey={indexVerificationLoadingKey}
+                verificationError={indexVerificationError}
+                onVerifyDocument={onVerifyDocumentIndex}
               />
             )}
           </div>

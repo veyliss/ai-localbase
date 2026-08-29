@@ -220,3 +220,14 @@ func (h *AppHandler) GetDocumentIndexStatus(c *gin.Context) {
 
 	c.JSON(http.StatusOK, status)
 }
+
+// VerifyDocumentIndex checks the durable content snapshot and evidence
+// coordinates without exposing the original filesystem path.
+func (h *AppHandler) VerifyDocumentIndex(c *gin.Context) {
+	verification, err := h.appService.VerifyIndexedDocument(c.Param("id"), c.Param("documentId"))
+	if err != nil {
+		writeError(c, http.StatusNotFound, "document not found")
+		return
+	}
+	c.JSON(http.StatusOK, verification)
+}

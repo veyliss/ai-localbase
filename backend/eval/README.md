@@ -89,11 +89,11 @@ backend/eval/
 | **Hit Rate** | 命中率，检索结果中包含正确答案片段的用例比例 |
 | **Document Hit Rate** | 命中文档的用例比例；仅代表范围命中，不代表证据准确 |
 | **Chunk Hit Rate** | 命中标准答案指定 Chunk 的用例比例 |
-| **Answer Snippet Hit Rate** | 检索片段包含答案片段的用例比例 |
-| **Direct Evidence Hit Rate** | 命中指定 Chunk 或答案片段的用例比例 |
-| **Faithfulness** | 生成答案中能在检索片段中找到支撑的陈述比例；使用确定性词法基线，不调用额外模型 |
-| **Hallucination Rate** | 包含至少一条未被检索证据支撑陈述的答案比例；只在有可评估陈述的答案中统计 |
-| **Unsupported Claim Rate** | 未被检索证据支撑的陈述占全部可评估陈述的比例 |
+| **Answer Snippet Hit Rate（召回层）** | 检索片段包含答案片段的用例比例，不代表生成答案正确 |
+| **Direct Evidence Hit Rate（召回层）** | 命中指定 Chunk 或答案片段的用例比例，不代表生成答案正确 |
+| **Faithfulness（陈述级）** | 生成答案中能在检索片段中找到支撑的陈述比例；使用确定性词法基线，不调用额外模型 |
+| **Hallucination Rate（答案级）** | 包含至少一条未被检索证据支撑陈述的答案比例；只在有可评估陈述的答案中统计 |
+| **Unsupported Claim Rate（陈述级）** | 未被检索证据支撑的陈述占全部可评估陈述的比例，因此可能与答案级指标不同 |
 | **MRR** | Mean Reciprocal Rank，首个命中结果的排名倒数均值 |
 | **Retrieval Latency P50/P95** | 检索时延的第 50/95 百分位数 |
 | **Generation Latency P50/P95** | LLM 生成时延的第 50/95 百分位数 |
@@ -272,6 +272,63 @@ go run ./eval/cmd/recommend_strategy \
 
 推荐器默认要求 Hit Rate、MRR、Faithfulness、直接证据命中率不下降，未支撑答案/陈述率和错误数不增加，检索与生成 P95 不超过 baseline 的 130%。没有候选通过时继续使用 baseline，不会自动修改生产配置。
 
+### Qdrant 索引迁移
+
+`migrate_qdrant_vectors` 用于把旧 collection 中的文本 payload 重新生成 dense + sparse 向量并写入新 collection。迁移会复用原 point ID 和 payload，支持 dry-run、分批处理、失败重试以及迁移后的 ID/文本校验；命令输出仅包含统计和错误码，不输出文档正文。
+
+先执行只读扫描。`source-prefix` 必须提供，`target-prefix` 默认读取 `QDRANT_COLLECTION_PREFIX`：
+
+```bash
+cd backend
+go run ./eval/cmd/migrate_qdrant_vectors \
+  -source-prefix legacy_ \
+  -target-prefix qdrant_ \
+  -kb kb-xxx \
+  -dry-run
+```
+
+确认扫描结果后执行迁移。建议先在一个知识库上验证，再扩大到全部知识库：
+
+```bash
+cd backend
+go run ./eval/cmd/migrate_qdrant_vectors \
+  -source-prefix legacy_ \
+  -target-prefix qdrant_ \
+  -kb kb-xxx \
+  -batch-size 100 \
+  -max-attempts 3 \
+  -retry-backoff 500ms \
+  -timeout 30m \
+  -validate=true
+```
+
+关键参数和行为：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `-source-prefix` | 空（必填） | 源 Qdrant collection 前缀 |
+| `-target-prefix` | `QDRANT_COLLECTION_PREFIX` | 目标 collection 前缀，必须与源不同 |
+| `-kb` | 空 | 只迁移指定知识库；为空时遍历状态文件中的全部知识库 |
+| `-dry-run` | `false` | 只扫描源 payload；不需要目标 Qdrant、Embedding，也不写入数据 |
+| `-batch-size` | `100` | 每批 Embedding 和 upsert 的 point 数 |
+| `-max-attempts` | `3` | collection、Embedding、upsert 的最大尝试次数 |
+| `-retry-backoff` | `200ms` | 重试初始退避时间，每次失败后倍增 |
+| `-validate` | `true` | 写入后校验 point ID 和 text payload |
+| `-timeout` | `30m` | 全部知识库迁移的总超时时间 |
+| `-continue-on-error` | `false` | 一个知识库失败后是否继续处理其他知识库 |
+
+命令按知识库输出一条 JSON 统计，最后输出汇总 JSON。成功退出码为 `0`；存在迁移失败、校验失败或指定知识库不存在时退出码为 `1`。迁移前应备份 Qdrant 和应用状态；迁移完成后仍需通过索引健康页或索引校验接口抽查全文快照、chunk 数量和证据定位。
+
+### 索引快照校验
+
+索引完成后，文档详情和检索不应依赖已经被清理的原始文件。可以调用以下接口检查持久化快照、chunk 数量、结构化表格和证据定位：
+
+```bash
+curl http://localhost:8080/api/knowledge-bases/kb-xxx/documents/doc-xxx/index-verification
+```
+
+响应中的 `valid` 表示当前文档是否通过校验；`issues` 是稳定的问题码，例如 `indexed_content_snapshot_missing`、`chunk_count_mismatch`、`evidence_location_missing` 和 `index_version_outdated`。接口不会返回本地文件路径或文档正文。知识库管理页的“索引健康”视图可以按文档触发同一校验，并显示结果。
+
 如需直接覆盖评估时使用的检索参数，可追加：
 
 ```bash
@@ -405,8 +462,10 @@ type GenerationFunc func(ctx context.Context, question string, chunks []Retrieve
 
 ---
 
-## 扩展计划
+## 当前完成度与后续
 
-- Phase 2：接入真实 `AppService` 进行端到端评估
-- Phase 3：支持并发评估（`MaxConcurrency > 1`）
-- Phase 4：添加 Precision@K、Recall@K 等更多指标
+- Phase 1：公开样本校验、评估报告、策略矩阵和并发评估工具已完成。
+- Phase 2：真实 `AppService` 检索、证据门控、引用校准和无答案样本评估已接入。
+- Phase 3：索引快照、Qdrant 分批迁移、重试、校验和知识库健康诊断已完成。
+- 当前约束：正式策略结论仍应使用本地审核后的 active-source 数据；真实评估结果、上传文件、原文和 Qdrant 数据不提交。
+- 后续方向：扩展公开评测集、完善失败分类、继续拆分大文件，并根据实际 baseline 决定默认检索策略。

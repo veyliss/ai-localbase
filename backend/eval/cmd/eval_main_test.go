@@ -249,6 +249,35 @@ func TestBuildRunIDUsesCustomPrefix(t *testing.T) {
 	}
 }
 
+func TestBuildSummaryAnswerUsesEvidenceOnly(t *testing.T) {
+	chunks := []offline.RetrievedChunkInfo{
+		{DocumentID: "private-doc", ChunkID: "private-chunk", Score: 0.93, Text: "Qdrant 的 payload 可以存储能够表示为 JSON 的任意信息。"},
+	}
+
+	answer := buildSummaryAnswer("无关问题", chunks)
+	if !strings.Contains(answer, "payload") {
+		t.Fatalf("expected evidence text in fallback answer, got %q", answer)
+	}
+	for _, marker := range []string{"private-doc", "private-chunk", "0.9300", "..."} {
+		if strings.Contains(answer, marker) {
+			t.Fatalf("fallback answer should not contain evaluator metadata %q: %q", marker, answer)
+		}
+	}
+
+	faithfulness := offline.EvaluateFaithfulness(answer, chunks)
+	if !faithfulness.Evaluated || faithfulness.UnsupportedClaimCount != 0 {
+		t.Fatalf("expected evidence-only fallback to be fully supported, got %#v", faithfulness)
+	}
+}
+
+func TestBuildSummaryAnswerMarksMissingEvidenceAsAbstention(t *testing.T) {
+	answer := buildSummaryAnswer("无关问题", nil)
+	faithfulness := offline.EvaluateFaithfulness(answer, nil)
+	if faithfulness.Evaluated || faithfulness.ClaimCount != 0 || faithfulness.UnsupportedClaimCount != 0 {
+		t.Fatalf("expected missing-evidence fallback to be excluded from factual claims, got %#v", faithfulness)
+	}
+}
+
 func TestParseOptionalBool(t *testing.T) {
 	cases := map[string]bool{
 		"true":  true,

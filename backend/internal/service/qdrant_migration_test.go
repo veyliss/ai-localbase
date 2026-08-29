@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"ai-localbase/internal/model"
 )
@@ -178,5 +179,162 @@ func TestMigrateQdrantPayloadsRejectsCollectionsWithoutText(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "contains no text payloads") {
 		t.Fatalf("expected missing text payload error, got %v", err)
+	}
+}
+
+func TestMigrateQdrantPayloadsWithOptionsDryRunScansWithoutWriting(t *testing.T) {
+	var embeddingCalls, targetWrites int
+	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		embeddingCalls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(embeddingServer.Close)
+
+	qdrantServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/collections/target_") {
+			targetWrites++
+			t.Errorf("dry-run must not write target collection: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"points":[{"id":"row-1","payload":{"text":"姓名：成员甲","chunk_kind":"structured_row","index_version":2}},{"id":"empty","payload":{}}],"next_page_offset":null}}`))
+	}))
+	t.Cleanup(qdrantServer.Close)
+
+	config := model.ServerConfig{QdrantURL: qdrantServer.URL, QdrantVectorSize: 4, QdrantCollectionPrefix: "source_"}
+	options := DefaultQdrantMigrationOptions()
+	options.DryRun = true
+	options.RetryBackoff = time.Millisecond
+	result, err := MigrateQdrantPayloadsWithOptions(
+		t.Context(),
+		NewQdrantService(config),
+		NewQdrantService(func() model.ServerConfig { copy := config; copy.QdrantCollectionPrefix = "target_"; return copy }()),
+		NewRagService(),
+		model.EmbeddingModelConfig{Provider: "ollama", BaseURL: embeddingServer.URL, Model: "test-embedding"},
+		"kb-1",
+		options,
+	)
+	if err != nil {
+		t.Fatalf("dry-run migration: %v", err)
+	}
+	if result.Status != "dry_run" || result.SourcePointCount != 2 || result.TextPointCount != 1 || result.SkippedPointCount != 1 {
+		t.Fatalf("unexpected dry-run result: %+v", result)
+	}
+	if result.StructuredRowCount != 1 || result.IndexVersionCounts["2"] != 1 || result.IssueCounts["missing_text_payload"] != 1 {
+		t.Fatalf("expected structured/index diagnostics, got %+v", result)
+	}
+	if embeddingCalls != 0 || targetWrites != 0 {
+		t.Fatalf("dry-run performed writes: embeddings=%d targetWrites=%d", embeddingCalls, targetWrites)
+	}
+
+	// A dry-run is useful for auditing a legacy deployment before the target
+	// service or embedding endpoint has been configured, so neither dependency
+	// should be required during the scan-only path.
+	if _, err := MigrateQdrantPayloadsWithOptions(
+		t.Context(),
+		NewQdrantService(config),
+		nil,
+		nil,
+		model.EmbeddingModelConfig{},
+		"kb-1",
+		options,
+	); err != nil {
+		t.Fatalf("dry-run should not require target or embedding service: %v", err)
+	}
+}
+
+func TestMigrateQdrantPayloadsWithOptionsBatchesRetriesAndValidates(t *testing.T) {
+	embeddingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request ollamaEmbedRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode embedding request: %v", err)
+		}
+		vectors := make([][]float64, len(request.Input))
+		for index := range vectors {
+			vectors[index] = []float64{0.1, 0.2, 0.3, 0.4}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vectors})
+	}))
+	t.Cleanup(embeddingServer.Close)
+
+	var mu sync.Mutex
+	upsertAttempts := 0
+	upserted := make(map[string]string)
+	qdrantServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/source_kb-1/points/scroll":
+			_, _ = w.Write([]byte(`{"result":{"points":[{"id":"p-1","payload":{"text":"第一条","chunk_kind":"text"}},{"id":"p-2","payload":{"text":"第二条","chunk_kind":"structured_summary"}},{"id":"p-3","payload":{"text":"第三条","chunk_kind":"structured_row"}}],"next_page_offset":null}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/target_kb-1":
+			_, _ = w.Write([]byte(`{"result":true}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/target_kb-1/points":
+			mu.Lock()
+			upsertAttempts++
+			attempt := upsertAttempts
+			mu.Unlock()
+			if attempt == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"status":{"error":"temporary"}}`))
+				return
+			}
+			var request qdrantPointUpsertRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode upsert request: %v", err)
+			}
+			mu.Lock()
+			for _, point := range request.Points {
+				upserted[fmt.Sprint(point.ID)] = payloadString(point.Payload, "text", "")
+			}
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"result":true}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/target_kb-1/points/scroll":
+			mu.Lock()
+			points := make([]map[string]any, 0, len(upserted))
+			for id, text := range upserted {
+				points = append(points, map[string]any{"id": id, "payload": map[string]any{"text": text}})
+			}
+			mu.Unlock()
+			_, _ = json.Marshal(points)
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"points": points, "next_page_offset": nil}})
+		default:
+			t.Fatalf("unexpected qdrant request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(qdrantServer.Close)
+
+	base := model.ServerConfig{QdrantURL: qdrantServer.URL, QdrantVectorSize: 4}
+	sourceConfig := base
+	sourceConfig.QdrantCollectionPrefix = "source_"
+	targetConfig := base
+	targetConfig.QdrantCollectionPrefix = "target_"
+	options := DefaultQdrantMigrationOptions()
+	options.BatchSize = 2
+	options.MaxAttempts = 2
+	options.RetryBackoff = time.Millisecond
+
+	result, err := MigrateQdrantPayloadsWithOptions(
+		t.Context(),
+		NewQdrantService(sourceConfig),
+		NewQdrantService(targetConfig),
+		NewRagService(),
+		model.EmbeddingModelConfig{Provider: "ollama", BaseURL: embeddingServer.URL, Model: "test-embedding"},
+		"kb-1",
+		options,
+	)
+	if err != nil {
+		t.Fatalf("migrate with validation: %v", err)
+	}
+	if result.Status != "succeeded" || result.MigratedPointCount != 3 || result.BatchCount != 2 || result.ValidatedPointCount != 3 {
+		t.Fatalf("unexpected migration result: %+v", result)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if upsertAttempts != 3 {
+		t.Fatalf("expected one failed attempt plus two successful batches, got %d", upsertAttempts)
+	}
+	if len(upserted) != 3 {
+		t.Fatalf("expected three idempotent point IDs, got %d", len(upserted))
 	}
 }

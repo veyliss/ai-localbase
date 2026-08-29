@@ -44,18 +44,27 @@ type RetrievedChunkInfo struct {
 
 // AggregateMetrics 聚合后的评估指标
 type AggregateMetrics struct {
-	TotalCases                 int
-	AnswerableCases            int
-	NoAnswerCases              int
-	NoAnswerCorrectCases       int
-	NoAnswerAccuracy           float64
-	HitRate                    float64
-	DocumentHitRate            float64
-	ChunkHitRate               float64
-	AnswerSnippetHitRate       float64
-	DirectEvidenceHitRate      float64
-	FaithfulnessScore          float64
-	HallucinationRate          float64
+	TotalCases           int
+	AnswerableCases      int
+	NoAnswerCases        int
+	NoAnswerCorrectCases int
+	NoAnswerAccuracy     float64
+	HitRate              float64
+	DocumentHitRate      float64
+	ChunkHitRate         float64
+	// AnswerSnippetHitRate is a retrieval-layer rate: returned chunks contain
+	// one of the ground-truth answer snippets. It does not evaluate the LLM
+	// answer itself.
+	AnswerSnippetHitRate float64
+	// DirectEvidenceHitRate is a retrieval-layer rate: returned chunks match an
+	// annotated chunk or answer snippet.
+	DirectEvidenceHitRate float64
+	FaithfulnessScore     float64
+	// HallucinationRate is the answer-level rate of answers with at least one
+	// unsupported claim among answers with claims that can be evaluated.
+	HallucinationRate float64
+	// UnsupportedClaimRate is the claim-level ratio of unsupported claims over
+	// all evaluated claims, so it can differ from HallucinationRate.
 	UnsupportedClaimRate       float64
 	FaithfulnessEvaluatedCases int
 	UnsupportedAnswerCases     int

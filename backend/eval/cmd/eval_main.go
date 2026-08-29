@@ -832,22 +832,24 @@ func (r *realEvalRuntime) resolveKnowledgeBaseID(gtCase offline.GroundTruthCase)
 	return r.appService.ResolveKnowledgeBaseID("")
 }
 
-func buildSummaryAnswer(question string, chunks []offline.RetrievedChunkInfo) string {
+// buildSummaryAnswer is a deterministic retrieval-only fallback. Keep the
+// answer limited to evidence text so Faithfulness measures the retrieval
+// output instead of evaluator-generated IDs, scores, or truncation markers.
+func buildSummaryAnswer(_ string, chunks []offline.RetrievedChunkInfo) string {
 	if len(chunks) == 0 {
-		return fmt.Sprintf("基于检索上下文的摘要回答：问题“%s”未检索到可用上下文。", question)
+		return "未找到可用证据，无法基于当前资料回答。"
 	}
 
-	lines := make([]string, 0, minInt(len(chunks), 3)+1)
-	lines = append(lines, fmt.Sprintf("基于检索上下文的摘要回答：问题“%s”的相关内容如下。", question))
+	lines := make([]string, 0, minInt(len(chunks), 3))
 	for i, chunk := range chunks {
 		if i >= 3 {
 			break
 		}
 		text := strings.TrimSpace(chunk.Text)
-		if len([]rune(text)) > 180 {
-			text = string([]rune(text)[:180]) + "..."
+		if text == "" {
+			continue
 		}
-		lines = append(lines, fmt.Sprintf("%d. [doc=%s chunk=%s score=%.4f] %s", i+1, chunk.DocumentID, chunk.ChunkID, chunk.Score, text))
+		lines = append(lines, text)
 	}
 	return strings.Join(lines, "\n")
 }

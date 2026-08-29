@@ -582,5 +582,181 @@
     "difficulty": "medium",
     "notes": "公开官方文档事实；来源：https://www.tensorflow.org/guide/intro_to_graphs；fixture：ai-tech-facts.md#tensorflow-graph-execution；访问日期：2026-08-26；自动校验通过",
     "review_status": "approved"
+  },
+  {
+    "id": "case-36",
+    "question": "Qdrant 如何组合多个过滤条件？",
+    "answer": "Qdrant 可以使用 must、should 和 must_not 等子句组合过滤条件。",
+    "answer_snippets": ["must", "should", "must_not", "组合过滤条件"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/search/filtering/index.md；fixture：ai-tech-facts.md#qdrant-filter-clauses；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-37",
+    "question": "为什么 Qdrant 的向量检索还需要 payload 过滤？",
+    "answer": "当对象的全部特征无法用 embedding 表达时，Qdrant 可以通过 payload 条件补充过滤。",
+    "answer_snippets": ["全部特征无法用 embedding 表达", "payload 条件", "补充过滤"],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/search/filtering/index.md；fixture：ai-tech-facts.md#qdrant-filter-purpose；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-38",
+    "question": "Qdrant 的 payload index 主要解决什么问题？",
+    "answer": "Qdrant 的 payload index 用于加快符合过滤条件的点查询，并帮助查询规划估算过滤结果数量。",
+    "answer_snippets": ["payload index", "加快符合过滤条件的点查询", "查询规划估算过滤结果数量"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/manage-data/indexing/index.md；fixture：ai-tech-facts.md#qdrant-payload-index；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-39",
+    "question": "创建 Qdrant payload index 有什么资源代价？",
+    "answer": "创建 payload index 会额外消耗计算资源和内存，因此应谨慎选择需要索引的字段。",
+    "answer_snippets": ["额外消耗计算资源和内存", "谨慎选择需要索引的字段"],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://qdrant.tech/documentation/manage-data/indexing/index.md；fixture：ai-tech-facts.md#qdrant-payload-index-cost；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-40",
+    "question": "Transformers tokenizer 的主要职责是什么？",
+    "answer": "Tokenizer 负责为模型准备输入，将原始文本切分为 token，并将 token 转换为整数编码。",
+    "answer_snippets": ["为模型准备输入", "切分为 token", "转换为整数编码"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/main_classes/tokenizer；fixture：ai-tech-facts.md#transformers-tokenizer-responsibility；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-41",
+    "question": "Hugging Face 的 Fast tokenizer 相比普通 tokenizer 有什么特点？",
+    "answer": "Fast tokenizer 基于 Rust 的 Tokenizers 库，并且在批量分词时可以显著加速。",
+    "answer_snippets": ["基于 Rust 的 Tokenizers 库", "批量分词时可以显著加速"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/main_classes/tokenizer；fixture：ai-tech-facts.md#transformers-fast-tokenizer；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-42",
+    "question": "Tokenizer 能否把字符位置映射到 token？",
+    "answer": "Fast tokenizer 可以在原始字符位置和 token 空间之间进行映射。",
+    "answer_snippets": ["原始字符位置", "token 空间", "进行映射"],
+    "source_documents": [],
+    "answer_type": "yesno",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://huggingface.co/docs/transformers/main_classes/tokenizer；fixture：ai-tech-facts.md#transformers-tokenizer-mapping；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-43",
+    "question": "scikit-learn 的 train_test_split 用于什么？",
+    "answer": "train_test_split 用于将数组或矩阵随机拆分为训练子集和测试子集。",
+    "answer_snippets": ["数组或矩阵", "随机拆分", "训练子集和测试子集"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html；fixture：ai-tech-facts.md#sklearn-train-test-split；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-44",
+    "question": "train_test_split 的 random_state 参数有什么作用？",
+    "answer": "train_test_split 的 random_state 控制拆分前的数据打乱；传入整数可以让多次调用产生可复现的结果。",
+    "answer_snippets": ["random_state", "数据打乱", "可复现的结果"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html；fixture：ai-tech-facts.md#sklearn-random-state；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-45",
+    "question": "StandardScaler 如何标准化特征？",
+    "answer": "StandardScaler 通过移除均值并缩放到单位方差来标准化特征。",
+    "answer_snippets": ["移除均值", "缩放到单位方差", "标准化特征"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html；fixture：ai-tech-facts.md#sklearn-standard-scaler；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-46",
+    "question": "StandardScaler 会保存哪些训练统计量？",
+    "answer": "StandardScaler 会保存训练样本的均值和标准差，用于后续数据变换。",
+    "answer_snippets": ["训练样本的均值", "标准差", "后续数据变换"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html；fixture：ai-tech-facts.md#sklearn-standard-scaler-statistics；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-47",
+    "question": "PyTorch 的 torch.autograd 用来做什么？",
+    "answer": "PyTorch 的 torch.autograd 可以自动计算梯度。",
+    "answer_snippets": ["torch.autograd", "自动计算梯度"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html；fixture：ai-tech-facts.md#pytorch-autograd；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-48",
+    "question": "设置 requires_grad=True 会带来什么作用？",
+    "answer": "设置 requires_grad=True 的 Tensor 会被 autograd 跟踪其运算，以便进行梯度计算。",
+    "answer_snippets": ["requires_grad=True", "autograd", "梯度计算"],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html；fixture：ai-tech-facts.md#pytorch-requires-grad；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-49",
+    "question": "在 PyTorch 中如何触发反向传播？",
+    "answer": "在 PyTorch 中可以调用 loss.backward() 计算梯度。",
+    "answer_snippets": ["loss.backward()", "计算梯度"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html；fixture：ai-tech-facts.md#pytorch-backward；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-50",
+    "question": "TensorFlow Keras 的 Sequential 模型适合什么结构？",
+    "answer": "TensorFlow 的 Sequential 模型适合按顺序堆叠多个层、且每层只有一个输入张量和一个输出张量的结构。",
+    "answer_snippets": ["按顺序堆叠多个层", "一个输入张量", "一个输出张量"],
+    "source_documents": [],
+    "answer_type": "abstractive",
+    "difficulty": "medium",
+    "notes": "公开官方文档事实；来源：https://www.tensorflow.org/guide/keras/sequential_model；fixture：ai-tech-facts.md#tensorflow-sequential-structure；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
+  },
+  {
+    "id": "case-51",
+    "question": "如何配置一个 Keras Sequential 模型进行训练？",
+    "answer": "Keras Sequential 模型可以通过 compile 配置训练，再使用 fit 进行训练。",
+    "answer_snippets": ["compile 配置训练", "fit 进行训练"],
+    "source_documents": [],
+    "answer_type": "extractive",
+    "difficulty": "easy",
+    "notes": "公开官方文档事实；来源：https://www.tensorflow.org/guide/keras/sequential_model；fixture：ai-tech-facts.md#tensorflow-sequential-training；访问日期：2026-08-29；自动校验通过",
+    "review_status": "approved"
   }
 ]

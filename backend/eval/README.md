@@ -10,7 +10,7 @@
 - **报告输出**：生成 JSON 和 Markdown 格式报告
 - **CLI 入口**：命令行运行评估流程
 
-> 真实评测数据、评估结果和本地上传文件只允许在本机使用。`backend/eval/results/`、`backend/data/` 以及 `backend/eval/data/` 中除公开样本外的文件均已加入 Git 忽略规则，禁止提交、推送或上传。当前允许公开提交的回归样本是 `backend/eval/data/ground_truth_v1.small.json`，其中只包含公开合成事实和经过整理的官方技术文档短事实，不包含真实用户数据。
+> 真实评测数据、评估结果和本地上传文件只允许在本机使用。`backend/eval/results/`、`backend/data/` 以及 `backend/eval/data/` 中除公开样本外的文件均已加入 Git 忽略规则，禁止提交、推送或上传。当前允许公开提交的回归样本是 `backend/eval/data/ground_truth_v1.small.json`，目前包含 51 条审核通过样本；其中只包含公开合成事实和经过整理的官方技术文档短事实，不包含真实用户数据。
 
 ---
 

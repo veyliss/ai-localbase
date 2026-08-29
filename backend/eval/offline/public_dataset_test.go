@@ -35,12 +35,18 @@ func TestPublicGroundTruthDatasetIsCuratedAndRunnable(t *testing.T) {
 	if err := dataset.Validate(); err != nil {
 		t.Fatalf("validate public ground truth dataset: %v", err)
 	}
-	if len(dataset.Cases) < 18 {
-		t.Fatalf("expected the public regression corpus to cover at least 18 cases, got %d", len(dataset.Cases))
+	if len(dataset.Cases) < 50 {
+		t.Fatalf("expected the public regression corpus to cover at least 50 cases, got %d", len(dataset.Cases))
 	}
 
+	answerTypes := make(map[string]bool)
+	noAnswerCount := 0
 	for _, item := range dataset.Cases {
 		isNoAnswer := strings.EqualFold(strings.TrimSpace(item.AnswerType), "no_answer")
+		answerTypes[strings.ToLower(strings.TrimSpace(item.AnswerType))] = true
+		if isNoAnswer {
+			noAnswerCount++
+		}
 		if item.ReviewStatus != "approved" {
 			t.Errorf("case %s must be explicitly approved, got %q", item.ID, item.ReviewStatus)
 		}
@@ -52,6 +58,14 @@ func TestPublicGroundTruthDatasetIsCuratedAndRunnable(t *testing.T) {
 				t.Errorf("case %s answer does not contain answer snippet %q", item.ID, snippet)
 			}
 		}
+	}
+	for _, answerType := range []string{"extractive", "abstractive", "yesno", "numeric", "no_answer"} {
+		if !answerTypes[answerType] {
+			t.Errorf("public regression corpus must cover answer type %q", answerType)
+		}
+	}
+	if noAnswerCount < 2 {
+		t.Errorf("public regression corpus must include at least 2 no_answer cases, got %d", noAnswerCount)
 	}
 }
 

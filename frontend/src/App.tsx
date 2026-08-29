@@ -1,4 +1,6 @@
 import './App.css'
+import { createEmptyConversation, createId, normalizeChatMetadata } from './app/appHelpers'
+import { buildChatRequestBody } from './chat/chatRequest'
 import ChatArea from './components/ChatArea'
 import Sidebar from './components/Sidebar'
 import Login from './components/Login'
@@ -47,7 +49,6 @@ import {
   updateAppConfig,
   updateEvalDatasetItem,
 } from './services/api'
-import { filterDocumentCitationSources } from './components/chat/citationSources'
 import type {
   DocumentDetailResponse,
   EvalDatasetDetail,
@@ -69,6 +70,26 @@ export interface ChatMessageMetadata {
   fallbackStrategy?: string
   upstreamError?: string
   sources?: ChatSourceMetadata[]
+  citationSupport?: CitationSupportMetadata
+}
+
+export interface CitationClaimSupport {
+  text: string
+  supported: boolean
+  evidenceIds?: string[]
+  missingAnchors?: string[]
+  matchedTermCount: number
+  requiredTermCount: number
+}
+
+export interface CitationSupportMetadata {
+  status: 'supported' | 'partial' | 'unsupported' | 'abstained' | string
+  summary: string
+  claimCount: number
+  supportedClaimCount: number
+  coverage: number
+  issues?: string[]
+  claims?: CitationClaimSupport[]
 }
 
 export interface ChatSourceMetadata {
@@ -244,22 +265,8 @@ interface ChatCompletionResponse {
     fallbackStrategy?: string
     upstreamError?: string
     sources?: ChatSourceMetadata[]
+    citationSupport?: CitationSupportMetadata
   }
-}
-
-interface ChatRequestBody {
-  conversationId: string
-  model: string
-  think: boolean
-  knowledgeBaseId: string
-  documentId: string
-  retrievalMode: RetrievalConfig['defaultSearchMode']
-  config: ChatConfig
-  embedding: EmbeddingConfig
-  messages: Array<{
-    role: ChatMessage['role']
-    content: string
-  }>
 }
 
 interface StreamEventPayload {
@@ -342,14 +349,6 @@ const getUploadFilePath = (file: File) => {
 const getFileExtension = (fileName: string) => {
   const dotIndex = fileName.lastIndexOf('.')
   return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : ''
-}
-
-const createId = () => {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID()
-  }
-
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 const clampNumber = (value: unknown, fallback: number, min: number, max: number) => {
@@ -469,35 +468,6 @@ const normalizeAppConfig = (config: Partial<AppConfig>, fallback: AppConfig): Ap
       ),
       enableLowConfidenceBoost: Boolean(retrieval.enableLowConfidenceBoost),
     },
-  }
-}
-
-const normalizeChatMetadata = (metadata?: ChatCompletionResponse['metadata'] | ChatMessageMetadata) => {
-  if (!metadata) return undefined
-  const normalized: ChatMessageMetadata = {}
-  if (metadata.degraded !== undefined) normalized.degraded = metadata.degraded
-  if (metadata.fallbackStrategy) normalized.fallbackStrategy = metadata.fallbackStrategy
-  if (metadata.upstreamError) normalized.upstreamError = metadata.upstreamError
-  if (metadata.sources && metadata.sources.length > 0) {
-    const sources = filterDocumentCitationSources(metadata.sources)
-    if (sources.length > 0) normalized.sources = sources
-  }
-  return Object.keys(normalized).length > 0 ? normalized : undefined
-}
-
-const createEmptyConversation = (knowledgeBaseId = '', documentId = ''): Conversation => {
-  const now = new Date().toISOString()
-
-  return {
-    id: createId(),
-    title: '新的对话',
-    knowledgeBaseId,
-    documentId,
-    scopeVersion: 1,
-    createdAt: now,
-    updatedAt: now,
-    messages: [],
-    localOnly: true,
   }
 }
 
@@ -1813,7 +1783,7 @@ function AppContent() {
         ? chatModeSettings.thinkModel || config.chat.model
         : chatModeSettings.fastModel || config.chat.model
 
-    const requestBody: ChatRequestBody = {
+    const requestBody = buildChatRequestBody({
       conversationId,
       model: selectedChatModel,
       think: chatMode === 'think',
@@ -1825,11 +1795,8 @@ function AppContent() {
         model: selectedChatModel,
       },
       embedding: config.embedding,
-      messages: nextMessages.map((message) => ({
-        role: message.role,
-        content: message.content,
-      })),
-    }
+      messages: nextMessages,
+    })
 
     const isCurrentRequestActive = () => {
       const activeRequest = activeChatRequestRef.current

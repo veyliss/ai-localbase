@@ -1,6 +1,7 @@
 package offline
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,7 +60,7 @@ func TestPublicFixtureManifestMatchesGroundTruth(t *testing.T) {
 	manifestPath := filepath.Join("..", "fixtures", "public-v1", "manifest.json")
 	manifest, err := LoadFixtureManifest(manifestPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			t.Skipf("public fixture is not checked in; skipping local fixture validation: %s", manifestPath)
 		}
 		t.Fatalf("read public fixture manifest: %v", err)

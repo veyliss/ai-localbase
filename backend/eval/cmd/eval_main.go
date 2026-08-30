@@ -8,8 +8,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"ai-localbase/eval/offline"
 	"ai-localbase/eval/report"
@@ -51,7 +53,9 @@ func main() {
 		evalEmbeddingBaseURL           = flag.String("eval-embedding-base-url", "", "真实模式下覆盖评估请求使用的 Embedding Base URL")
 		evalChatBaseURL                = flag.String("eval-chat-base-url", "", "真实模式下覆盖评估请求使用的 Chat Base URL")
 		evalPathMap                    = flag.String("eval-path-map", "", "真实模式下临时映射 app-state 中的文档路径，格式 from=to，多个映射用逗号分隔")
+		evalFixtureManifest            = flag.String("eval-fixture-manifest", "auto", "评测 fixture manifest 路径；auto 会为 public-v1 数据集自动发现，none 表示关闭")
 		evalAllowMissingSources        = flag.Bool("eval-allow-missing-sources", false, "真实模式下允许数据集 source_documents 引用不存在的知识库或文档")
+		evalAllowFixtureMismatch       = flag.Bool("eval-allow-fixture-mismatch", false, "允许 fixture 与当前索引不一致并继续评估；结果会被标记为不可信")
 		includeDisabled                = flag.Bool("include-disabled", false, "包含 disabled 或 rejected 的评估用例；默认只运行启用样本")
 		evalConcurrency                = flag.Int("eval-concurrency", 1, "评估并发数；默认 1，适合真实模式逐步放大")
 	)
@@ -66,6 +70,23 @@ func main() {
 	}
 	if err := ds.Validate(); err != nil {
 		log.Fatalf("[eval] 数据集验证失败: %v", err)
+	}
+	fixtureManifestPath, err := resolveEvalFixtureManifestPath(*evalFixtureManifest, *dataset)
+	if err != nil {
+		log.Fatalf("[eval] 解析 fixture manifest 失败: %v", err)
+	}
+	var fixtureManifest *offline.FixtureManifest
+	if fixtureManifestPath != "" {
+		fixtureManifest, err = offline.LoadFixtureManifest(fixtureManifestPath)
+		if err != nil {
+			log.Fatalf("[eval] 加载 fixture manifest 失败: %v", err)
+		}
+		if err := fixtureManifest.ValidateDataset(fixtureManifestPath, ds); err != nil {
+			log.Fatalf("[eval] fixture manifest 与数据集不一致: %v", err)
+		}
+		log.Printf("[eval] 已加载 fixture manifest: %s (version=%s)", fixtureManifestPath, fixtureManifest.Version)
+	} else {
+		log.Printf("[eval] 未启用 fixture manifest 校验")
 	}
 	if !*includeDisabled {
 		before := len(ds.Cases)
@@ -107,12 +128,13 @@ func main() {
 			evalEmbeddingBaseURL:           *evalEmbeddingBaseURL,
 			evalChatBaseURL:                *evalChatBaseURL,
 			evalPathMap:                    *evalPathMap,
+			evalAllowFixtureMismatch:       *evalAllowFixtureMismatch,
 			evalAllowMissingSources:        *evalAllowMissingSources,
 		})
 		if err != nil {
 			log.Fatalf("[eval] 解析评估参数覆盖失败: %v", err)
 		}
-		runtime, err := newRealEvalRuntime(context.Background(), ds, *realLLM, overrides)
+		runtime, err := newRealEvalRuntime(context.Background(), ds, *realLLM, overrides, fixtureManifestPath, fixtureManifest)
 		if err != nil {
 			log.Fatalf("[eval] 初始化真实评估模式失败: %v", err)
 		}
@@ -198,6 +220,7 @@ type evalOverridesInput struct {
 	evalEmbeddingBaseURL           string
 	evalChatBaseURL                string
 	evalPathMap                    string
+	evalAllowFixtureMismatch       bool
 	evalAllowMissingSources        bool
 }
 
@@ -222,10 +245,11 @@ type evalOverrides struct {
 	evalEmbeddingBaseURL           string
 	evalChatBaseURL                string
 	evalPathMaps                   []evalPathMapRule
+	evalAllowFixtureMismatch       bool
 	evalAllowMissingSources        bool
 }
 
-func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool, overrides evalOverrides) (*realEvalRuntime, error) {
+func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool, overrides evalOverrides, fixtureManifestPath string, fixtureManifest *offline.FixtureManifest) (*realEvalRuntime, error) {
 	serverConfig := applyEvalOverrides(config.LoadServerConfig(), overrides)
 	if err := os.MkdirAll(serverConfig.UploadDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建上传目录失败: %w", err)
@@ -262,13 +286,6 @@ func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool, 
 	if len(loadedState.KnowledgeBases) == 0 {
 		return nil, fmt.Errorf("app-state 中不存在可用知识库: %s", serverConfig.StateFile)
 	}
-	if issues := validateEvalDatasetSources(ds, loadedState.KnowledgeBases, serverConfig.EvalKnowledgeBaseID); len(issues) > 0 {
-		formatted := formatEvalDatasetSourceIssues(issues, 12)
-		if !overrides.evalAllowMissingSources {
-			return nil, fmt.Errorf("评估数据集引用了当前 app-state 中不存在的来源，共 %d 处；请清理/重建数据集，或显式添加 -eval-allow-missing-sources 继续运行\n%s", len(issues), formatted)
-		}
-		log.Printf("[eval] 警告: 评估数据集存在 %d 处失效来源，已按 -eval-allow-missing-sources 继续运行\n%s", len(issues), formatted)
-	}
 
 	qdrantService := service.NewQdrantService(serverConfig)
 	if qdrantService == nil || !qdrantService.IsEnabled() {
@@ -278,6 +295,39 @@ func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool, 
 		return nil, fmt.Errorf("Qdrant 不可用 (%s): %w", serverConfig.QdrantURL, err)
 	}
 	log.Printf("[eval] qdrant connected: %s", serverConfig.QdrantURL)
+
+	var fixtureCaseIDs map[string]struct{}
+	if fixtureManifest != nil {
+		fixtureCaseIDs = evalFixtureCaseIDs(fixtureManifest)
+		fixtureCheck := inspectEvalFixtureIndex(ctx, fixtureManifestPath, fixtureManifest, ds, loadedState.KnowledgeBases, serverConfig.EvalKnowledgeBaseID, qdrantService)
+		if len(fixtureCheck.Issues) > 0 {
+			formatted := formatEvalFixtureIndexIssues(fixtureCheck.Issues, 16)
+			if !overrides.evalAllowFixtureMismatch {
+				return nil, fmt.Errorf("fixture 与当前索引不一致，共 %d 处；请使用同一份公开夹具重新上传并等待索引完成后再评估，或显式添加 -eval-allow-fixture-mismatch 继续（结果不可信）\n%s", len(fixtureCheck.Issues), formatted)
+			}
+			log.Printf("[eval] 警告: fixture 与当前索引存在 %d 处不一致，已按 -eval-allow-fixture-mismatch 继续（结果不可信）\n%s", len(fixtureCheck.Issues), formatted)
+		}
+		if fixtureCheck.KnowledgeBaseID != "" {
+			// A fixture can identify a document by checksum even when its
+			// upload-generated knowledge base/document IDs are unknown. Use the
+			// resolved knowledge base for every case in this run.
+			serverConfig.EvalKnowledgeBaseID = fixtureCheck.KnowledgeBaseID
+			log.Printf("[eval] fixture 解析到知识库: %s", fixtureCheck.KnowledgeBaseID)
+		}
+	}
+
+	// Fixture-backed cases are validated against the manifest document
+	// checksum and indexed payload above. Their source_documents may contain
+	// IDs from another upload, so do not reject those cases solely because the
+	// runtime-generated document ID changed. Non-fixture cases keep the strict
+	// app-state source validation below.
+	if issues := validateEvalDatasetSourcesExcluding(ds, loadedState.KnowledgeBases, serverConfig.EvalKnowledgeBaseID, fixtureCaseIDs); len(issues) > 0 {
+		formatted := formatEvalDatasetSourceIssues(issues, 12)
+		if !overrides.evalAllowMissingSources {
+			return nil, fmt.Errorf("评估数据集引用了当前 app-state 中不存在的来源，共 %d 处；请清理/重建数据集，或显式添加 -eval-allow-missing-sources 继续运行\n%s", len(issues), formatted)
+		}
+		log.Printf("[eval] 警告: 评估数据集存在 %d 处失效来源，已按 -eval-allow-missing-sources 继续运行\n%s", len(issues), formatted)
+	}
 
 	appService := service.NewAppService(qdrantService, stateStore, nil, serverConfig)
 	if _, err := appService.ResolveKnowledgeBaseID(""); err != nil {
@@ -322,6 +372,7 @@ func buildEvalOverrides(input evalOverridesInput) (evalOverrides, error) {
 		retrievalQueryRewriteVariants:  input.retrievalQueryRewriteVariants,
 		evalEmbeddingBaseURL:           strings.TrimSpace(input.evalEmbeddingBaseURL),
 		evalChatBaseURL:                strings.TrimSpace(input.evalChatBaseURL),
+		evalAllowFixtureMismatch:       input.evalAllowFixtureMismatch,
 		evalAllowMissingSources:        input.evalAllowMissingSources,
 	}
 
@@ -536,12 +587,19 @@ type evalDatasetSourceIssue struct {
 }
 
 func validateEvalDatasetSources(ds *offline.Dataset, knowledgeBases map[string]model.KnowledgeBase, evalKnowledgeBaseID string) []evalDatasetSourceIssue {
+	return validateEvalDatasetSourcesExcluding(ds, knowledgeBases, evalKnowledgeBaseID, nil)
+}
+
+func validateEvalDatasetSourcesExcluding(ds *offline.Dataset, knowledgeBases map[string]model.KnowledgeBase, evalKnowledgeBaseID string, excludedCaseIDs map[string]struct{}) []evalDatasetSourceIssue {
 	if ds == nil || len(knowledgeBases) == 0 {
 		return nil
 	}
 
 	issues := make([]evalDatasetSourceIssue, 0)
 	for _, gtCase := range ds.Cases {
+		if _, excluded := excludedCaseIDs[gtCase.ID]; excluded {
+			continue
+		}
 		for _, source := range gtCase.SourceDocuments {
 			documentID := strings.TrimSpace(source.DocumentID)
 			if documentID == "" {
@@ -645,6 +703,375 @@ func formatEvalDatasetSourceIssues(issues []evalDatasetSourceIssue, limit int) s
 			firstNonEmpty(issue.DocumentID, "<未指定>"),
 			issue.Reason,
 			question,
+		))
+	}
+	if remaining := len(issues) - limit; remaining > 0 {
+		lines = append(lines, fmt.Sprintf("- ... 还有 %d 处问题未展示", remaining))
+	}
+	return strings.Join(lines, "\n")
+}
+
+const autoEvalFixtureManifest = "auto"
+
+func resolveEvalFixtureManifestPath(requested, datasetPath string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		requested = autoEvalFixtureManifest
+	}
+	if strings.EqualFold(requested, "none") {
+		return "", nil
+	}
+	if !strings.EqualFold(requested, autoEvalFixtureManifest) {
+		path, err := filepath.Abs(requested)
+		if err != nil {
+			return "", fmt.Errorf("resolve fixture manifest path: %w", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("fixture manifest does not exist: %s", path)
+		}
+		return path, nil
+	}
+
+	baseName := strings.ToLower(filepath.Base(strings.TrimSpace(datasetPath)))
+	if baseName != "ground_truth_v1.small.json" && !strings.Contains(baseName, "public-v1") {
+		return "", nil
+	}
+	datasetAbsolute, err := filepath.Abs(datasetPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve dataset path: %w", err)
+	}
+	datasetDir := filepath.Dir(datasetAbsolute)
+	candidates := []string{
+		filepath.Join(datasetDir, "..", "fixtures", "public-v1", "manifest.json"),
+		filepath.Join(datasetDir, "..", "..", "fixtures", "public-v1", "manifest.json"),
+		filepath.Join("eval", "fixtures", "public-v1", "manifest.json"),
+		filepath.Join("backend", "eval", "fixtures", "public-v1", "manifest.json"),
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		candidate, err = filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		candidate = filepath.Clean(candidate)
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", nil
+}
+
+type evalFixtureIndexIssue struct {
+	CaseID          string
+	DocumentKey     string
+	KnowledgeBaseID string
+	DocumentID      string
+	Reason          string
+}
+
+type evalFixtureIndexCheck struct {
+	KnowledgeBaseID string
+	Issues          []evalFixtureIndexIssue
+}
+
+func evalFixtureCaseIDs(manifest *offline.FixtureManifest) map[string]struct{} {
+	if manifest == nil || len(manifest.Cases) == 0 {
+		return nil
+	}
+	caseIDs := make(map[string]struct{}, len(manifest.Cases))
+	for _, fixtureCase := range manifest.Cases {
+		if caseID := strings.TrimSpace(fixtureCase.ID); caseID != "" {
+			caseIDs[caseID] = struct{}{}
+		}
+	}
+	return caseIDs
+}
+
+type evalFixtureDocumentMatch struct {
+	KnowledgeBaseID string
+	Document        model.Document
+}
+
+func inspectEvalFixtureIndex(
+	ctx context.Context,
+	manifestPath string,
+	manifest *offline.FixtureManifest,
+	dataset *offline.Dataset,
+	knowledgeBases map[string]model.KnowledgeBase,
+	configuredKnowledgeBaseID string,
+	qdrant *service.QdrantService,
+) evalFixtureIndexCheck {
+	check := evalFixtureIndexCheck{}
+	if manifest == nil {
+		return check
+	}
+	addIssue := func(issue evalFixtureIndexIssue) {
+		check.Issues = append(check.Issues, issue)
+	}
+
+	kbIDs, err := evalFixtureKnowledgeBaseIDs(knowledgeBases, configuredKnowledgeBaseID)
+	if err != nil {
+		addIssue(evalFixtureIndexIssue{Reason: err.Error()})
+		return check
+	}
+	casesByID := make(map[string]offline.GroundTruthCase)
+	if dataset != nil {
+		casesByID = make(map[string]offline.GroundTruthCase, len(dataset.Cases))
+		for _, item := range dataset.Cases {
+			casesByID[item.ID] = item
+		}
+	}
+
+	for _, fixtureDocument := range manifest.Documents {
+		documentKey := strings.TrimSpace(fixtureDocument.DocumentKey)
+		fixturePath, err := manifest.ResolveDocumentPath(manifestPath, documentKey)
+		if err != nil {
+			addIssue(evalFixtureIndexIssue{DocumentKey: documentKey, Reason: err.Error()})
+			continue
+		}
+		expectedChecksum, err := offline.FileSHA256(fixturePath)
+		if err != nil {
+			addIssue(evalFixtureIndexIssue{DocumentKey: documentKey, Reason: fmt.Sprintf("无法读取 fixture 文件: %v", err)})
+			continue
+		}
+		if declaredChecksum := strings.TrimSpace(fixtureDocument.SHA256); declaredChecksum != "" && !strings.EqualFold(declaredChecksum, expectedChecksum) {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey: documentKey,
+				Reason:      "manifest 中的 SHA-256 与 fixture 文件不一致",
+			})
+			continue
+		}
+
+		expectedName := filepath.Base(filepath.FromSlash(strings.TrimSpace(fixtureDocument.Path)))
+		exactMatches, namedMatches := findEvalFixtureDocuments(kbIDs, knowledgeBases, expectedName, expectedChecksum)
+		if len(exactMatches) == 0 {
+			reason := "当前知识库不存在与 fixture 内容一致的已上传文档"
+			if len(namedMatches) > 0 {
+				reason = "同名文档内容版本与 fixture 不一致，需要重新上传或重建索引"
+			}
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: strings.TrimSpace(configuredKnowledgeBaseID),
+				Reason:          reason,
+			})
+			continue
+		}
+		if len(exactMatches) > 1 {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey: documentKey,
+				Reason:      fmt.Sprintf("fixture 内容在多个文档中出现，无法安全选择评估知识库（匹配数=%d）", len(exactMatches)),
+			})
+			continue
+		}
+
+		match := exactMatches[0]
+		if check.KnowledgeBaseID == "" {
+			check.KnowledgeBaseID = match.KnowledgeBaseID
+		} else if check.KnowledgeBaseID != match.KnowledgeBaseID {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: match.KnowledgeBaseID,
+				DocumentID:      match.Document.ID,
+				Reason:          "manifest 中的多个 fixture 文档不属于同一个知识库",
+			})
+			continue
+		}
+
+		document := match.Document
+		if !strings.EqualFold(strings.TrimSpace(document.Status), "indexed") {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: match.KnowledgeBaseID,
+				DocumentID:      document.ID,
+				Reason:          fmt.Sprintf("文档尚未处于 indexed 状态（当前=%s）", firstNonEmpty(document.Status, "unknown")),
+			})
+		}
+		if document.IndexVersion <= 0 {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: match.KnowledgeBaseID,
+				DocumentID:      document.ID,
+				Reason:          "文档没有有效的索引版本",
+			})
+		}
+
+		points, err := qdrant.ScrollPointPayloadsByFilter(ctx, match.KnowledgeBaseID, evalFixtureDocumentFilter(document.ID))
+		if err != nil {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: match.KnowledgeBaseID,
+				DocumentID:      document.ID,
+				Reason:          fmt.Sprintf("读取 Qdrant 索引点失败: %v", err),
+			})
+			continue
+		}
+		if len(points) == 0 {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: match.KnowledgeBaseID,
+				DocumentID:      document.ID,
+				Reason:          "文档状态显示已索引，但 Qdrant 中没有对应索引点",
+			})
+			continue
+		}
+		if document.ChunkCount > 0 && len(points) != document.ChunkCount {
+			addIssue(evalFixtureIndexIssue{
+				DocumentKey:     documentKey,
+				KnowledgeBaseID: match.KnowledgeBaseID,
+				DocumentID:      document.ID,
+				Reason:          fmt.Sprintf("Qdrant 点数量与文档 Chunk 数不一致（文档=%d，Qdrant=%d）", document.ChunkCount, len(points)),
+			})
+		}
+
+		indexedText := evalFixtureIndexedText(points)
+		for _, fixtureCase := range manifest.Cases {
+			if strings.TrimSpace(fixtureCase.DocumentKey) != documentKey || strings.TrimSpace(fixtureCase.Section) == "no-source" {
+				continue
+			}
+			gtCase, ok := casesByID[fixtureCase.ID]
+			if !ok || offline.IsNoAnswerCase(gtCase) {
+				continue
+			}
+			if !evalFixtureEvidenceContains(indexedText, gtCase) {
+				addIssue(evalFixtureIndexIssue{
+					CaseID:          fixtureCase.ID,
+					DocumentKey:     documentKey,
+					KnowledgeBaseID: match.KnowledgeBaseID,
+					DocumentID:      document.ID,
+					Reason:          "Qdrant 索引点中没有覆盖该用例的完整答案或全部答案片段",
+				})
+			}
+		}
+	}
+	return check
+}
+
+func evalFixtureKnowledgeBaseIDs(knowledgeBases map[string]model.KnowledgeBase, configured string) ([]string, error) {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		resolved, ok := resolveKnowledgeBaseIDInState(knowledgeBases, configured)
+		if !ok {
+			return nil, fmt.Errorf("评估知识库不存在: %s", configured)
+		}
+		return []string{resolved}, nil
+	}
+	if len(knowledgeBases) == 0 {
+		return nil, fmt.Errorf("当前 app-state 没有知识库")
+	}
+	ids := make([]string, 0, len(knowledgeBases))
+	for id := range knowledgeBases {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func findEvalFixtureDocuments(kbIDs []string, knowledgeBases map[string]model.KnowledgeBase, expectedName, expectedChecksum string) ([]evalFixtureDocumentMatch, []evalFixtureDocumentMatch) {
+	exactMatches := make([]evalFixtureDocumentMatch, 0)
+	namedMatches := make([]evalFixtureDocumentMatch, 0)
+	for _, knowledgeBaseID := range kbIDs {
+		knowledgeBase, ok := knowledgeBases[knowledgeBaseID]
+		if !ok {
+			continue
+		}
+		for _, document := range knowledgeBase.Documents {
+			nameMatches := strings.EqualFold(strings.TrimSpace(document.Name), strings.TrimSpace(expectedName))
+			checksum := strings.TrimSpace(document.Checksum)
+			if checksum == "" && strings.TrimSpace(document.Path) != "" {
+				if calculated, err := offline.FileSHA256(document.Path); err == nil {
+					checksum = calculated
+				}
+			}
+			match := evalFixtureDocumentMatch{KnowledgeBaseID: knowledgeBaseID, Document: document}
+			if nameMatches {
+				namedMatches = append(namedMatches, match)
+			}
+			if checksum != "" && strings.EqualFold(checksum, expectedChecksum) {
+				exactMatches = append(exactMatches, match)
+			}
+		}
+	}
+	return exactMatches, namedMatches
+}
+
+func evalFixtureDocumentFilter(documentID string) map[string]any {
+	return map[string]any{
+		"must": []map[string]any{{
+			"key":   "document_id",
+			"match": map[string]any{"value": documentID},
+		}},
+	}
+}
+
+func evalFixtureIndexedText(points []service.QdrantStoredPoint) string {
+	texts := make([]string, 0, len(points))
+	for _, point := range points {
+		text, ok := point.Payload["text"].(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			continue
+		}
+		texts = append(texts, text)
+	}
+	return strings.Join(texts, "\n")
+}
+
+func evalFixtureEvidenceContains(indexedText string, gtCase offline.GroundTruthCase) bool {
+	indexedText = normalizeFixtureComparisonText(indexedText)
+	if indexedText == "" {
+		return false
+	}
+	if answer := normalizeFixtureComparisonText(gtCase.Answer); answer != "" && strings.Contains(indexedText, answer) {
+		return true
+	}
+	if len(gtCase.AnswerSnippets) == 0 {
+		return false
+	}
+	for _, snippet := range gtCase.AnswerSnippets {
+		normalizedSnippet := normalizeFixtureComparisonText(snippet)
+		if normalizedSnippet == "" || !strings.Contains(indexedText, normalizedSnippet) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeFixtureComparisonText(value string) string {
+	var builder strings.Builder
+	pendingSpace := false
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			pendingSpace = builder.Len() > 0
+			continue
+		}
+		if pendingSpace {
+			builder.WriteRune(' ')
+			pendingSpace = false
+		}
+		builder.WriteRune(unicode.ToLower(r))
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+func formatEvalFixtureIndexIssues(issues []evalFixtureIndexIssue, limit int) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	if limit <= 0 || limit > len(issues) {
+		limit = len(issues)
+	}
+	lines := make([]string, 0, limit+1)
+	for i := 0; i < limit; i++ {
+		issue := issues[i]
+		lines = append(lines, fmt.Sprintf("- case=%s fixture=%s kb=%s doc=%s reason=%s",
+			firstNonEmpty(issue.CaseID, "<document>"),
+			firstNonEmpty(issue.DocumentKey, "<unknown>"),
+			firstNonEmpty(issue.KnowledgeBaseID, "<未指定>"),
+			firstNonEmpty(issue.DocumentID, "<未指定>"),
+			issue.Reason,
 		))
 	}
 	if remaining := len(issues) - limit; remaining > 0 {

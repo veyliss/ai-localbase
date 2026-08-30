@@ -188,6 +188,36 @@ func TestValidateEvalDatasetSourcesUsesOverrideKnowledgeBase(t *testing.T) {
 	}
 }
 
+func TestValidateEvalDatasetSourcesExcludesFixtureCases(t *testing.T) {
+	knowledgeBases := map[string]model.KnowledgeBase{
+		"kb-current": {
+			ID:        "kb-current",
+			Documents: []model.Document{{ID: "doc-current"}},
+		},
+	}
+	ds := &offline.Dataset{Cases: []offline.GroundTruthCase{
+		{
+			ID: "fixture-case",
+			SourceDocuments: []offline.SourceDocument{{
+				KnowledgeBaseID: "kb-old",
+				DocumentID:      "doc-upload-from-another-run",
+			}},
+		},
+		{
+			ID: "regular-case",
+			SourceDocuments: []offline.SourceDocument{{
+				KnowledgeBaseID: "kb-current",
+				DocumentID:      "doc-stale",
+			}},
+		},
+	}}
+
+	issues := validateEvalDatasetSourcesExcluding(ds, knowledgeBases, "kb-current", map[string]struct{}{"fixture-case": {}})
+	if len(issues) != 1 || issues[0].CaseID != "regular-case" {
+		t.Fatalf("expected only non-fixture source issue, got %#v", issues)
+	}
+}
+
 func TestApplyEvalOverrides(t *testing.T) {
 	serverConfig := applyEvalOverrides(model.ServerConfig{
 		EvalKnowledgeBaseID:            "kb-default",

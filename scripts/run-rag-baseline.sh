@@ -31,10 +31,39 @@ common_args=(
   -output "$output_dir"
   -mock=false
   -eval-kb-id "$knowledge_base_id"
-  -eval-path-map /app=.
+  -eval-path-map "${EVAL_PATH_MAP:-/app=.}"
   -eval-allow-missing-sources=false
   -run-prefix baseline
 )
+
+# app-state usually stores the URL visible from the backend container. This
+# wrapper runs on the host, so callers can provide host-visible endpoints
+# without modifying the saved application configuration.
+if [[ -n "${EVAL_EMBEDDING_BASE_URL:-}" ]]; then
+  common_args+=(-eval-embedding-base-url "$EVAL_EMBEDDING_BASE_URL")
+fi
+if [[ -n "${EVAL_CHAT_BASE_URL:-}" ]]; then
+  common_args+=(-eval-chat-base-url "$EVAL_CHAT_BASE_URL")
+fi
+
+fixture_manifest=${EVAL_FIXTURE_MANIFEST:-}
+if [[ -z "$fixture_manifest" && -f "$repo_root/backend/eval/fixtures/public-v1/manifest.json" ]]; then
+  fixture_manifest="$repo_root/backend/eval/fixtures/public-v1/manifest.json"
+fi
+if [[ -n "$fixture_manifest" && "$fixture_manifest" != /* ]]; then
+  if [[ -f "$repo_root/$fixture_manifest" ]]; then
+    fixture_manifest="$repo_root/$fixture_manifest"
+  elif [[ -f "$repo_root/backend/$fixture_manifest" ]]; then
+    fixture_manifest="$repo_root/backend/$fixture_manifest"
+  fi
+fi
+if [[ -n "$fixture_manifest" && ! -f "$fixture_manifest" ]]; then
+  printf 'fixture manifest 不存在: %s\n' "$fixture_manifest" >&2
+  exit 1
+fi
+if [[ -n "$fixture_manifest" ]]; then
+  common_args+=(-eval-fixture-manifest "$fixture_manifest")
+fi
 
 run_strategy() {
   local label=$1

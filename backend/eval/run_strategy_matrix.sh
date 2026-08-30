@@ -24,6 +24,8 @@ if [[ -n "${EVAL_KB_ID:-}" ]]; then common_args+=(-eval-kb-id "$EVAL_KB_ID"); fi
 if [[ -n "${EVAL_EMBEDDING_BASE_URL:-}" ]]; then common_args+=(-eval-embedding-base-url "$EVAL_EMBEDDING_BASE_URL"); fi
 if [[ -n "${EVAL_CHAT_BASE_URL:-}" ]]; then common_args+=(-eval-chat-base-url "$EVAL_CHAT_BASE_URL"); fi
 if [[ -n "${EVAL_PATH_MAP:-}" ]]; then common_args+=(-eval-path-map "$EVAL_PATH_MAP"); fi
+if [[ -n "${EVAL_FIXTURE_MANIFEST:-}" ]]; then common_args+=(-eval-fixture-manifest "$EVAL_FIXTURE_MANIFEST"); fi
+if [[ -n "${EVAL_ALLOW_FIXTURE_MISMATCH:-}" ]]; then common_args+=(-eval-allow-fixture-mismatch "$EVAL_ALLOW_FIXTURE_MISMATCH"); fi
 
 run_strategy() {
   local label=$1

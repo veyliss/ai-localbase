@@ -272,6 +272,19 @@ go run ./eval/cmd/recommend_strategy \
 
 推荐器默认要求 Hit Rate、MRR、Faithfulness、直接证据命中率不下降，未支撑答案/陈述率和错误数不增加，检索与生成 P95 不超过 baseline 的 130%。没有候选通过时继续使用 baseline，不会自动修改生产配置。
 
+宿主机直接运行根目录的 baseline 包装脚本时，也可以通过环境变量覆盖容器内地址。尤其是 Docker 后端的 app-state 可能保存了 `http://host.docker.internal:11434`，该地址适用于容器，不一定能被宿主机上的 Go 评测进程访问：
+
+```bash
+EVAL_EMBEDDING_BASE_URL=http://localhost:11434 \
+EVAL_CHAT_BASE_URL=http://localhost:11434 \
+./scripts/run-rag-baseline.sh \
+  eval/data/ground_truth_v1.small.json \
+  kb-xxx \
+  eval/results/local-baseline
+```
+
+其中 `EVAL_EMBEDDING_BASE_URL` 用于查询向量化；启用查询改写或真实 LLM 生成时，再设置 `EVAL_CHAT_BASE_URL`。两个变量只覆盖本次评测请求，不会修改 `.env`、app-state、知识库文档或索引。`EVAL_FIXTURE_MANIFEST` 可写项目根目录相对路径、backend 相对路径或绝对路径。脚本仍会默认启用 fixture 预检：如果公开 fixture 与当前知识库内容、索引状态或 Qdrant 点不一致，会在评测开始前停止，避免把连接问题、旧索引和数据缺失误读为模型准确率。
+
 ### Qdrant 索引迁移
 
 `migrate_qdrant_vectors` 用于把旧 collection 中的文本 payload 重新生成 dense + sparse 向量并写入新 collection。迁移会复用原 point ID 和 payload，支持 dry-run、分批处理、失败重试以及迁移后的 ID/文本校验；命令输出仅包含统计和错误码，不输出文档正文。
@@ -348,6 +361,7 @@ go run ./eval/cmd/ \
   -retrieval-search-mode hybrid \
   -retrieval-rerank-strategy keyword \
   -retrieval-query-rewrite false \
+  -eval-fixture-manifest eval/fixtures/public-v1/manifest.json \
   -run-prefix baseline \
   -run-label dense-only
 ```
@@ -378,10 +392,14 @@ go run ./eval/cmd/ \
 | `-eval-embedding-base-url` | 空 | 覆盖评估请求使用的 Embedding Base URL，适合宿主机与 Docker 地址不一致时使用 |
 | `-eval-chat-base-url` | 空 | 覆盖评估请求使用的 Chat Base URL，适合 Query Rewrite 或真实 LLM 评估 |
 | `-eval-path-map` | 空 | 临时映射 app-state 中的文档路径，例如 Docker dev 中宿主机运行可用 `/app=.` |
+| `-eval-fixture-manifest` | `auto` | 校验 fixture 版本、SHA-256、索引状态、Qdrant 点数量和答案覆盖；`auto` 仅对 public-v1 数据集自动发现，`none` 关闭 |
 | `-eval-allow-missing-sources` | `false` | 允许 `source_documents` 引用当前 app-state 中不存在的知识库或文档；只建议兼容旧数据时使用 |
+| `-eval-allow-fixture-mismatch` | `false` | 允许 fixture 与当前索引不一致并继续运行；只用于诊断，报告结果不可信 |
 | `-eval-concurrency` | `1` | 评估用例并发数；默认串行，真实模式建议从 2 开始逐步验证服务承载能力 |
 
-真实模式会在运行前校验数据集的 `source_documents` 是否仍存在于当前 app-state。若发现失效来源，默认直接停止并列出问题用例，避免把脏评估集误判为检索召回下降。确认要兼容历史数据时，再显式添加 `-eval-allow-missing-sources`。
+真实模式会在运行前校验数据集的 `source_documents` 是否仍存在于当前 app-state。启用 fixture manifest 时，还会校验 fixture 文件与当前上传文档的 SHA-256、文档索引状态、Qdrant 点数量以及评测答案是否实际进入索引。任一检查失败时默认直接停止，避免把过期索引或缺失数据误判为检索召回下降；只有诊断历史状态时才使用 `-eval-allow-fixture-mismatch`，此时结果必须视为不可信。
+
+fixture 校验只读取本地公开夹具和已启动服务，不会上传文件、修改用户文档或写入 Git。公开夹具目录被 `.gitignore` 忽略，运行结果也只保存在本地 `eval/results/`。
 
 ### 当前版本 Baseline 策略矩阵
 

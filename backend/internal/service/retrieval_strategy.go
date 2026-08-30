@@ -678,6 +678,9 @@ const (
 	retrievalEvidenceCoverageThreshold  = 0.16
 	retrievalSemanticOnlyScoreThreshold = 0.78
 	retrievalSemanticScoreMargin        = 0.08
+	// 属性命中与问题限定词命中即可构成直接证据。实体名可能位于
+	// 上一段标题、相邻 Chunk 或文档元数据中，不能把实体重复出现作为硬要求。
+	retrievalFactEvidenceScoreThreshold = 4
 )
 
 type evidenceGateStats struct {
@@ -731,7 +734,7 @@ func applyEvidenceGateWithStats(query string, chunks []RetrievedChunk) ([]Retrie
 		if isFactQuery {
 			// 事实型问题必须在片段中找到所问属性（或可靠别名）。
 			// 这样可以阻止“同主题但缺少目标字段”的高分片段进入回答上下文。
-			direct = factEvidenceScore(query, chunk) >= 5
+			direct = factEvidenceScore(query, chunk) >= retrievalFactEvidenceScoreThreshold
 		} else {
 			direct = hits >= 2 || coverage >= retrievalEvidenceCoverageThreshold
 		}

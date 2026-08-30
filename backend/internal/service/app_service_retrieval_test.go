@@ -619,6 +619,48 @@ func TestApplyEvidenceGateNormalizesTechnicalQuestionLeadIn(t *testing.T) {
 	}
 }
 
+func TestApplyEvidenceGateKeepsFactEvidenceWhenSubjectIsInHeading(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		evidence  string
+		unrelated string
+	}{
+		{
+			name:      "why question with predicate evidence",
+			query:     "为什么 Qdrant 的向量检索还需要 payload 过滤？",
+			evidence:  "过滤条件的作用是：当对象的全部特征无法用 embedding 表达时，可以通过 payload 条件补充过滤。",
+			unrelated: "Qdrant collection 是一组带有向量和 payload 的命名集合，可以在其中进行搜索。",
+		},
+		{
+			name:      "resource cost with predicate evidence",
+			query:     "Qdrant 的 payload index 有什么资源代价？",
+			evidence:  "payload index 会额外消耗计算资源和内存，因此应谨慎选择需要索引的字段。",
+			unrelated: "Qdrant 的 payload 可以存储能够表示为 JSON 的任意信息。",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered, stats := applyEvidenceGateWithStats(tt.query, []RetrievedChunk{
+				{
+					DocumentChunk: DocumentChunk{DocumentID: "doc-evidence", Text: tt.evidence},
+					Score:         0.35,
+					RawScore:      0.30,
+				},
+				{
+					DocumentChunk: DocumentChunk{DocumentID: "doc-unrelated", Text: tt.unrelated},
+					Score:         0.96,
+					RawScore:      0.95,
+				},
+			})
+			if len(filtered) != 1 || filtered[0].DocumentID != "doc-evidence" {
+				t.Fatalf("expected attribute and predicate evidence to survive without repeated subject, filtered=%#v stats=%#v", filtered, stats)
+			}
+		})
+	}
+}
+
 func TestRetrievalDebugVerboseKeepsMMRCountSeparateFromEvidenceGate(t *testing.T) {
 	details := &model.RetrievalDebugVerboseDetails{
 		AfterMMRCount:          6,

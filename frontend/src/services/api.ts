@@ -347,6 +347,47 @@ export interface RetrievalDebugConfidence {
   evidenceCoverage: number
 }
 
+export interface MMREffectAnalysis {
+  removedDuplicates: number
+  reorderedItems: number
+  diversityScore: number
+  beforeMMR?: RetrievalDebugChunk[]
+  afterMMR?: RetrievalDebugChunk[]
+  rankingChanges?: Array<{
+    chunkId: string
+    documentName: string
+    beforeRank: number
+    afterRank: number
+    scoreBefore: number
+    scoreAfter: number
+  }>
+}
+
+export interface QueryRewriteDebugDetails {
+  originalQuery: string
+  rewrittenQueries: string[]
+  rewriteMs: number
+  totalQueries: number
+  hitsPerQuery?: number[]
+}
+
+export interface RetrievalDebugVerboseDetails {
+  queryEmbeddingMs: number
+  vectorSearchMs: number
+  rerankMs: number
+  mmrMs: number
+  candidatesCount: number
+  afterRerankCount: number
+  afterMMRCount: number
+  afterEvidenceGateCount: number
+  topCandidates?: RetrievalDebugChunk[]
+  topAfterRerank?: RetrievalDebugChunk[]
+  topAfterMMR?: RetrievalDebugChunk[]
+  topAfterEvidenceGate?: RetrievalDebugChunk[]
+  mmrEffect?: MMREffectAnalysis
+  queryRewriteDetails?: QueryRewriteDebugDetails
+}
+
 export interface EvalGroundTruthCase {
   id: string
   question: string
@@ -390,6 +431,7 @@ export interface RetrievalDebugResponse {
   evalCandidate?: EvalGroundTruthCase
   trace?: RetrievalDebugTraceStep[]
   items: RetrievalDebugChunk[]
+  verboseDetails?: RetrievalDebugVerboseDetails
 }
 
 export type RetrievalSearchMode = 'auto' | 'dense' | 'hybrid'
@@ -1081,7 +1123,13 @@ export const debugKnowledgeBaseRetrieval = async (
 ): Promise<RetrievalDebugResponse> => (
   requestJson<RetrievalDebugResponse>(
     `/api/knowledge-bases/${knowledgeBaseId}/retrieval/debug`,
-    jsonRequest({ query, documentId: documentId ?? '', topK: 12, searchMode }, { method: 'POST' }),
+    jsonRequest({
+      query,
+      documentId: documentId ?? '',
+      topK: 12,
+      searchMode,
+      verbose: true,
+    }, { method: 'POST' }),
   )
 )
 

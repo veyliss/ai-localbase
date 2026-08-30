@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import MarkdownMermaid from './MarkdownMermaid'
+
+const MarkdownMermaid = lazy(() => import('./MarkdownMermaid'))
 
 interface MarkdownRendererViewProps {
   content: string
@@ -22,7 +23,11 @@ const MarkdownRendererView: React.FC<MarkdownRendererViewProps> = ({
         const codeContent = String(children).replace(/\n$/, '')
 
         if (!isInline && className?.includes('language-mermaid')) {
-          return <MarkdownMermaid chart={codeContent} />
+          return (
+            <Suspense fallback={<div className="md-mermaid-loading">流程图渲染中...</div>}>
+              <MarkdownMermaid chart={codeContent} />
+            </Suspense>
+          )
         }
 
         if (!isInline && className?.includes('language-advice-cards') && AdviceCardBlock) {

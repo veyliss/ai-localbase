@@ -97,6 +97,10 @@ const formatDiagnosticPercent = (value?: number) => (
   typeof value === 'number' && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-'
 )
 
+const formatDiagnosticMs = (value?: number) => (
+  typeof value === 'number' && Number.isFinite(value) ? `${value} ms` : '-'
+)
+
 const highlightMatches = (text: string, query: string) => {
   const term = query.trim()
   if (term.length < 2) return text
@@ -275,6 +279,82 @@ const RetrievalDebugPanel: React.FC<RetrievalDebugPanelProps> = ({
         <details className="kb-retrieval-advanced">
           <summary>查看高级诊断</summary>
           <div className="kb-retrieval-advanced-body">
+            {result.verboseDetails && (
+              <section className="kb-retrieval-verbose">
+                <div className="kb-retrieval-verbose-head">
+                  <div>
+                    <h4>检索链路</h4>
+                    <p>用阶段数量和耗时定位命中率问题发生在召回、排序还是证据过滤。</p>
+                  </div>
+                  <span>
+                    {result.verboseDetails.candidatesCount} 候选 → {result.verboseDetails.afterEvidenceGateCount} 条最终证据
+                  </span>
+                </div>
+
+                <div className="kb-retrieval-verbose-table" role="table" aria-label="检索阶段统计">
+                  <div className="kb-retrieval-verbose-row kb-retrieval-verbose-row--header" role="row">
+                    <span role="columnheader">阶段</span>
+                    <span role="columnheader">数量</span>
+                    <span role="columnheader">耗时</span>
+                  </div>
+                  {[
+                    ['候选召回', result.verboseDetails.candidatesCount, result.verboseDetails.vectorSearchMs],
+                    ['候选重排', result.verboseDetails.afterRerankCount, result.verboseDetails.rerankMs],
+                    ['MMR 选择', result.verboseDetails.afterMMRCount, result.verboseDetails.mmrMs],
+                    ['证据门控', result.verboseDetails.afterEvidenceGateCount, undefined],
+                  ].map(([label, count, elapsed]) => (
+                    <div className="kb-retrieval-verbose-row" key={String(label)} role="row">
+                      <span role="cell">{label}</span>
+                      <strong role="cell">{count}</strong>
+                      <span role="cell">{formatDiagnosticMs(elapsed as number | undefined)}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="kb-retrieval-verbose-timings" aria-label="检索耗时明细">
+                  <span>问题向量化 {formatDiagnosticMs(result.verboseDetails.queryEmbeddingMs)}</span>
+                  <span>候选检索 {formatDiagnosticMs(result.verboseDetails.vectorSearchMs)}</span>
+                  <span>候选重排 {formatDiagnosticMs(result.verboseDetails.rerankMs)}</span>
+                  <span>MMR {formatDiagnosticMs(result.verboseDetails.mmrMs)}</span>
+                </div>
+
+                {result.verboseDetails.queryRewriteDetails && (
+                  <div className="kb-retrieval-verbose-block">
+                    <h5>查询改写</h5>
+                    <p>原始问题：{result.verboseDetails.queryRewriteDetails.originalQuery}</p>
+                    <div className="kb-retrieval-verbose-list">
+                      {result.verboseDetails.queryRewriteDetails.rewrittenQueries.map((rewrittenQuery, index) => (
+                        <span key={`${rewrittenQuery}-${index}`}>{rewrittenQuery}</span>
+                      ))}
+                    </div>
+                    <small>
+                      共 {result.verboseDetails.queryRewriteDetails.totalQueries} 个查询 · 改写耗时 {formatDiagnosticMs(result.verboseDetails.queryRewriteDetails.rewriteMs)}
+                    </small>
+                  </div>
+                )}
+
+                {result.verboseDetails.mmrEffect && (
+                  <div className="kb-retrieval-verbose-block">
+                    <h5>MMR 摘要</h5>
+                    <div className="kb-retrieval-verbose-list">
+                      <span>移除/裁剪 {result.verboseDetails.mmrEffect.removedDuplicates}</span>
+                      <span>调整顺序 {result.verboseDetails.mmrEffect.reorderedItems}</span>
+                      <span>多样性 {formatDiagnosticPercent(result.verboseDetails.mmrEffect.diversityScore)}</span>
+                    </div>
+                    {result.verboseDetails.mmrEffect.rankingChanges && result.verboseDetails.mmrEffect.rankingChanges.length > 0 && (
+                      <ul className="kb-retrieval-ranking-changes">
+                        {result.verboseDetails.mmrEffect.rankingChanges.slice(0, 5).map((change) => (
+                          <li key={change.chunkId}>
+                            {change.documentName}：#{change.beforeRank} → #{change.afterRank}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
             <section>
               <h4>召回贡献</h4>
               <div className="kb-retrieval-contribution-list">

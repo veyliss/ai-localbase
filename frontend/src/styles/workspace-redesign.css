@@ -4032,6 +4032,106 @@ body,
   padding: 4px 0 6px;
 }
 
+.knowledge-workspace-page .kb-retrieval-verbose {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-head > span {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-table {
+  display: grid;
+  border-top: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--border-subtle);
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 90px;
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-row--header {
+  min-height: 28px;
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  font-weight: 650;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-row strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-timings,
+.knowledge-workspace-page .kb-retrieval-verbose-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-timings span,
+.knowledge-workspace-page .kb-retrieval-verbose-list span {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-block {
+  display: grid;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-block h5 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-block p,
+.knowledge-workspace-page .kb-retrieval-verbose-block small {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.knowledge-workspace-page .kb-retrieval-verbose-block small {
+  color: var(--text-tertiary);
+}
+
+.knowledge-workspace-page .kb-retrieval-ranking-changes {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
 .knowledge-workspace-page .kb-retrieval-advanced-body section {
   display: grid;
   gap: 7px;
@@ -5773,6 +5873,21 @@ body,
 
   .knowledge-workspace-page .kb-retrieval-confidence-metrics {
     flex-wrap: wrap;
+  }
+
+  .knowledge-workspace-page .kb-retrieval-verbose-head {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .knowledge-workspace-page .kb-retrieval-verbose-head > span {
+    white-space: normal;
+  }
+
+  .knowledge-workspace-page .kb-retrieval-verbose-row {
+    grid-template-columns: minmax(0, 1fr) 56px 72px;
+    gap: 7px;
+    padding: 0 8px;
   }
 
   .knowledge-workspace-page .kb-retrieval-results-head,

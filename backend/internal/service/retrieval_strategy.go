@@ -995,6 +995,17 @@ func factEvidenceScore(query string, chunk RetrievedChunk) int {
 		if match.SubjectMatched {
 			score += 3
 		}
+		predicateTerms := factPredicateTerms(query, spec)
+		if len(predicateTerms) > 0 {
+			// 属性和主体都相同并不代表片段回答了同一个事实。
+			// 例如“payload 的用途”和“payload index 的资源代价”
+			// 需要通过属性后的限定词继续区分，否则同主题片段会被
+			// 误当成直接证据。
+			if evidenceHitCount(predicateTerms, text) == 0 {
+				continue
+			}
+			score += 2
+		}
 		if strings.Contains(text, "概况") || strings.Contains(text, "信息") || strings.Contains(text, "详情") || strings.Contains(text, "简介") {
 			score++
 		}
@@ -1003,6 +1014,105 @@ func factEvidenceScore(query string, chunk RetrievedChunk) int {
 		}
 	}
 	return best
+}
+
+// factPredicateTerms extracts meaningful terms after the requested attribute.
+// It deliberately removes other fact attributes and question boilerplate so
+// multi-attribute questions remain supported while technically similar facts
+// still need their actual predicate evidence.
+func factPredicateTerms(query string, spec factQuerySpec) []string {
+	normalized := normalizeFactQueryText(query)
+	if normalized == "" {
+		return nil
+	}
+
+	anchor := ""
+	anchorIndex := -1
+	for _, alias := range allFactAttributeAliases() {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+		if alias == "" {
+			continue
+		}
+		index := strings.Index(normalized, alias)
+		if index < 0 || len(alias) <= len(anchor) {
+			continue
+		}
+		anchor = alias
+		anchorIndex = index
+	}
+	if anchorIndex < 0 {
+		return nil
+	}
+
+	residual := normalized[anchorIndex+len(anchor):]
+	// 先去掉常见问句模板，再生成中文 n-gram。否则“是多少”“是什么”
+	// 会被切成“是多”“是什”等伪谓词，误杀本来已经命中属性的证据。
+	for _, phrase := range []string{
+		"是什么时候", "是哪一年", "是几几年", "是什么", "是多少", "有什么", "有哪些",
+		"哪一个", "哪位", "谁", "是否", "能否", "可以", "能够", "提供", "支持", "包含",
+		"包括", "具有", "还需要", "需要", "并且", "以及", "或者", "和", "与",
+	} {
+		residual = strings.ReplaceAll(residual, phrase, " ")
+	}
+	// 多属性问题的其它字段不是当前片段必须重复的谓词，去掉它们后，
+	// “手机号和地址是什么”仍然可以分别保留手机号和地址证据。
+	for _, alias := range allFactAttributeAliases() {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+		if alias != "" {
+			residual = strings.ReplaceAll(residual, alias, " ")
+		}
+	}
+	terms := queryEvidenceTerms(residual)
+	if len(terms) == 0 {
+		return nil
+	}
+
+	noise := map[string]struct{}{
+		"为什么": {}, "为何": {}, "如何": {}, "怎么": {}, "怎样": {}, "请问": {},
+		"查询": {}, "检索": {}, "搜索": {}, "查看": {}, "了解": {}, "介绍": {}, "说明": {},
+		"创建": {}, "建立": {}, "添加": {}, "设置": {}, "配置": {},
+		"是否": {}, "能否": {}, "有没有": {}, "有无": {}, "什么": {}, "多少": {},
+		"有什么": {}, "是什么": {}, "是多少": {}, "哪位": {}, "哪一个": {},
+		"可以": {}, "能够": {}, "提供": {}, "支持": {}, "包含": {}, "包括": {}, "具有": {},
+		"需要": {}, "还需要": {}, "吗": {}, "呢": {},
+	}
+
+	attributeAliases := make(map[string]struct{})
+	for _, alias := range allFactAttributeAliases() {
+		alias = strings.ToLower(strings.TrimSpace(alias))
+		if alias != "" {
+			attributeAliases[alias] = struct{}{}
+		}
+	}
+	for _, requirement := range spec.Requirements {
+		for _, alias := range requirement.Aliases {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias != "" {
+				attributeAliases[alias] = struct{}{}
+			}
+		}
+	}
+
+	filtered := make([]string, 0, len(terms))
+	seen := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		term = strings.ToLower(strings.TrimSpace(term))
+		if term == "" {
+			continue
+		}
+		if _, ok := noise[term]; ok {
+			continue
+		}
+		if _, ok := attributeAliases[term]; ok {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		filtered = append(filtered, term)
+	}
+	return filtered
 }
 
 func matchFactEvidence(spec factQuerySpec, text string) (factEvidenceMatch, bool) {
@@ -1344,7 +1454,15 @@ func deduplicateFactQuerySpecs(specs []factQuerySpec) []factQuerySpec {
 
 func cleanFactSubject(subject string) string {
 	subject = strings.TrimSpace(strings.ToLower(subject))
-	for _, prefix := range []string{"请问", "查询", "告诉我", "帮我查", "我想知道", "想知道"} {
+	// 事实问题的主体前经常带有提问动作或操作动作。它们不是实体本身，
+	// 如果保留在主体中，会让“为什么 Qdrant...”这类问题无法匹配正文里的
+	// “Qdrant”。只清理开头的自然语言引导词，避免改写正文中的实体名称。
+	for _, prefix := range []string{
+		"我想知道", "想知道", "告诉我", "帮我查", "请说明", "请介绍",
+		"为什么", "为何", "如何", "怎么", "怎样", "请问", "查询", "检索",
+		"搜索", "查看", "了解", "介绍", "说明", "创建", "建立", "添加",
+		"设置", "配置",
+	} {
 		subject = strings.TrimPrefix(subject, prefix)
 	}
 	for _, marker := range []string{"是否", "能否", "有没有", "有无"} {

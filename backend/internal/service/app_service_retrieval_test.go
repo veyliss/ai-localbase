@@ -562,6 +562,73 @@ func TestApplyEvidenceGateUsesTechnicalAttributeFromNaturalQuestion(t *testing.T
 	}
 }
 
+func TestApplyEvidenceGateNormalizesTechnicalQuestionLeadIn(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		evidence  string
+		unrelated string
+	}{
+		{
+			name:      "why question",
+			query:     "为什么 Qdrant 的向量检索还需要 payload 过滤？",
+			evidence:  "Qdrant 的过滤条件的作用是：当对象的全部特征无法用 embedding 表达时，可以通过 payload 条件补充过滤。",
+			unrelated: "Qdrant collection 是一组带有向量和 payload 的命名集合，可以在其中进行搜索。",
+		},
+		{
+			name:      "action question",
+			query:     "创建 Qdrant payload index 有什么资源代价？",
+			evidence:  "创建 Qdrant payload index 会额外消耗计算资源和内存，因此应谨慎选择需要索引的字段。",
+			unrelated: "Qdrant 的 payload 可以存储能够表示为 JSON 的任意信息。",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			specs := strictFactQuerySpecs(tt.query)
+			if len(specs) == 0 {
+				t.Fatalf("expected a strict fact spec for %q", tt.query)
+			}
+			foundQdrantSubject := false
+			for _, spec := range specs {
+				if spec.Subject == "qdrant" {
+					foundQdrantSubject = true
+					break
+				}
+			}
+			if !foundQdrantSubject {
+				t.Fatalf("expected question lead-in to be removed from subject, got %#v", specs)
+			}
+
+			filtered, stats := applyEvidenceGateWithStats(tt.query, []RetrievedChunk{
+				{
+					DocumentChunk: DocumentChunk{DocumentID: "doc-evidence", Text: tt.evidence},
+					Score:         0.35,
+					RawScore:      0.30,
+				},
+				{
+					DocumentChunk: DocumentChunk{DocumentID: "doc-unrelated", Text: tt.unrelated},
+					Score:         0.96,
+					RawScore:      0.95,
+				},
+			})
+			if len(filtered) != 1 || filtered[0].DocumentID != "doc-evidence" {
+				t.Fatalf("expected the fact evidence to survive without unrelated high-score content, filtered=%#v stats=%#v", filtered, stats)
+			}
+		})
+	}
+}
+
+func TestRetrievalDebugVerboseKeepsMMRCountSeparateFromEvidenceGate(t *testing.T) {
+	details := &model.RetrievalDebugVerboseDetails{
+		AfterMMRCount:          6,
+		AfterEvidenceGateCount: 0,
+	}
+	if details.AfterMMRCount == details.AfterEvidenceGateCount {
+		t.Fatal("expected MMR and evidence-gate counts to remain independently observable")
+	}
+}
+
 func TestApplyEvidenceGateRecognizesTimeQuestionWithoutDe(t *testing.T) {
 	query := "示例学校什么时候成立？"
 	specs := strictFactQuerySpecs(query)

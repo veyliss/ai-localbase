@@ -779,18 +779,20 @@ type RetrievalDebugResponse struct {
 }
 
 type RetrievalDebugVerboseDetails struct {
-	QueryEmbeddingMs    int64                     `json:"queryEmbeddingMs,omitempty"`
-	VectorSearchMs      int64                     `json:"vectorSearchMs,omitempty"`
-	RerankMs            int64                     `json:"rerankMs,omitempty"`
-	MMRMs               int64                     `json:"mmrMs,omitempty"`
-	CandidatesCount     int                       `json:"candidatesCount"`
-	AfterRerankCount    int                       `json:"afterRerankCount"`
-	AfterMMRCount       int                       `json:"afterMMRCount"`
-	TopCandidates       []RetrievalDebugChunk     `json:"topCandidates,omitempty"`
-	TopAfterRerank      []RetrievalDebugChunk     `json:"topAfterRerank,omitempty"`
-	TopAfterMMR         []RetrievalDebugChunk     `json:"topAfterMMR,omitempty"`
-	MMREffect           *MMREffectAnalysis        `json:"mmrEffect,omitempty"`
-	QueryRewriteDetails *QueryRewriteDebugDetails `json:"queryRewriteDetails,omitempty"`
+	QueryEmbeddingMs       int64                     `json:"queryEmbeddingMs,omitempty"`
+	VectorSearchMs         int64                     `json:"vectorSearchMs,omitempty"`
+	RerankMs               int64                     `json:"rerankMs,omitempty"`
+	MMRMs                  int64                     `json:"mmrMs,omitempty"`
+	CandidatesCount        int                       `json:"candidatesCount"`
+	AfterRerankCount       int                       `json:"afterRerankCount"`
+	AfterMMRCount          int                       `json:"afterMMRCount"`
+	AfterEvidenceGateCount int                       `json:"afterEvidenceGateCount"`
+	TopCandidates          []RetrievalDebugChunk     `json:"topCandidates,omitempty"`
+	TopAfterRerank         []RetrievalDebugChunk     `json:"topAfterRerank,omitempty"`
+	TopAfterMMR            []RetrievalDebugChunk     `json:"topAfterMMR,omitempty"`
+	TopAfterEvidenceGate   []RetrievalDebugChunk     `json:"topAfterEvidenceGate,omitempty"`
+	MMREffect              *MMREffectAnalysis        `json:"mmrEffect,omitempty"`
+	QueryRewriteDetails    *QueryRewriteDebugDetails `json:"queryRewriteDetails,omitempty"`
 }
 
 type MMREffectAnalysis struct {

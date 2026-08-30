@@ -269,9 +269,9 @@ func (o *RetrievalOrchestrator) Debug(ctx context.Context, req model.RetrievalDe
 	}
 
 	chunks, gateStats := applyEvidenceGateWithStats(query, chunks)
-	if verboseDetails != nil && gateStats.DroppedCount > 0 {
-		verboseDetails.AfterMMRCount = gateStats.OutputCount
-		verboseDetails.TopAfterMMR = convertToDebugChunks(chunks, query, 5)
+	if verboseDetails != nil {
+		verboseDetails.AfterEvidenceGateCount = gateStats.OutputCount
+		verboseDetails.TopAfterEvidenceGate = convertToDebugChunks(chunks, query, 5)
 	}
 
 	trace := make([]model.RetrievalDebugTraceStep, 0, 6)

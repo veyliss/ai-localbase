@@ -124,12 +124,20 @@ func normalizeHitThreshold(threshold float64) float64 {
 }
 
 func normalizeEvalText(value string) string {
-	return strings.Map(func(r rune) rune {
+	var builder strings.Builder
+	pendingSpace := false
+	for _, r := range value {
 		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
-			return -1
+			pendingSpace = builder.Len() > 0
+			continue
 		}
-		return unicode.ToLower(r)
-	}, value)
+		if pendingSpace {
+			builder.WriteRune(' ')
+			pendingSpace = false
+		}
+		builder.WriteRune(unicode.ToLower(r))
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func snippetMatchScore(text, snippet string) float64 {
@@ -140,6 +148,14 @@ func snippetMatchScore(text, snippet string) float64 {
 	}
 	if strings.Contains(text, snippet) {
 		return 1
+	}
+
+	// ASCII identifiers and API names are high-signal evidence. Do not let a
+	// partial match assemble them from unrelated locations in a long chunk.
+	// This avoids false positives such as "payload index" matching a payload
+	// sentence and an unrelated `/index.md` URL.
+	if hasASCIIContent(snippet) {
+		return 0
 	}
 
 	textRunes := []rune(text)
@@ -171,6 +187,15 @@ func snippetMatchScore(text, snippet string) float64 {
 		return 0
 	}
 	return float64(matched) / float64(len(seen))
+}
+
+func hasASCIIContent(value string) bool {
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return false
 }
 
 func retrievedChunkMatchesSource(chunk RetrievedChunkInfo, source SourceDocument) bool {

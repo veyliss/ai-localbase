@@ -119,6 +119,16 @@ func TestIsHitUsesThresholdForPartialAnswerSnippet(t *testing.T) {
 	}
 }
 
+func TestSnippetMatchDoesNotJoinSeparatedASCIITerms(t *testing.T) {
+	text := "Qdrant 的 payload 可以存储 JSON。来源：https://qdrant.tech/documentation/manage-data/indexing/index.md"
+	if score := snippetMatchScore(text, "payload index"); score >= 0.5 {
+		t.Fatalf("expected separated payload and index terms not to match, got %.3f", score)
+	}
+	if score := snippetMatchScore("Qdrant 的 payload index 用于加快点查询。", "payload index"); score != 1 {
+		t.Fatalf("expected contiguous API phrase to match exactly, got %.3f", score)
+	}
+}
+
 func TestComputeMetricsMatchGroundTruthByCaseID(t *testing.T) {
 	groundTruth := []GroundTruthCase{
 		{ID: "case-a", SourceDocuments: []SourceDocument{{DocumentID: "doc-a"}}},

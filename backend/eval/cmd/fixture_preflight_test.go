@@ -43,7 +43,7 @@ func TestResolveEvalFixtureManifestPathAutoDiscoversPublicFixture(t *testing.T) 
 func TestInspectEvalFixtureIndexAcceptsMatchingIndexedDocument(t *testing.T) {
 	_, manifestPath, manifest, dataset, expectedChecksum := writeEvalFixture(t)
 
-	qdrantServer := newFixtureScrollServer(t, `{"result":{"points":[{"id":"point-1","payload":{"document_id":"doc-1","text":"示例机构成立于1898年。","chunk_index":0}}],"next_page_offset":null}}`)
+	qdrantServer := newFixtureScrollServer(t, `{"result":{"points":[{"id":"point-1","payload":{"document_id":"doc-1","chunk_id":"doc-1-chunk-0","text":"示例机构成立于1898年。","chunk_index":0}}],"next_page_offset":null}}`)
 	qdrant := service.NewQdrantService(model.ServerConfig{
 		QdrantURL:              qdrantServer.URL,
 		QdrantCollectionPrefix: "kb_",
@@ -76,6 +76,46 @@ func TestInspectEvalFixtureIndexAcceptsMatchingIndexedDocument(t *testing.T) {
 	}
 	if check.KnowledgeBaseID != "kb-1" {
 		t.Fatalf("expected fixture to resolve kb-1, got %q", check.KnowledgeBaseID)
+	}
+	mapped := check.SourceMappings["case-1"]
+	if len(mapped) != 1 || mapped[0].KnowledgeBaseID != "kb-1" || mapped[0].DocumentID != "doc-1" || mapped[0].ChunkID != "doc-1-chunk-0" {
+		t.Fatalf("expected fixture source ID mapping, got %#v", mapped)
+	}
+}
+
+func TestApplyEvalFixtureSourceMappingsReplacesOnlyFixtureSources(t *testing.T) {
+	dataset := &offline.Dataset{Cases: []offline.GroundTruthCase{
+		{
+			ID: "fixture-case",
+			SourceDocuments: []offline.SourceDocument{{
+				KnowledgeBaseID: "kb-old",
+				DocumentID:      "doc-old",
+				ChunkID:         "chunk-old",
+			}},
+		},
+		{
+			ID: "snippet-case",
+		},
+	}}
+	mapped := applyEvalFixtureSourceMappings(dataset, map[string][]offline.SourceDocument{
+		"fixture-case": {{
+			KnowledgeBaseID: "kb-current",
+			DocumentID:      "doc-current",
+			ChunkID:         "chunk-current",
+		}},
+		"snippet-case": {{
+			KnowledgeBaseID: "kb-current",
+			DocumentID:      "doc-current",
+		}},
+	})
+	if mapped != 1 {
+		t.Fatalf("expected one source mapping, got %d", mapped)
+	}
+	if got := dataset.Cases[0].SourceDocuments[0]; got.DocumentID != "doc-current" || got.ChunkID != "chunk-current" {
+		t.Fatalf("expected fixture source to be replaced, got %#v", got)
+	}
+	if len(dataset.Cases[1].SourceDocuments) != 0 {
+		t.Fatalf("expected snippet-only case to remain unchanged, got %#v", dataset.Cases[1].SourceDocuments)
 	}
 }
 
@@ -158,8 +198,13 @@ func writeEvalFixture(t *testing.T) (string, string, *offline.FixtureManifest, *
 		Question:       "机构何时成立？",
 		Answer:         "示例机构成立于1898年。",
 		AnswerSnippets: []string{"1898年"},
-		AnswerType:     "extractive",
-		Difficulty:     "easy",
+		SourceDocuments: []offline.SourceDocument{{
+			KnowledgeBaseID: "kb-old",
+			DocumentID:      "doc-old",
+			ChunkID:         "chunk-old",
+		}},
+		AnswerType: "extractive",
+		Difficulty: "easy",
 	}}}
 	if err := os.WriteFile(manifestPath, []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write manifest placeholder: %v", err)

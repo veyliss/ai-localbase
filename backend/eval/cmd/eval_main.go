@@ -314,6 +314,9 @@ func newRealEvalRuntime(ctx context.Context, ds *offline.Dataset, realLLM bool, 
 			serverConfig.EvalKnowledgeBaseID = fixtureCheck.KnowledgeBaseID
 			log.Printf("[eval] fixture 解析到知识库: %s", fixtureCheck.KnowledgeBaseID)
 		}
+		if mapped := applyEvalFixtureSourceMappings(ds, fixtureCheck.SourceMappings); mapped > 0 {
+			log.Printf("[eval] 已将 %d 个 fixture 用例的历史来源 ID 映射到当前索引", mapped)
+		}
 	}
 
 	// Fixture-backed cases are validated against the manifest document
@@ -776,6 +779,7 @@ type evalFixtureIndexIssue struct {
 type evalFixtureIndexCheck struct {
 	KnowledgeBaseID string
 	Issues          []evalFixtureIndexIssue
+	SourceMappings  map[string][]offline.SourceDocument
 }
 
 func evalFixtureCaseIDs(manifest *offline.FixtureManifest) map[string]struct{} {
@@ -805,7 +809,7 @@ func inspectEvalFixtureIndex(
 	configuredKnowledgeBaseID string,
 	qdrant *service.QdrantService,
 ) evalFixtureIndexCheck {
-	check := evalFixtureIndexCheck{}
+	check := evalFixtureIndexCheck{SourceMappings: make(map[string][]offline.SourceDocument)}
 	if manifest == nil {
 		return check
 	}
@@ -945,9 +949,129 @@ func inspectEvalFixtureIndex(
 					Reason:          "Qdrant 索引点中没有覆盖该用例的完整答案或全部答案片段",
 				})
 			}
+			if len(gtCase.SourceDocuments) > 0 {
+				mappedSource := offline.SourceDocument{
+					KnowledgeBaseID: match.KnowledgeBaseID,
+					DocumentID:      document.ID,
+				}
+				if point, found := findEvalFixtureEvidencePoint(points, gtCase); found && !evalFixturePointIsStructured(point) {
+					mappedSource.ChunkID = evalFixturePointChunkID(point)
+				}
+				check.SourceMappings[fixtureCase.ID] = []offline.SourceDocument{mappedSource}
+			}
 		}
 	}
 	return check
+}
+
+// applyEvalFixtureSourceMappings replaces upload-specific source IDs in a
+// fixture-backed dataset with the IDs discovered in the current local index.
+// Public fixtures are intentionally reusable across uploads, while Qdrant IDs
+// are generated anew for each upload.
+func applyEvalFixtureSourceMappings(dataset *offline.Dataset, mappings map[string][]offline.SourceDocument) int {
+	if dataset == nil || len(mappings) == 0 {
+		return 0
+	}
+	mapped := 0
+	for index := range dataset.Cases {
+		caseID := strings.TrimSpace(dataset.Cases[index].ID)
+		sources, ok := mappings[caseID]
+		if !ok || len(sources) == 0 || len(dataset.Cases[index].SourceDocuments) == 0 {
+			continue
+		}
+		dataset.Cases[index].SourceDocuments = append([]offline.SourceDocument(nil), sources...)
+		mapped++
+	}
+	return mapped
+}
+
+type evalFixtureEvidencePoint struct {
+	point      service.QdrantStoredPoint
+	matchScore int
+	chunkIndex int
+	chunkID    string
+}
+
+// findEvalFixtureEvidencePoint selects the most specific indexed point that
+// contains the annotated answer. Ties use the stored chunk order so reports
+// remain stable even when Qdrant returns points in a different order.
+func findEvalFixtureEvidencePoint(points []service.QdrantStoredPoint, gtCase offline.GroundTruthCase) (service.QdrantStoredPoint, bool) {
+	best := evalFixtureEvidencePoint{matchScore: 0, chunkIndex: int(^uint(0) >> 1)}
+	found := false
+	normalizedAnswer := normalizeFixtureComparisonText(gtCase.Answer)
+	normalizedSnippets := make([]string, 0, len(gtCase.AnswerSnippets))
+	for _, snippet := range gtCase.AnswerSnippets {
+		if normalized := normalizeFixtureComparisonText(snippet); normalized != "" {
+			normalizedSnippets = append(normalizedSnippets, normalized)
+		}
+	}
+	for _, point := range points {
+		text, _ := point.Payload["text"].(string)
+		normalizedText := normalizeFixtureComparisonText(text)
+		if normalizedText == "" {
+			continue
+		}
+		matchScore := 0
+		if normalizedAnswer != "" && strings.Contains(normalizedText, normalizedAnswer) {
+			matchScore = 1000
+		}
+		for _, snippet := range normalizedSnippets {
+			if strings.Contains(normalizedText, snippet) {
+				matchScore++
+			}
+		}
+		if matchScore == 0 {
+			continue
+		}
+		candidate := evalFixtureEvidencePoint{
+			point:      point,
+			matchScore: matchScore,
+			chunkIndex: evalFixturePointChunkIndex(point),
+			chunkID:    evalFixturePointChunkID(point),
+		}
+		if !found || candidate.matchScore > best.matchScore ||
+			(candidate.matchScore == best.matchScore && candidate.chunkIndex < best.chunkIndex) ||
+			(candidate.matchScore == best.matchScore && candidate.chunkIndex == best.chunkIndex && candidate.chunkID < best.chunkID) {
+			best = candidate
+			found = true
+		}
+	}
+	if !found {
+		return service.QdrantStoredPoint{}, false
+	}
+	return best.point, true
+}
+
+func evalFixturePointChunkID(point service.QdrantStoredPoint) string {
+	chunkID, _ := point.Payload["chunk_id"].(string)
+	return strings.TrimSpace(chunkID)
+}
+
+func evalFixturePointIsStructured(point service.QdrantStoredPoint) bool {
+	chunkKind, _ := point.Payload["chunk_kind"].(string)
+	switch strings.ToLower(strings.TrimSpace(chunkKind)) {
+	case "structured_row", "structured_summary", "structured_query":
+		return true
+	default:
+		return false
+	}
+}
+
+func evalFixturePointChunkIndex(point service.QdrantStoredPoint) int {
+	value := point.Payload["chunk_index"]
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return int(parsed)
+		}
+	}
+	return int(^uint(0) >> 1)
 }
 
 func evalFixtureKnowledgeBaseIDs(knowledgeBases map[string]model.KnowledgeBase, configured string) ([]string, error) {

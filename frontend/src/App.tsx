@@ -1,5 +1,6 @@
 import './App.css'
 import { createEmptyConversation, createId, normalizeChatMetadata } from './app/appHelpers'
+import { createDefaultAppConfig, normalizeAppConfig } from './app/appConfig'
 import { buildChatRequestBody } from './chat/chatRequest'
 import ChatArea from './components/ChatArea'
 import Sidebar from './components/Sidebar'
@@ -12,6 +13,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { useKnowledgeWorkspaceState } from './hooks/useKnowledgeWorkspaceState'
 import { useAppPreferencesState } from './hooks/useAppPreferencesState'
 import { useConversationWorkspaceState } from './hooks/useConversationWorkspaceState'
+import { useAppBootstrap } from './app/useAppBootstrap'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE_PATH,
@@ -31,9 +33,7 @@ import {
   exportConversation,
   fetchKnowledgeBaseHealth,
   fetchKnowledgeBaseDocumentDetail,
-  fetchBackendHealth,
   fetchConversationDetail,
-  fetchInitialAppData,
   generateEvalDataset,
   getDocumentIndexStatus,
   getEvalDataset,
@@ -235,21 +235,6 @@ const FALLBACK_REQUEST_TIMEOUT_MS = 180_000
 const STREAM_FIRST_CHUNK_TIMEOUT_MS = 30_000
 const STREAM_REQUEST_TIMEOUT_MS = 180_000
 
-const defaultRetrievalConfig: RetrievalConfig = {
-  defaultSearchMode: 'dense',
-  hybridSearchEnabled: false,
-  rerankStrategy: 'keyword',
-  enableQueryRewrite: false,
-  queryRewriteMaxVariants: 3,
-  topKDocument: 6,
-  candidateTopKDocument: 12,
-  topKKnowledgeBase: 10,
-  candidateTopKAllDocs: 32,
-  maxChunksPerDocument: 2,
-  maxContextChars: 2400,
-  enableLowConfidenceBoost: false,
-}
-
 interface ChatCompletionResponse {
   id: string
   object: string
@@ -353,126 +338,6 @@ const getFileExtension = (fileName: string) => {
   return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : ''
 }
 
-const clampNumber = (value: unknown, fallback: number, min: number, max: number) => {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) return fallback
-  return Math.max(min, Math.min(max, Math.round(parsed)))
-}
-
-const normalizeSecretValue = (
-  incomingValue: unknown,
-) => {
-  const value = typeof incomingValue === 'string' ? incomingValue : ''
-  return value
-}
-
-const normalizeSecretValueWithFallback = (
-  incomingValue: unknown,
-  configured: unknown,
-  fallbackValue: string,
-) => {
-  const value = typeof incomingValue === 'string' ? incomingValue : ''
-  if (value) {
-    return value
-  }
-  if (configured && fallbackValue) {
-    return fallbackValue
-  }
-  return ''
-}
-
-const normalizeAppConfig = (config: Partial<AppConfig>, fallback: AppConfig): AppConfig => {
-  const retrieval = {
-    ...fallback.retrieval,
-    ...(config.retrieval ?? {}),
-  }
-  const topKDocument = clampNumber(retrieval.topKDocument, fallback.retrieval.topKDocument, 1, 30)
-  const topKKnowledgeBase = clampNumber(retrieval.topKKnowledgeBase, fallback.retrieval.topKKnowledgeBase, 1, 40)
-
-  const chatConfig: Partial<ChatConfig> = config.chat ?? {}
-  const embeddingConfig: Partial<EmbeddingConfig> = config.embedding ?? {}
-  const mcpConfig: Partial<MCPConfig> = config.mcp ?? {}
-  const chatApiKey = normalizeSecretValue(
-    chatConfig.apiKey,
-  )
-  const embeddingApiKey = normalizeSecretValue(
-    embeddingConfig.apiKey,
-  )
-  const mcpToken = normalizeSecretValueWithFallback(
-    mcpConfig.token,
-    mcpConfig.tokenConfigured,
-    fallback.mcp.token,
-  )
-  const knowledgeTemperature =
-    typeof chatConfig.knowledgeTemperature === 'number' && Number.isFinite(chatConfig.knowledgeTemperature)
-      ? Math.max(0.1, Math.min(0.5, chatConfig.knowledgeTemperature))
-      : fallback.chat.knowledgeTemperature
-
-  return {
-    chat: {
-      ...fallback.chat,
-      ...chatConfig,
-      apiKey: chatApiKey,
-      apiKeyConfigured: Boolean(chatConfig.apiKeyConfigured || chatApiKey),
-      clearApiKey: false,
-      knowledgeTemperature,
-    },
-    embedding: {
-      ...fallback.embedding,
-      ...embeddingConfig,
-      apiKey: embeddingApiKey,
-      apiKeyConfigured: Boolean(embeddingConfig.apiKeyConfigured || embeddingApiKey),
-      clearApiKey: false,
-    },
-    mcp: {
-      ...fallback.mcp,
-      ...mcpConfig,
-      token: mcpToken,
-      tokenConfigured: Boolean(mcpConfig.tokenConfigured || mcpToken),
-      legacyTokenEnabled: Boolean(mcpConfig.legacyTokenEnabled),
-    },
-    retrieval: {
-      defaultSearchMode: retrieval.defaultSearchMode === 'hybrid' ? 'hybrid' : 'dense',
-      hybridSearchEnabled: Boolean(retrieval.hybridSearchEnabled),
-      rerankStrategy: retrieval.rerankStrategy === 'semantic' ? 'semantic' : 'keyword',
-      enableQueryRewrite: Boolean(retrieval.enableQueryRewrite),
-      queryRewriteMaxVariants: clampNumber(
-        retrieval.queryRewriteMaxVariants,
-        fallback.retrieval.queryRewriteMaxVariants,
-        1,
-        5,
-      ),
-      topKDocument,
-      candidateTopKDocument: clampNumber(
-        retrieval.candidateTopKDocument,
-        fallback.retrieval.candidateTopKDocument,
-        topKDocument,
-        80,
-      ),
-      topKKnowledgeBase,
-      candidateTopKAllDocs: clampNumber(
-        retrieval.candidateTopKAllDocs,
-        fallback.retrieval.candidateTopKAllDocs,
-        topKKnowledgeBase,
-        120,
-      ),
-      maxChunksPerDocument: clampNumber(
-        retrieval.maxChunksPerDocument,
-        fallback.retrieval.maxChunksPerDocument,
-        1,
-        10,
-      ),
-      maxContextChars: clampNumber(
-        retrieval.maxContextChars,
-        fallback.retrieval.maxContextChars,
-        800,
-        20000,
-      ),
-      enableLowConfidenceBoost: Boolean(retrieval.enableLowConfidenceBoost),
-    },
-  }
-}
-
 const buildDirectoryUploadSummary = (task: DirectoryUploadTask) => {
   const parts = [
     `总文件 ${task.totalFiles}`,
@@ -521,8 +386,6 @@ const sleep = (delayMs: number) =>
 function AppContent() {
   const { isAuthenticated, logout } = useAuth()
   const { showToast } = useToast()
-  const [authCheckDone, setAuthCheckDone] = useState(false)
-  const [authRequired, setAuthRequired] = useState(false)
   const {
     knowledgeBases,
     setKnowledgeBases,
@@ -535,8 +398,6 @@ function AppContent() {
     selectedDocument,
     toggleKnowledgeBaseCollapse,
   } = useKnowledgeWorkspaceState()
-  const [backendReady, setBackendReady] = useState(false)
-  const [backendWarmupRequired, setBackendWarmupRequired] = useState(true)
   const [authWarningsShown, setAuthWarningsShown] = useState(false)
   const [globalLoading] = useState(false)
   const {
@@ -559,53 +420,25 @@ function AppContent() {
   const chatAbortControllerRef = useRef<AbortController | null>(null)
   const activeChatRequestRef = useRef<{ requestId: string; conversationId: string } | null>(null)
 
-  const waitForBackendReady = async (attempts = 12, delayMs = 1500) => {
-    for (let index = 0; index < attempts; index += 1) {
-      const health = await fetchBackendHealth()
-      if ((health?.status ?? '').toLowerCase() === 'ok') {
-        setBackendReady(true)
-        setBackendWarmupRequired(true)
-        return true
-      }
+  const [config, setConfig] = useState<AppConfig>(createDefaultAppConfig)
 
-      if (index < attempts - 1) {
-        await sleep(delayMs)
-      }
-    }
-
-    setBackendReady(false)
-    return false
-  }
-  const [config, setConfig] = useState<AppConfig>(() => {
-    const defaultConfig: AppConfig = {
-      chat: {
-        provider: 'ollama',
-        baseUrl: 'http://localhost:11434/v1',
-        model: 'llama3.2',
-        apiKey: '',
-        temperature: 0.7,
-        knowledgeTemperature: 0.1,
-        contextMessageLimit: 12,
-      },
-      embedding: {
-        provider: 'ollama',
-        baseUrl: 'http://localhost:11434/v1',
-        model: 'nomic-embed-text',
-        apiKey: '',
-      },
-      mcp: {
-        enabled: false,
-        basePath: '/mcp',
-        token: '',
-      },
-      retrieval: defaultRetrievalConfig,
-    }
-
-    if (typeof window === 'undefined') {
-      return defaultConfig
-    }
-
-    return defaultConfig
+  const {
+    authCheckDone,
+    authRequired,
+    backendReady,
+    backendWarmupRequired,
+    setBackendReady,
+    setBackendWarmupRequired,
+    waitForBackendReady,
+  } = useAppBootstrap({
+    isAuthenticated,
+    logout,
+    setKnowledgeBases,
+    setConfig,
+    setConversations,
+    setActiveConversationId,
+    setSelectedKnowledgeBaseId,
+    setSelectedDocumentId,
   })
 
   const {
@@ -657,91 +490,6 @@ function AppContent() {
       conversations[0],
     [activeConversationId, conversations],
   )
-
-  useEffect(() => {
-    if (!authCheckDone || (authRequired && !isAuthenticated)) {
-      return
-    }
-
-    let canceled = false
-
-    const bootstrapApp = async () => {
-      while (!canceled) {
-        try {
-          const isReady = await waitForBackendReady()
-          if (!isReady) {
-            throw new Error('backend is not ready')
-          }
-
-          const initialData = await fetchInitialAppData()
-
-          if (canceled) {
-            return
-          }
-
-          const nextKnowledgeBases = initialData.knowledgeBases
-          setKnowledgeBases(nextKnowledgeBases)
-          setConfig((prev) => normalizeAppConfig(initialData.config, prev))
-          const conversationItems = initialData.conversations
-          if (conversationItems.length > 0) {
-            const firstConversationId = conversationItems[0].id
-            const firstConversation = await fetchConversationDetail(firstConversationId)
-            const restConversations = conversationItems.slice(1).map((conversation) => ({
-              id: conversation.id,
-              title: conversation.title,
-              knowledgeBaseId: conversation.knowledgeBaseId,
-              documentId: conversation.documentId,
-              scopeVersion: conversation.scopeVersion ?? 0,
-              createdAt: conversation.createdAt,
-              updatedAt: conversation.updatedAt,
-              messages: [],
-            }))
-
-            if (canceled) {
-              return
-            }
-
-            if (firstConversation.scopeVersion < 1) {
-              const safeConversation = createEmptyConversation(firstConversation.knowledgeBaseId)
-              setConversations([safeConversation, firstConversation, ...restConversations])
-              setActiveConversationId(safeConversation.id)
-              setSelectedKnowledgeBaseId(safeConversation.knowledgeBaseId || null)
-              setSelectedDocumentId(null)
-            } else {
-              setConversations([firstConversation, ...restConversations])
-              setActiveConversationId(firstConversation.id)
-              setSelectedKnowledgeBaseId(firstConversation.knowledgeBaseId || null)
-              setSelectedDocumentId(firstConversation.documentId || null)
-            }
-          } else {
-            const initialKnowledgeBaseId = nextKnowledgeBases[0]?.id ?? ''
-            const initialConversation = createEmptyConversation(initialKnowledgeBaseId)
-            setConversations([initialConversation])
-            setActiveConversationId(initialConversation.id)
-            setSelectedKnowledgeBaseId(initialKnowledgeBaseId || null)
-            setSelectedDocumentId(null)
-          }
-
-          setBackendReady(true)
-          return
-        } catch (error) {
-          if (canceled) {
-            return
-          }
-
-          setBackendReady(false)
-          console.warn('bootstrap app failed, retrying after backend warmup', error)
-          await sleep(2000)
-        }
-      }
-    }
-
-    void bootstrapApp()
-
-    return () => {
-      canceled = true
-    }
-  }, [authCheckDone, authRequired, isAuthenticated])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2195,58 +1943,6 @@ function AppContent() {
     })
     setActiveWorkspace('knowledge')
   }
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const health = await fetchBackendHealth()
-        if (!health) {
-          throw new Error('health check unavailable')
-        }
-        const authEnabled = health?.config?.auth_enabled === 'true'
-        if (!authEnabled) {
-          setAuthRequired(false)
-          return
-        }
-
-        setAuthRequired(true)
-        if (!isAuthenticated) {
-          return
-        }
-
-        const response = await fetch(`${API_BASE_PATH}/api/auth/status`, {
-          credentials: 'same-origin',
-        })
-        if (response.status === 401) {
-          setAuthRequired(true)
-          void logout()
-          return
-        }
-        if (!response.ok) {
-          throw new Error('auth status check failed')
-        }
-      } catch {
-        try {
-          const response = await fetch(`${API_BASE_PATH}/api/knowledge-bases`, {
-            credentials: 'same-origin',
-          })
-          if (response.status === 401) {
-            setAuthRequired(true)
-            if (isAuthenticated) {
-              void logout()
-            }
-            return
-          }
-          setAuthRequired(!response.ok)
-        } catch {
-          setAuthRequired(true)
-        }
-      } finally {
-        setAuthCheckDone(true)
-      }
-    }
-    checkAuth()
-  }, [isAuthenticated, logout])
 
   if (!authCheckDone) {
     return <Login checkingConnection />

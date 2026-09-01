@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { ChatSourceMetadata, CitationSupportMetadata } from '../../App'
 import { chunkKindLabel } from '../knowledge/knowledgeLabels'
 import { filterDocumentCitationSources } from './citationSources'
@@ -65,10 +65,15 @@ const MessageCitations: React.FC<MessageCitationsProps> = ({
   onOpenCitationSource,
 }) => {
   const visibleSources = normalizeSources(sources).slice(0, 6)
-  if (visibleSources.length === 0) return null
+  const [expanded, setExpanded] = useState(true)
+  if (visibleSources.length === 0 && !citationSupport) return null
 
   return (
-    <details className="message-citations">
+    <details
+      className="message-citations"
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
       <summary>
         <span>引用来源</span>
         <strong>{visibleSources.length}</strong>

@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react'
+import MarkdownRenderErrorBoundary from './MarkdownRenderErrorBoundary'
 import MarkdownRendererView from './MarkdownRendererView'
+import { normalizeMarkdownTableRows } from './markdownTable'
 
 /**
  * 修复 LLM 输出的 Markdown 格式问题：
@@ -1833,6 +1835,7 @@ ${treeBlock.trimEnd()}\n\
   fixed = normalizeCompressedAnswerBlocks(fixed)
   fixed = normalizeMermaidSection(fixed)
   fixed = renumberOrderedListBlocks(fixed)
+  fixed = normalizeMarkdownTableRows(fixed)
   fixed = fixed.replace(/([：:])\s*[-*]\s+/g, '$1 ')
   fixed = fixed.replace(/\n{3,}/g, '\n\n')
   fixed = fixed.replace(/[ \t]+\n/g, '\n')
@@ -1843,8 +1846,14 @@ interface MarkdownRendererProps {
   content: string
 }
 
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => (
-  <MarkdownRendererView content={fixMarkdown(content)} AdviceCardBlock={AdviceCardBlock} />
-)
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+  const fixedContent = useMemo(() => fixMarkdown(content), [content])
+
+  return (
+    <MarkdownRenderErrorBoundary content={fixedContent}>
+      <MarkdownRendererView content={fixedContent} AdviceCardBlock={AdviceCardBlock} />
+    </MarkdownRenderErrorBoundary>
+  )
+}
 
 export default MarkdownRenderer

@@ -233,9 +233,9 @@ const MessageCard: React.FC<MessageCardProps> = ({
         </div>
       )}
 
-      {message.role === 'assistant' && message.metadata?.sources && !isEditing && (
+      {message.role === 'assistant' && (message.metadata?.sources || message.metadata?.citationSupport) && !isEditing && (
         <MessageCitations
-          sources={message.metadata.sources}
+          sources={message.metadata.sources ?? []}
           citationSupport={message.metadata.citationSupport}
           onOpenCitationSource={onOpenCitationSource}
         />

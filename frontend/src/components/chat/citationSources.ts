@@ -5,11 +5,12 @@ const citationFields: Array<keyof ChatSourceMetadata> = [
   'documentId',
   'documentName',
   'chunkId',
-  'snippet',
 ]
 
-export const isDocumentCitationSource = (source: ChatSourceMetadata) =>
-  citationFields.every((field) => String(source[field] ?? '').trim().length > 0)
+export const isDocumentCitationSource = (source: ChatSourceMetadata) => (
+  citationFields.every((field) => String(source[field] ?? '').trim().length > 0) &&
+  Boolean(String(source.snippet || source.citationSnippet || '').trim())
+)
 
 export const filterDocumentCitationSources = (sources?: ChatSourceMetadata[]) =>
   (sources ?? []).filter(isDocumentCitationSource)

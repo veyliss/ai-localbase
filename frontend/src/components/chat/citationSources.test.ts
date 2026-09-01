@@ -26,6 +26,15 @@ describe('citation source filtering', () => {
     expect(filterDocumentCitationSources([source])).toEqual([source])
   })
 
+  it('keeps a source when only the precise citation excerpt is available', () => {
+    const source = {
+      ...documentSource,
+      snippet: '',
+      citationSnippet: '示例机构成立于 1893 年。',
+    }
+    expect(filterDocumentCitationSources([source])).toEqual([source])
+  })
+
   it('drops tool records and sources without snippets', () => {
     expect(filterDocumentCitationSources([
       { toolName: 'search_knowledge_base' },

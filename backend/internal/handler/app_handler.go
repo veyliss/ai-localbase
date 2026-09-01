@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,20 +61,49 @@ func (h *AppHandler) GetJobStatus(c *gin.Context) {
 	jobID := c.Param("jobId")
 	job, err := h.appService.GetMCPJobStatusAs(jobID, auth.PrincipalFromContext(c))
 	if err != nil {
-		writeError(c, http.StatusNotFound, err.Error())
+		writeError(c, http.StatusNotFound, service.PublicMCPJobError(err))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"job": job})
+}
+
+func (h *AppHandler) ListJobs(c *gin.Context) {
+	limit := 20
+	if value := strings.TrimSpace(c.Query("limit")); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			limit = parsed
+		}
+	}
+	page, err := h.appService.ListMCPJobsPageAs(limit, c.Query("cursor"), auth.PrincipalFromContext(c))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, service.PublicMCPJobError(err))
+		return
+	}
+	payload := gin.H{"items": page.Items}
+	if page.NextCursor != "" {
+		payload["nextCursor"] = page.NextCursor
+	}
+	c.JSON(http.StatusOK, payload)
 }
 
 func (h *AppHandler) CancelJob(c *gin.Context) {
 	jobID := c.Param("jobId")
 	job, err := h.appService.CancelMCPJobAs(jobID, auth.PrincipalFromContext(c))
 	if err != nil {
-		writeError(c, http.StatusNotFound, err.Error())
+		writeError(c, http.StatusNotFound, service.PublicMCPJobError(err))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"job": job})
+}
+
+func (h *AppHandler) RetryJob(c *gin.Context) {
+	jobID := c.Param("jobId")
+	job, err := h.appService.RetryMCPJobAs(jobID, auth.PrincipalFromContext(c))
+	if err != nil {
+		writeError(c, http.StatusBadRequest, service.PublicMCPJobError(err))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"job": job, "sourceJobId": job.ParentJobID})
 }
 
 func (h *AppHandler) GetConfig(c *gin.Context) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -85,9 +86,19 @@ type AppService struct {
 	mcpJobCancels         map[string]context.CancelFunc
 	mcpJobRetries         map[string]mcpJobRetryAction
 	mcpJobRetrying        map[string]bool
+	mcpJobDescriptors     map[string]mcpJobDescriptor
+	mcpJobLeases          map[string]mcpJobLease
+	mcpJobStore           *MCPJobStore
+	mcpWorkerID           string
 	mcpJobLifecycleMu     sync.Mutex
 	mcpJobWG              sync.WaitGroup
+	mcpJobRecoveryStop    chan struct{}
+	mcpJobRecoveryOnce    sync.Once
+	mcpJobRecoveryWG      sync.WaitGroup
 	mcpJobsShutdown       bool
+	mcpJobStatsMu         sync.Mutex
+	mcpJobPersistenceFail int64
+	mcpJobLastFailureAt   string
 	indexReservationMu    sync.Mutex
 	indexReservations     map[string]chan struct{}
 }
@@ -102,6 +113,27 @@ type mcpDangerConfirmationRecord struct {
 }
 
 type mcpJobRetryAction func() (model.MCPJob, error)
+
+type mcpJobLease struct {
+	Owner     string
+	Attempt   int
+	ExpiresAt string
+}
+
+// MCPJobStoreHealth is deliberately limited to operational counters. It does
+// not expose the SQLite path, job descriptors, errors containing URLs, or job
+// results.
+type MCPJobStoreHealth struct {
+	Status                 string `json:"status"`
+	Writable               bool   `json:"writable"`
+	ActiveJobs             int    `json:"activeJobs"`
+	RecoveringJobs         int    `json:"recoveringJobs"`
+	LeasedJobs             int    `json:"leasedJobs"`
+	ExpiredLeaseJobs       int    `json:"expiredLeaseJobs"`
+	TerminalJobs           int    `json:"terminalJobs"`
+	PersistenceFailures    int64  `json:"persistenceFailures"`
+	LastPersistenceFailure string `json:"lastPersistenceFailure,omitempty"`
+}
 
 const (
 	mcpDangerConfirmationDefaultTTL = 5 * time.Minute
@@ -173,6 +205,10 @@ func (c *LLMContextCompressor) Compress(ctx context.Context, query string, chunk
 }
 
 func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory ChatHistoryStore, serverConfig model.ServerConfig) *AppService {
+	return NewAppServiceWithJobStore(qdrant, store, chatHistory, serverConfig, nil)
+}
+
+func NewAppServiceWithJobStore(qdrant *QdrantService, store *AppStateStore, chatHistory ChatHistoryStore, serverConfig model.ServerConfig, jobStore *MCPJobStore) *AppService {
 	stagingDir := strings.TrimSpace(serverConfig.StagingDir)
 	if stagingDir == "" && strings.TrimSpace(serverConfig.UploadDir) != "" {
 		stagingDir = filepath.Join(filepath.Dir(serverConfig.UploadDir), "staging")
@@ -199,10 +235,20 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 		mcpJobCancels:       map[string]context.CancelFunc{},
 		mcpJobRetries:       map[string]mcpJobRetryAction{},
 		mcpJobRetrying:      map[string]bool{},
+		mcpJobDescriptors:   map[string]mcpJobDescriptor{},
+		mcpJobLeases:        map[string]mcpJobLease{},
+		mcpJobStore:         jobStore,
+		mcpWorkerID:         util.NextID("mcp-worker"),
+		mcpJobRecoveryStop:  make(chan struct{}),
 		indexReservations:   map[string]chan struct{}{},
 	}
 	service.retrievalOrchestrator = NewRetrievalOrchestrator(service)
 	service.rag.SetQdrantService(qdrant)
+	if service.staging != nil {
+		if err := service.staging.ManifestLoadError(); err != nil {
+			log.Printf("failed to load upload staging manifest: %v", err)
+		}
+	}
 
 	service.reranker = NewEmbeddingReranker(service.rag)
 	if embeddingReranker, ok := service.reranker.(*EmbeddingReranker); ok {
@@ -274,6 +320,7 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 	if err := service.saveState(); err != nil {
 		log.Printf("failed to persist app state during startup: %v", err)
 	}
+	service.restoreMCPJobs()
 
 	return service
 }
@@ -471,13 +518,59 @@ func (s *AppService) GetHealthConfigMap(serverConfig model.ServerConfig) map[str
 	if s.qdrant != nil && s.qdrant.IsEnabled() {
 		qdrantStatus = "enabled"
 	}
+	jobHealth := s.GetMCPJobStoreHealth()
 
 	return map[string]string{
-		"auth_enabled":        fmt.Sprintf("%t", serverConfig.EnableAuth),
-		"auth_setup_required": fmt.Sprintf("%t", setupRequired),
-		"knowledge_bases":     fmt.Sprintf("%d", kbCount),
-		"qdrant_status":       qdrantStatus,
+		"auth_enabled":                 fmt.Sprintf("%t", serverConfig.EnableAuth),
+		"auth_setup_required":          fmt.Sprintf("%t", setupRequired),
+		"knowledge_bases":              fmt.Sprintf("%d", kbCount),
+		"qdrant_status":                qdrantStatus,
+		"mcp_job_store_status":         fmt.Sprintf("%s", jobHealth.Status),
+		"mcp_job_store_writable":       fmt.Sprintf("%t", jobHealth.Writable),
+		"mcp_jobs_active":              fmt.Sprintf("%d", jobHealth.ActiveJobs),
+		"mcp_jobs_recovering":          fmt.Sprintf("%d", jobHealth.RecoveringJobs),
+		"mcp_jobs_leased":              fmt.Sprintf("%d", jobHealth.LeasedJobs),
+		"mcp_jobs_expired_leases":      fmt.Sprintf("%d", jobHealth.ExpiredLeaseJobs),
+		"mcp_job_persistence_failures": fmt.Sprintf("%d", jobHealth.PersistenceFailures),
 	}
+}
+
+func (s *AppService) GetMCPJobStoreHealth() MCPJobStoreHealth {
+	health := MCPJobStoreHealth{Status: "memory_only"}
+	if s == nil {
+		health.Status = "unavailable"
+		return health
+	}
+	s.mcpJobStatsMu.Lock()
+	health.PersistenceFailures = s.mcpJobPersistenceFail
+	health.LastPersistenceFailure = s.mcpJobLastFailureAt
+	s.mcpJobStatsMu.Unlock()
+	if s.mcpJobStore == nil {
+		return health
+	}
+	stats, err := s.mcpJobStore.Stats()
+	if err != nil {
+		health.Status = "error"
+		return health
+	}
+	health.Status = "ok"
+	health.Writable = stats.Writable
+	health.ActiveJobs = stats.ActiveJobs
+	health.RecoveringJobs = stats.RecoveringJobs
+	health.LeasedJobs = stats.LeasedJobs
+	health.ExpiredLeaseJobs = stats.ExpiredLeaseJobs
+	health.TerminalJobs = stats.TerminalJobs
+	return health
+}
+
+func (s *AppService) recordMCPJobPersistenceFailure() {
+	if s == nil {
+		return
+	}
+	s.mcpJobStatsMu.Lock()
+	s.mcpJobPersistenceFail++
+	s.mcpJobLastFailureAt = util.NowRFC3339()
+	s.mcpJobStatsMu.Unlock()
 }
 
 func (s *AppService) GetConfig() model.AppConfig {
@@ -572,11 +665,27 @@ func (s *AppService) CleanupUploadStaging() error {
 	return s.staging.CleanupExpired()
 }
 
+func (s *AppService) PruneMCPJobs() (int, error) {
+	if s == nil || s.mcpJobStore == nil {
+		return 0, nil
+	}
+	deleted, err := s.mcpJobStore.PruneWithCount(mcpJobStoreDefaultKeep)
+	if err != nil {
+		s.recordMCPJobPersistenceFailure()
+		return 0, err
+	}
+	return deleted, nil
+}
+
 func (s *AppService) RegisterStagedUpload(uploadID, knowledgeBaseID, fileName string) (model.Document, error) {
 	return s.RegisterStagedUploadAs(context.Background(), uploadID, knowledgeBaseID, fileName, AuthPrincipal{})
 }
 
 func (s *AppService) RegisterStagedUploadAs(ctx context.Context, uploadID, knowledgeBaseID, fileName string, owner AuthPrincipal) (model.Document, error) {
+	return s.registerStagedUploadAs(ctx, uploadID, knowledgeBaseID, fileName, owner, util.NextID("staging-worker"), "")
+}
+
+func (s *AppService) registerStagedUploadAs(ctx context.Context, uploadID, knowledgeBaseID, fileName string, owner AuthPrincipal, leaseOwner, expectedChecksum string) (model.Document, error) {
 	if s == nil || s.staging == nil {
 		return model.Document{}, fmt.Errorf("upload staging service is not configured")
 	}
@@ -588,17 +697,32 @@ func (s *AppService) RegisterStagedUploadAs(ctx context.Context, uploadID, knowl
 	if err != nil {
 		return model.Document{}, err
 	}
-	staged, err := s.staging.ClaimAs(uploadID, owner)
+	staged, err := s.staging.ClaimWithLeaseAs(uploadID, owner, leaseOwner, defaultStagedProcessingLease)
 	if err != nil {
 		return model.Document{}, err
+	}
+	if expected := strings.ToLower(strings.TrimSpace(expectedChecksum)); expected != "" && !strings.EqualFold(strings.TrimSpace(staged.SHA256), expected) {
+		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		return model.Document{}, fmt.Errorf("staged upload checksum metadata mismatch")
 	}
 	if err := ctx.Err(); err != nil {
-		_ = s.staging.Release(staged.ID)
+		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
 		return model.Document{}, err
 	}
-	permanentPath, err := s.staging.CopyTo(staged.ID, s.serverConfig.UploadDir)
+	if existing, found, findErr := s.findDocumentByChecksum(resolvedKnowledgeBaseID, staged.SHA256); findErr != nil {
+		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		return model.Document{}, findErr
+	} else if found && isIndexedDocumentStatus(existing.Status) {
+		if err := s.staging.MarkConsumedWithLease(staged.ID, leaseOwner); err != nil {
+			log.Printf("failed to mark already indexed staged upload consumed: %v", err)
+		} else if err := s.staging.Delete(uploadID); err != nil {
+			log.Printf("failed to remove already indexed staged upload: %v", err)
+		}
+		return existing, nil
+	}
+	permanentPath, err := s.staging.CopyToWithLease(staged.ID, s.serverConfig.UploadDir, leaseOwner)
 	if err != nil {
-		_ = s.staging.Release(staged.ID)
+		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
 		return model.Document{}, err
 	}
 	documentName := strings.TrimSpace(fileName)
@@ -621,19 +745,28 @@ func (s *AppService) RegisterStagedUploadAs(ctx context.Context, uploadID, knowl
 	}
 	if err := ctx.Err(); err != nil {
 		_ = os.Remove(permanentPath)
-		_ = s.staging.Release(staged.ID)
+		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
 		return model.Document{}, err
 	}
 	uploaded, err := s.IndexDocumentWithContext(ctx, document)
 	if err != nil {
+		var duplicateErr *DuplicateDocumentError
+		if errors.As(err, &duplicateErr) && isIndexedDocumentStatus(duplicateErr.Existing.Status) && batchDocumentMatchesChecksum(duplicateErr.Existing, staged.SHA256) {
+			if markErr := s.staging.MarkConsumedWithLease(uploadID, leaseOwner); markErr != nil {
+				log.Printf("failed to mark duplicate staged upload consumed: %v", markErr)
+			} else if deleteErr := s.staging.Delete(uploadID); deleteErr != nil {
+				log.Printf("failed to remove duplicate staged upload: %v", deleteErr)
+			}
+			_ = os.Remove(permanentPath)
+			return duplicateErr.Existing, nil
+		}
 		_ = os.Remove(permanentPath)
-		_ = s.staging.Release(staged.ID)
+		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
 		return model.Document{}, err
 	}
-	if err := s.staging.MarkConsumed(uploadID); err != nil {
+	if err := s.staging.MarkConsumedWithLease(uploadID, leaseOwner); err != nil {
 		log.Printf("failed to mark staged upload consumed: %v", err)
-	}
-	if err := s.staging.Delete(uploadID); err != nil {
+	} else if err := s.staging.Delete(uploadID); err != nil {
 		log.Printf("failed to remove consumed staged upload: %v", err)
 	}
 	return uploaded, nil
@@ -1013,6 +1146,10 @@ func (s *AppService) StartBatchIndexJob(knowledgeBaseID string, uploadIDs []stri
 }
 
 func (s *AppService) StartBatchIndexJobAs(knowledgeBaseID string, uploadIDs []string, concurrency int, owner AuthPrincipal) (model.MCPJob, error) {
+	return s.startBatchIndexJobAs(knowledgeBaseID, uploadIDs, concurrency, owner, nil)
+}
+
+func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []string, concurrency int, owner AuthPrincipal, expectedChecksums map[string]string) (model.MCPJob, error) {
 	if s == nil {
 		return model.MCPJob{}, fmt.Errorf("app service is nil")
 	}
@@ -1034,14 +1171,29 @@ func (s *AppService) StartBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 	}
 
 	ids := make([]string, 0, len(uploadIDs))
+	seenIDs := make(map[string]struct{}, len(uploadIDs))
 	for _, uploadID := range uploadIDs {
 		trimmedID := strings.TrimSpace(uploadID)
-		if trimmedID != "" {
-			ids = append(ids, trimmedID)
+		if trimmedID == "" {
+			continue
 		}
+		if _, exists := seenIDs[trimmedID]; exists {
+			continue
+		}
+		seenIDs[trimmedID] = struct{}{}
+		ids = append(ids, trimmedID)
 	}
 	if len(ids) == 0 {
 		return model.MCPJob{}, fmt.Errorf("uploadIds cannot be empty")
+	}
+	batchItems, err := s.prepareMCPBatchItems(knowledgeBaseID, ids, owner)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
+	for _, item := range batchItems {
+		if expected := strings.ToLower(strings.TrimSpace(expectedChecksums[item.UploadID])); expected != "" && !strings.EqualFold(expected, item.Checksum) {
+			return model.MCPJob{}, fmt.Errorf("staged upload checksum metadata mismatch")
+		}
 	}
 
 	now := util.NowRFC3339()
@@ -1052,64 +1204,234 @@ func (s *AppService) StartBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 		Progress:      0,
 		Summary:       fmt.Sprintf("准备索引 %d 个文档。", len(ids)),
 		Retryable:     true,
+		Resumable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
 		OwnerAPIKeyID: strings.TrimSpace(owner.APIKeyID),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	retryUploadIDs := append([]string(nil), ids...)
 	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
-		return s.StartBatchIndexJobAs(knowledgeBaseID, retryUploadIDs, concurrency, owner)
+		retryUploadIDs, expectedChecksums := s.retryableMCPBatchUploadIDs(job.ID, ids)
+		if len(retryUploadIDs) == 0 {
+			return model.MCPJob{}, fmt.Errorf("batch job has no retryable items")
+		}
+		return s.startBatchIndexJobAs(knowledgeBaseID, retryUploadIDs, concurrency, owner, expectedChecksums)
 	})
+	descriptor := mcpJobDescriptor{
+		Version:         mcpJobDescriptorVersion,
+		Type:            "batch-index",
+		KnowledgeBaseID: knowledgeBaseID,
+		UploadIDs:       append([]string(nil), ids...),
+		Concurrency:     concurrency,
+	}
 
-	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
+	if ok, err := s.registerMCPJobWithDescriptorAndItems(job, cancel, retryAction, descriptor, batchItems); !ok {
 		cancel()
+		if err != nil {
+			return model.MCPJob{}, err
+		}
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
 
 	go func() {
 		defer s.mcpJobWG.Done()
-		s.runBatchIndexJob(ctx, job.ID, knowledgeBaseID, ids, concurrency, owner)
+		s.runMCPJobWorker(job.ID, ctx, func(workerCtx context.Context) {
+			s.runBatchIndexJob(workerCtx, job.ID, knowledgeBaseID, ids, concurrency, owner)
+		})
 	}()
 	return job, nil
 }
 
+func (s *AppService) prepareMCPBatchItems(knowledgeBaseID string, uploadIDs []string, owner AuthPrincipal) ([]mcpJobItem, error) {
+	if s == nil || s.staging == nil {
+		return nil, fmt.Errorf("upload staging service is not configured")
+	}
+	items := make([]mcpJobItem, 0, len(uploadIDs))
+	for _, uploadID := range uploadIDs {
+		item := mcpJobItem{
+			UploadID:  uploadID,
+			Status:    mcpJobItemPending,
+			Retryable: true,
+			UpdatedAt: util.NowRFC3339(),
+		}
+		staged, err := s.staging.GetAs(uploadID, owner)
+		if err == nil {
+			item.FileName = staged.FileName
+			item.Checksum = staged.SHA256
+			items = append(items, item)
+			continue
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "not owned") {
+			return nil, err
+		}
+		item.Status = mcpJobItemFailed
+		item.ErrorCode, item.Error = PublicIndexFailure(err)
+		item.Retryable = false
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (s *AppService) retryableMCPBatchUploadIDs(jobID string, fallback []string) ([]string, map[string]string) {
+	if s == nil || s.mcpJobStore == nil {
+		return append([]string(nil), fallback...), nil
+	}
+	items, err := s.mcpJobStore.ListItems(jobID)
+	if err != nil {
+		return append([]string(nil), fallback...), nil
+	}
+	result := make([]string, 0, len(items))
+	expectedChecksums := make(map[string]string, len(items))
+	for _, item := range items {
+		if item.Status == mcpJobItemSucceeded || !item.Retryable {
+			continue
+		}
+		result = append(result, item.UploadID)
+		expectedChecksums[item.UploadID] = item.Checksum
+	}
+	return result, expectedChecksums
+}
+
 func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseID string, uploadIDs []string, concurrency int, owner AuthPrincipal) {
+	if len(uploadIDs) == 0 {
+		s.completeMCPJob(jobID, "failed", 100, "批量索引任务失败。", nil, "uploadIds cannot be empty")
+		return
+	}
 	s.updateMCPJob(jobID, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 5
 		job.Summary = fmt.Sprintf("正在索引 %d 个文档。", len(uploadIDs))
 	})
 
+	itemByUploadID, err := s.loadMCPBatchItems(jobID, uploadIDs)
+	if err != nil {
+		s.completeMCPJob(jobID, "failed", 100, "批量索引任务失败。", nil, err.Error())
+		return
+	}
+
+	resultsByUploadID := make(map[string]map[string]any, len(uploadIDs))
+	pendingUploadIDs := make([]string, 0, len(uploadIDs))
+	successful := 0
+	completed := 0
+	for _, uploadID := range uploadIDs {
+		item := itemByUploadID[uploadID]
+		if item.Status == mcpJobItemSucceeded {
+			if document, found := s.findMCPBatchCompletedDocument(knowledgeBaseID, item); found {
+				resultsByUploadID[uploadID] = mcpBatchSuccessResult(uploadID, item, document)
+				successful++
+				completed++
+				continue
+			}
+			// A stale checkpoint is safe to replay only when the source is still
+			// available. The normal registration path will produce a precise
+			// source error if it has already expired or been removed.
+			item.Status = mcpJobItemPending
+			item.DocumentID = ""
+			item.Error = ""
+			item.ErrorCode = ""
+			item.Retryable = true
+			itemByUploadID[uploadID] = item
+			s.persistMCPBatchItem(item)
+		}
+		if item.Status == mcpJobItemFailed && !item.Retryable {
+			resultsByUploadID[uploadID] = mcpBatchFailureResult(uploadID, item)
+			completed++
+			continue
+		}
+		if item.Status == mcpJobItemCancelled {
+			resultsByUploadID[uploadID] = mcpBatchFailureResult(uploadID, item)
+			completed++
+			continue
+		}
+		pendingUploadIDs = append(pendingUploadIDs, uploadID)
+	}
+	s.updateMCPBatchProgress(jobID, completed, len(uploadIDs))
+
 	type result struct {
-		value map[string]any
-		ok    bool
+		uploadID string
+		item     mcpJobItem
+		value    map[string]any
+		ok       bool
 	}
 	sem := make(chan struct{}, concurrency)
-	results := make(chan result, len(uploadIDs))
+	results := make(chan result, len(pendingUploadIDs))
 	var wg sync.WaitGroup
-	for _, uploadID := range uploadIDs {
+	for _, uploadID := range pendingUploadIDs {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
+			item := itemByUploadID[id]
 			select {
 			case <-ctx.Done():
-				results <- result{value: map[string]any{"uploadId": id, "success": false, "error": "job cancelled"}}
+				item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
+				if item.Status == mcpJobItemCancelled {
+					s.persistMCPBatchItem(item)
+				}
+				results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
-				document, err := s.RegisterStagedUploadAs(ctx, id, knowledgeBaseID, "", owner)
-				if err != nil {
-					results <- result{value: map[string]any{"uploadId": id, "success": false, "error": err.Error()}}
+				if !s.markMCPBatchItemRunning(item) {
+					item.Status = mcpJobItemFailed
+					item.ErrorCode = "job_lease_lost"
+					item.Error = "任务租约已变更，当前 Worker 未获得写入权限。"
+					item.Retryable = true
+					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
 					return
 				}
-				results <- result{value: map[string]any{
-					"uploadId":   id,
-					"documentId": document.ID,
-					"fileName":   document.Name,
-					"success":    true,
-					"document":   document,
-				}, ok: true}
+				document, err := s.registerStagedUploadAs(ctx, id, knowledgeBaseID, "", owner, jobID, item.Checksum)
+				if err != nil {
+					var duplicateErr *DuplicateDocumentError
+					if errors.As(err, &duplicateErr) {
+						if duplicate, found := s.findMCPBatchCompletedDocument(knowledgeBaseID, mcpJobItem{UploadID: id, FileName: item.FileName, Checksum: item.Checksum, DocumentID: duplicateErr.Existing.ID}); found {
+							item.Status = mcpJobItemSucceeded
+							item.DocumentID = duplicate.ID
+							item.Error = ""
+							item.ErrorCode = ""
+							item.Retryable = false
+							s.persistMCPBatchItem(item)
+							results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, duplicate), ok: true}
+							return
+						}
+					}
+					// If indexing committed before the process crashed, the staging
+					// record may already be gone even though this child checkpoint
+					// still says pending/running. Treat the indexed checksum as the
+					// durable success marker and avoid replaying the upload.
+					if completedDocument, found := s.findMCPBatchCompletedDocument(knowledgeBaseID, item); found {
+						item.Status = mcpJobItemSucceeded
+						item.DocumentID = completedDocument.ID
+						item.FileName = completedDocument.Name
+						item.Error = ""
+						item.ErrorCode = ""
+						item.Retryable = false
+						s.persistMCPBatchItem(item)
+						results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, completedDocument), ok: true}
+						return
+					}
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+						item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
+						if item.Status == mcpJobItemCancelled {
+							s.persistMCPBatchItem(item)
+						}
+						results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
+						return
+					}
+					item.Status = mcpJobItemFailed
+					item.ErrorCode, item.Error = PublicIndexFailure(err)
+					item.Retryable = mcpBatchItemRetryable(item.ErrorCode)
+					s.persistMCPBatchItem(item)
+					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
+					return
+				}
+				item.Status = mcpJobItemSucceeded
+				item.DocumentID = document.ID
+				item.FileName = document.Name
+				item.Error = ""
+				item.ErrorCode = ""
+				item.Retryable = false
+				s.persistMCPBatchItem(item)
+				results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, document), ok: true}
 			}
 		}(uploadID)
 	}
@@ -1118,21 +1440,27 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 		close(results)
 	}()
 
-	items := make([]map[string]any, 0, len(uploadIDs))
-	successful := 0
 	for item := range results {
-		items = append(items, item.value)
+		resultsByUploadID[item.uploadID] = item.value
 		if item.ok {
 			successful++
 		}
-		completed := len(items)
-		progress := 10 + completed*85/len(uploadIDs)
-		s.updateMCPJob(jobID, func(job *model.MCPJob) {
-			job.Progress = progress
-			job.Summary = fmt.Sprintf("已完成 %d/%d 个文档。", completed, len(uploadIDs))
-		})
+		completed++
+		s.updateMCPBatchProgress(jobID, completed, len(uploadIDs))
 	}
 
+	items := make([]map[string]any, 0, len(uploadIDs))
+	for _, uploadID := range uploadIDs {
+		if value, exists := resultsByUploadID[uploadID]; exists {
+			items = append(items, value)
+			continue
+		}
+		// This can only happen when cancellation races with worker startup. Keep
+		// the aggregate complete and explicit instead of silently dropping a file.
+		cancelled := mcpJobItem{UploadID: uploadID, Status: mcpJobItemCancelled, ErrorCode: "cancelled", Error: "任务已取消。", Retryable: false}
+		items = append(items, mcpBatchFailureResult(uploadID, cancelled))
+		completed++
+	}
 	failed := len(items) - successful
 	resultData := map[string]any{
 		"total": len(uploadIDs), "successful": successful, "failed": failed, "results": items,
@@ -1146,6 +1474,314 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 		status = "failed"
 	}
 	s.completeMCPJob(jobID, status, 100, fmt.Sprintf("批量索引完成，成功 %d 个，失败 %d 个。", successful, failed), resultData, "")
+}
+
+func (s *AppService) loadMCPBatchItems(jobID string, uploadIDs []string) (map[string]mcpJobItem, error) {
+	items := make(map[string]mcpJobItem, len(uploadIDs))
+	if s == nil || s.mcpJobStore == nil {
+		for _, uploadID := range uploadIDs {
+			items[uploadID] = mcpJobItem{JobID: jobID, UploadID: uploadID, Status: mcpJobItemPending, Retryable: true}
+		}
+		return items, nil
+	}
+	persisted, err := s.mcpJobStore.ListItems(jobID)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range persisted {
+		items[item.UploadID] = item
+	}
+	for _, uploadID := range uploadIDs {
+		if _, exists := items[uploadID]; !exists {
+			items[uploadID] = mcpJobItem{JobID: jobID, UploadID: uploadID, Status: mcpJobItemPending, Retryable: true}
+		}
+	}
+	return items, nil
+}
+
+func (s *AppService) markMCPBatchItemRunning(item mcpJobItem) bool {
+	item.Status = mcpJobItemRunning
+	item.Error = ""
+	item.ErrorCode = ""
+	item.Retryable = true
+	return s.persistMCPBatchItem(item)
+}
+
+func (s *AppService) persistMCPBatchItem(item mcpJobItem) bool {
+	if s == nil || s.mcpJobStore == nil {
+		return true
+	}
+	s.mcpJobMu.Lock()
+	lease := s.mcpJobLeases[item.JobID]
+	s.mcpJobMu.Unlock()
+	updated, err := s.mcpJobStore.UpdateItem(item, lease.Owner, lease.Attempt)
+	if err != nil {
+		log.Printf("failed to persist MCP job item %s/%s: %v", item.JobID, item.UploadID, err)
+		s.recordMCPJobPersistenceFailure()
+		return false
+	}
+	if !updated {
+		log.Printf("MCP job item %s/%s lease is no longer owned by this worker", item.JobID, item.UploadID)
+		s.recordMCPJobPersistenceFailure()
+	}
+	return updated
+}
+
+func (s *AppService) updateMCPBatchProgress(jobID string, completed, total int) {
+	if total <= 0 {
+		return
+	}
+	if completed < 0 {
+		completed = 0
+	}
+	if completed > total {
+		completed = total
+	}
+	progress := 10 + completed*85/total
+	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+		job.Progress = progress
+		job.Summary = fmt.Sprintf("已完成 %d/%d 个文档。", completed, total)
+	})
+}
+
+func (s *AppService) findMCPBatchCompletedDocument(knowledgeBaseID string, item mcpJobItem) (model.Document, bool) {
+	if s == nil {
+		return model.Document{}, false
+	}
+	if documentID := strings.TrimSpace(item.DocumentID); documentID != "" {
+		if document, found, err := s.findDocumentByID(knowledgeBaseID, documentID); err == nil && found {
+			document = enrichDocumentGovernance(document)
+			if batchDocumentMatchesChecksum(document, item.Checksum) && isIndexedDocumentStatus(document.Status) {
+				return document, true
+			}
+		}
+	}
+	if checksum := strings.TrimSpace(item.Checksum); checksum != "" {
+		if document, found, err := s.findDocumentByChecksum(knowledgeBaseID, checksum); err == nil && found && isIndexedDocumentStatus(document.Status) {
+			return enrichDocumentGovernance(document), true
+		}
+	}
+	return model.Document{}, false
+}
+
+func batchDocumentMatchesChecksum(document model.Document, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(document.Checksum), expected)
+}
+
+func isIndexedDocumentStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "indexed", "ready":
+		return true
+	default:
+		return false
+	}
+}
+
+func mcpBatchSuccessResult(uploadID string, item mcpJobItem, document model.Document) map[string]any {
+	fileName := strings.TrimSpace(item.FileName)
+	if fileName == "" {
+		fileName = document.Name
+	}
+	return map[string]any{
+		"uploadId":   uploadID,
+		"documentId": document.ID,
+		"fileName":   fileName,
+		"success":    true,
+		"document":   document,
+	}
+}
+
+func mcpBatchFailureResult(uploadID string, item mcpJobItem) map[string]any {
+	return map[string]any{
+		"uploadId":  uploadID,
+		"fileName":  strings.TrimSpace(item.FileName),
+		"success":   false,
+		"errorCode": strings.TrimSpace(item.ErrorCode),
+		"error":     strings.TrimSpace(item.Error),
+	}
+}
+
+func mcpBatchCancelledItem(item mcpJobItem, shuttingDown bool) mcpJobItem {
+	if shuttingDown {
+		if item.Status == mcpJobItemPending {
+			item.Status = mcpJobItemPending
+		} else {
+			item.Status = mcpJobItemRunning
+		}
+		item.Error = ""
+		item.ErrorCode = ""
+		item.Retryable = true
+		return item
+	}
+	item.Status = mcpJobItemCancelled
+	item.ErrorCode = "cancelled"
+	item.Error = "任务已取消。"
+	item.Retryable = false
+	return item
+}
+
+func mcpBatchItemRetryable(errorCode string) bool {
+	switch strings.TrimSpace(errorCode) {
+	case "source_missing", "source_changed", "source_unreadable", "duplicate_document", "invalid_argument", "cancelled":
+		return false
+	default:
+		return true
+	}
+}
+
+func (s *AppService) ensureMCPJobLoaded(jobID string) (model.MCPJob, mcpJobDescriptor, bool, error) {
+	if s == nil {
+		return model.MCPJob{}, mcpJobDescriptor{}, false, fmt.Errorf("app service is nil")
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return model.MCPJob{}, mcpJobDescriptor{}, false, fmt.Errorf("job id is required")
+	}
+	s.mcpJobMu.Lock()
+	s.ensureMCPJobMapsLocked()
+	if job, ok := s.mcpJobs[jobID]; ok {
+		descriptor := s.mcpJobDescriptors[jobID]
+		s.mcpJobMu.Unlock()
+		return job, descriptor, true, nil
+	}
+	s.mcpJobMu.Unlock()
+	if s.mcpJobStore == nil {
+		return model.MCPJob{}, mcpJobDescriptor{}, false, nil
+	}
+	record, found, err := s.mcpJobStore.Get(jobID)
+	if err != nil || !found {
+		return model.MCPJob{}, mcpJobDescriptor{}, found, err
+	}
+	s.mcpJobMu.Lock()
+	s.ensureMCPJobMapsLocked()
+	if current, exists := s.mcpJobs[jobID]; exists {
+		job := current
+		descriptor := s.mcpJobDescriptors[jobID]
+		s.mcpJobMu.Unlock()
+		return job, descriptor, true, nil
+	}
+	s.mcpJobs[jobID] = record.Job
+	s.mcpJobDescriptors[jobID] = record.Descriptor
+	if record.LeaseOwner != "" {
+		s.mcpJobLeases[jobID] = mcpJobLease{Owner: record.LeaseOwner, Attempt: record.Job.Attempt, ExpiresAt: record.LeaseExpiresAt}
+	}
+	s.mcpJobMu.Unlock()
+	return record.Job, record.Descriptor, true, nil
+}
+
+type MCPJobPage struct {
+	Items      []model.MCPJob
+	NextCursor string
+}
+
+type mcpJobPageCursor struct {
+	UpdatedAt string `json:"updatedAt"`
+	ID        string `json:"id"`
+}
+
+func (s *AppService) ListMCPJobsPageAs(limit int, cursor string, owner AuthPrincipal) (MCPJobPage, error) {
+	if s == nil {
+		return MCPJobPage{}, fmt.Errorf("app service is nil")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	decodedCursor, err := decodeMCPJobPageCursor(cursor)
+	if err != nil {
+		return MCPJobPage{}, err
+	}
+	storeCursor := ""
+	if decodedCursor != nil {
+		storeCursor = decodedCursor.UpdatedAt + "\x00" + decodedCursor.ID
+	}
+	if s.mcpJobStore != nil {
+		records, err := s.mcpJobStore.ListForPrincipal(limit+1, owner, storeCursor)
+		if err != nil {
+			return MCPJobPage{}, err
+		}
+		page := MCPJobPage{Items: make([]model.MCPJob, 0, minInt(limit, len(records)))}
+		for _, record := range records {
+			page.Items = append(page.Items, publicMCPJob(record.Job))
+		}
+		if len(page.Items) > limit {
+			page.Items = page.Items[:limit]
+			last := page.Items[len(page.Items)-1]
+			page.NextCursor = encodeMCPJobPageCursor(last.UpdatedAt, last.ID)
+		}
+		return page, nil
+	}
+
+	items := s.listMCPJobsFromMemory(owner, decodedCursor)
+	page := MCPJobPage{Items: make([]model.MCPJob, 0, minInt(limit, len(items)))}
+	for _, item := range items {
+		page.Items = append(page.Items, publicMCPJob(item))
+		if len(page.Items) == limit {
+			break
+		}
+	}
+	if len(items) > limit && len(page.Items) > 0 {
+		last := page.Items[len(page.Items)-1]
+		page.NextCursor = encodeMCPJobPageCursor(last.UpdatedAt, last.ID)
+	}
+	return page, nil
+}
+
+func (s *AppService) listMCPJobsFromMemory(owner AuthPrincipal, cursor *mcpJobPageCursor) []model.MCPJob {
+	s.mcpJobMu.Lock()
+	defer s.mcpJobMu.Unlock()
+	s.ensureMCPJobMapsLocked()
+	items := make([]model.MCPJob, 0, len(s.mcpJobs))
+	for _, job := range s.mcpJobs {
+		if !mcpJobOwnerMatches(job, owner) || !mcpJobAfterCursor(job, cursor) {
+			continue
+		}
+		items = append(items, cloneMCPJob(job))
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt == items[j].UpdatedAt {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].UpdatedAt > items[j].UpdatedAt
+	})
+	return items
+}
+
+func mcpJobAfterCursor(job model.MCPJob, cursor *mcpJobPageCursor) bool {
+	if cursor == nil {
+		return true
+	}
+	if job.UpdatedAt != cursor.UpdatedAt {
+		return job.UpdatedAt < cursor.UpdatedAt
+	}
+	return job.ID < cursor.ID
+}
+
+func encodeMCPJobPageCursor(updatedAt, jobID string) string {
+	payload, err := json.Marshal(mcpJobPageCursor{UpdatedAt: updatedAt, ID: jobID})
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeMCPJobPageCursor(value string) (*mcpJobPageCursor, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid mcp job cursor")
+	}
+	var cursor mcpJobPageCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil || strings.TrimSpace(cursor.UpdatedAt) == "" || strings.TrimSpace(cursor.ID) == "" {
+		return nil, fmt.Errorf("invalid mcp job cursor")
+	}
+	return &cursor, nil
 }
 
 func (s *AppService) StartMCPImportJob(req model.MCPStartImportJobRequest) (model.MCPJob, error) {
@@ -1188,31 +1824,77 @@ func (s *AppService) StartMCPImportJobAs(req model.MCPStartImportJobRequest, own
 		Progress:      0,
 		Summary:       fmt.Sprintf("准备导入《%s》。", fileName),
 		Retryable:     true,
+		Resumable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
 		OwnerAPIKeyID: strings.TrimSpace(owner.APIKeyID),
 	}
+	uploadID := strings.TrimSpace(req.UploadID)
+	inlineUploadCreated := false
+	if uploadID == "" && strings.TrimSpace(req.Content) != "" {
+		if err := validateMCPJobTextFileName(fileName, s.GetConfig()); err != nil {
+			return model.MCPJob{}, err
+		}
+		staged, err := s.StageInlineUploadAs(fileName, []byte(req.Content), "mcp-job-import", owner)
+		if err != nil {
+			return model.MCPJob{}, err
+		}
+		uploadID = staged.ID
+		inlineUploadCreated = true
+	}
+	checksum := ""
+	if uploadID != "" {
+		staged, err := s.staging.GetAs(uploadID, owner)
+		if err != nil {
+			if inlineUploadCreated {
+				_ = s.staging.Delete(uploadID)
+			}
+			return model.MCPJob{}, err
+		}
+		checksum = staged.SHA256
+		if expected := strings.ToLower(strings.TrimSpace(req.ExpectedChecksum)); expected != "" && !strings.EqualFold(expected, checksum) {
+			if inlineUploadCreated {
+				_ = s.staging.Delete(uploadID)
+			}
+			return model.MCPJob{}, fmt.Errorf("staged upload checksum metadata mismatch")
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	retryRequest := req
 	retryRequest.KnowledgeBaseID = knowledgeBaseID
 	retryRequest.FileName = fileName
+	retryRequest.Content = ""
+	retryRequest.UploadID = uploadID
+	retryRequest.ExpectedChecksum = checksum
 	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
 		return s.StartMCPImportJobAs(retryRequest, owner)
 	})
+	descriptor := mcpJobDescriptor{
+		Version:         mcpJobDescriptorVersion,
+		Type:            "import",
+		KnowledgeBaseID: knowledgeBaseID,
+		FileName:        fileName,
+		UploadID:        uploadID,
+		Checksum:        checksum,
+	}
 
-	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
+	if ok, err := s.registerMCPJobWithDescriptor(job, cancel, retryAction, descriptor); !ok {
 		cancel()
+		if uploadID != "" && strings.TrimSpace(req.UploadID) == "" {
+			_ = s.staging.Delete(uploadID)
+		}
+		if err != nil {
+			return model.MCPJob{}, err
+		}
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
 
 	go func() {
 		defer s.mcpJobWG.Done()
-		s.runMCPImportJob(ctx, job.ID, model.MCPStartImportJobRequest{
-			KnowledgeBaseID: knowledgeBaseID,
-			FileName:        fileName,
-			Content:         req.Content,
-		}, owner)
+		s.runMCPJobWorker(job.ID, ctx, func(workerCtx context.Context) {
+			s.runMCPImportJob(workerCtx, job.ID, descriptor, owner)
+		})
 	}()
 
 	return job, nil
@@ -1238,6 +1920,7 @@ func (s *AppService) startMCPReindexJob(req model.MCPStartImportJobRequest, owne
 		Status:        "queued",
 		Summary:       fmt.Sprintf("准备重建文档 %s 的索引。", documentID),
 		Retryable:     true,
+		Resumable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
@@ -1247,16 +1930,29 @@ func (s *AppService) startMCPReindexJob(req model.MCPStartImportJobRequest, owne
 	retryRequest := req
 	retryRequest.KnowledgeBaseID = knowledgeBaseID
 	retryRequest.DocumentID = documentID
+	retryRequest.Content = ""
+	retryRequest.UploadID = ""
 	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
 		return s.StartMCPImportJobAs(retryRequest, owner)
 	})
-	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
+	descriptor := mcpJobDescriptor{
+		Version:         mcpJobDescriptorVersion,
+		Type:            "reindex",
+		KnowledgeBaseID: knowledgeBaseID,
+		DocumentID:      documentID,
+	}
+	if ok, err := s.registerMCPJobWithDescriptor(job, cancel, retryAction, descriptor); !ok {
 		cancel()
+		if err != nil {
+			return model.MCPJob{}, err
+		}
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
 	go func() {
 		defer s.mcpJobWG.Done()
-		s.runMCPReindexJob(ctx, job.ID, knowledgeBaseID, documentID)
+		s.runMCPJobWorker(job.ID, ctx, func(workerCtx context.Context) {
+			s.runMCPReindexJob(workerCtx, job.ID, knowledgeBaseID, documentID)
+		})
 	}()
 	return job, nil
 }
@@ -1294,6 +1990,7 @@ func (s *AppService) startMCPEvalDatasetJob(req model.MCPStartImportJobRequest, 
 		Status:        "queued",
 		Summary:       "准备生成评估数据集。",
 		Retryable:     true,
+		Resumable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
@@ -1304,8 +2001,18 @@ func (s *AppService) startMCPEvalDatasetJob(req model.MCPStartImportJobRequest, 
 	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
 		return s.StartMCPImportJobAs(retryRequest, owner)
 	})
-	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
+	descriptor := mcpJobDescriptor{
+		Version:         mcpJobDescriptorVersion,
+		Type:            "eval-dataset",
+		KnowledgeBaseID: strings.TrimSpace(req.KnowledgeBaseID),
+		DocumentID:      strings.TrimSpace(req.DocumentID),
+		MaxPerDocument:  req.MaxPerDocument,
+	}
+	if ok, err := s.registerMCPJobWithDescriptor(job, cancel, retryAction, descriptor); !ok {
 		cancel()
+		if err != nil {
+			return model.MCPJob{}, err
+		}
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
 	evalRequest := model.GenerateEvalDatasetRequest{
@@ -1315,7 +2022,9 @@ func (s *AppService) startMCPEvalDatasetJob(req model.MCPStartImportJobRequest, 
 	}
 	go func() {
 		defer s.mcpJobWG.Done()
-		s.runMCPEvalDatasetJob(ctx, job.ID, evalRequest)
+		s.runMCPJobWorker(job.ID, ctx, func(workerCtx context.Context) {
+			s.runMCPEvalDatasetJob(workerCtx, job.ID, evalRequest)
+		})
 	}()
 	return job, nil
 }
@@ -1335,8 +2044,15 @@ func (s *AppService) runMCPEvalDatasetJob(ctx context.Context, jobID string, req
 		s.completeMCPJob(jobID, "failed", 100, "评估数据集任务失败。", nil, err.Error())
 		return
 	}
+	// The generated dataset is available through the dedicated evaluation API.
+	// A long-running Job only stores operational metadata so samples and source
+	// text are not copied into the durable job result.
 	s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("评估数据集生成完成，共 %d 条样本。", response.Count), map[string]any{
-		"dataset": response,
+		"datasetId":       response.DatasetID,
+		"knowledgeBaseId": response.KnowledgeBaseID,
+		"documentId":      response.DocumentID,
+		"count":           response.Count,
+		"documentCount":   response.DocumentCount,
 	}, "")
 }
 
@@ -1345,40 +2061,72 @@ func (s *AppService) registerMCPJob(job model.MCPJob, cancel context.CancelFunc)
 }
 
 func (s *AppService) registerMCPJobWithRetry(job model.MCPJob, cancel context.CancelFunc, retryAction mcpJobRetryAction) bool {
+	ok, _ := s.registerMCPJobWithDescriptor(job, cancel, retryAction, mcpJobDescriptor{Type: job.Type})
+	return ok
+}
+
+func (s *AppService) registerMCPJobWithDescriptor(job model.MCPJob, cancel context.CancelFunc, retryAction mcpJobRetryAction, descriptor mcpJobDescriptor) (bool, error) {
+	return s.registerMCPJobWithDescriptorAndItems(job, cancel, retryAction, descriptor, nil)
+}
+
+func (s *AppService) registerMCPJobWithDescriptorAndItems(job model.MCPJob, cancel context.CancelFunc, retryAction mcpJobRetryAction, descriptor mcpJobDescriptor, items []mcpJobItem) (bool, error) {
 	if s == nil {
-		return false
+		return false, fmt.Errorf("app service is nil")
 	}
 	s.mcpJobLifecycleMu.Lock()
 	defer s.mcpJobLifecycleMu.Unlock()
 	if s.mcpJobsShutdown {
-		return false
+		return false, nil
 	}
 
 	s.mcpJobMu.Lock()
 	defer s.mcpJobMu.Unlock()
-	if s.mcpJobs == nil {
-		s.mcpJobs = map[string]model.MCPJob{}
+	s.ensureMCPJobMapsLocked()
+	if strings.TrimSpace(s.mcpWorkerID) == "" {
+		s.mcpWorkerID = util.NextID("mcp-worker")
 	}
-	if s.mcpJobCancels == nil {
-		s.mcpJobCancels = map[string]context.CancelFunc{}
-	}
-	if s.mcpJobRetries == nil {
-		s.mcpJobRetries = map[string]mcpJobRetryAction{}
-	}
-	if s.mcpJobRetrying == nil {
-		s.mcpJobRetrying = map[string]bool{}
+	descriptor = normalizeMCPJobDescriptor(descriptor, job.Type)
+	job.Resumable = true
+	if s.mcpJobStore != nil {
+		if err := s.mcpJobStore.Create(mcpJobStoreRecord{Job: job, Descriptor: descriptor}); err != nil {
+			return false, err
+		}
+		if len(items) > 0 {
+			if err := s.mcpJobStore.CreateItems(job.ID, items); err != nil {
+				_ = s.mcpJobStore.Delete(job.ID)
+				return false, err
+			}
+		}
+		claimed, claimedOK, err := s.mcpJobStore.Claim(job.ID, s.mcpWorkerID, mcpJobLeaseDuration, time.Now().UTC())
+		if err != nil {
+			_ = s.mcpJobStore.Delete(job.ID)
+			return false, err
+		}
+		if !claimedOK {
+			_ = s.mcpJobStore.Delete(job.ID)
+			return false, fmt.Errorf("mcp job was not claimable after creation")
+		}
+		job = claimed.Job
+		s.mcpJobLeases[job.ID] = mcpJobLease{
+			Owner:     claimed.LeaseOwner,
+			Attempt:   job.Attempt,
+			ExpiresAt: claimed.LeaseExpiresAt,
+		}
 	}
 	s.mcpJobs[job.ID] = job
 	s.mcpJobCancels[job.ID] = cancel
+	s.mcpJobDescriptors[job.ID] = descriptor
 	if retryAction != nil {
 		s.mcpJobRetries[job.ID] = retryAction
 	}
 	s.pruneMCPJobsLocked()
 	s.mcpJobWG.Add(1)
-	return true
+	return true, nil
 }
 
-// ShutdownJobs cancels all in-memory MCP jobs and waits for their workers to exit.
+// ShutdownJobs stops workers without turning a process shutdown into a user
+// cancellation. Active durable jobs keep their description and are reclaimed
+// by the next single-instance process.
 func (s *AppService) ShutdownJobs(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -1389,6 +2137,11 @@ func (s *AppService) ShutdownJobs(ctx context.Context) error {
 	s.mcpJobLifecycleMu.Lock()
 	s.mcpJobsShutdown = true
 	s.mcpJobLifecycleMu.Unlock()
+	s.mcpJobRecoveryOnce.Do(func() {
+		if s.mcpJobRecoveryStop != nil {
+			close(s.mcpJobRecoveryStop)
+		}
+	})
 
 	s.mcpJobMu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(s.mcpJobCancels))
@@ -1409,17 +2162,307 @@ func (s *AppService) ShutdownJobs(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
+		s.mcpJobRecoveryWG.Wait()
+		s.releaseMCPJobLeases()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
-func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, req model.MCPStartImportJobRequest, owner AuthPrincipal) {
+func (s *AppService) restoreMCPJobs() {
+	if s == nil || s.mcpJobStore == nil {
+		return
+	}
+	records, err := s.mcpJobStore.List(mcpJobStoreDefaultKeep)
+	if err != nil {
+		log.Printf("failed to load MCP jobs: %v", err)
+		return
+	}
+	s.mcpJobMu.Lock()
+	for _, record := range records {
+		s.mcpJobs[record.Job.ID] = record.Job
+		s.mcpJobDescriptors[record.Job.ID] = record.Descriptor
+		if record.LeaseOwner != "" {
+			s.mcpJobLeases[record.Job.ID] = mcpJobLease{
+				Owner:     record.LeaseOwner,
+				Attempt:   record.Job.Attempt,
+				ExpiresAt: record.LeaseExpiresAt,
+			}
+		}
+	}
+	s.mcpJobMu.Unlock()
+
+	// Claim only queued jobs without a lease or jobs whose previous lease has
+	// expired. A short monitor below handles crash recovery without allowing a
+	// second live worker to take over an unexpired lease.
+	s.claimRecoverableMCPJobs()
+	s.mcpJobRecoveryWG.Add(1)
+	go s.monitorMCPJobRecovery()
+}
+
+func (s *AppService) claimRecoverableMCPJobs() {
+	if s == nil || s.mcpJobStore == nil {
+		return
+	}
+
+	// Serialize the recovery scan with shutdown. Without holding the lifecycle
+	// lock through claim and registration, ShutdownJobs could start waiting
+	// while this scan adds a new worker to the same WaitGroup.
+	s.mcpJobLifecycleMu.Lock()
+	defer s.mcpJobLifecycleMu.Unlock()
+	if s.mcpJobsShutdown {
+		return
+	}
+	recovered, err := s.mcpJobStore.ClaimRecoverable(s.mcpWorkerID, mcpJobLeaseDuration, time.Now().UTC())
+	if err != nil {
+		log.Printf("failed to claim recoverable MCP jobs: %v", err)
+		return
+	}
+	for _, record := range recovered {
+		s.startRecoveredMCPJob(record)
+	}
+}
+
+func (s *AppService) monitorMCPJobRecovery() {
+	defer s.mcpJobRecoveryWG.Done()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.claimRecoverableMCPJobs()
+		case <-s.mcpJobRecoveryStop:
+			return
+		}
+	}
+}
+
+func (s *AppService) startRecoveredMCPJob(record mcpJobStoreRecord) {
+	if s == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mcpJobMu.Lock()
+	s.ensureMCPJobMapsLocked()
+	s.mcpJobs[record.Job.ID] = record.Job
+	s.mcpJobDescriptors[record.Job.ID] = record.Descriptor
+	s.mcpJobLeases[record.Job.ID] = mcpJobLease{
+		Owner:     record.LeaseOwner,
+		Attempt:   record.Job.Attempt,
+		ExpiresAt: record.LeaseExpiresAt,
+	}
+	s.mcpJobCancels[record.Job.ID] = cancel
+	s.mcpJobWG.Add(1)
+	s.mcpJobMu.Unlock()
+
+	owner := mcpJobOwnerFromRecord(record.Job)
+	go func() {
+		defer s.mcpJobWG.Done()
+		s.runMCPJobWorker(record.Job.ID, ctx, func(workerCtx context.Context) {
+			s.runRecoveredMCPJob(workerCtx, record.Job, record.Descriptor, owner)
+		})
+	}()
+}
+
+func mcpJobOwnerFromRecord(job model.MCPJob) AuthPrincipal {
+	owner := AuthPrincipal{
+		UserID:   strings.TrimSpace(job.OwnerUserID),
+		APIKeyID: strings.TrimSpace(job.OwnerAPIKeyID),
+	}
+	if owner.APIKeyID != "" {
+		owner.AuthType = "api_key"
+		return owner
+	}
+	if owner.UserID != "" {
+		owner.AuthType = "session"
+		return owner
+	}
+	// An empty owner is the intentional identity used when authentication is
+	// disabled. Preserve it across restarts so anonymous local jobs can reclaim
+	// their staged uploads.
+	return owner
+}
+
+func (s *AppService) runRecoveredMCPJob(ctx context.Context, job model.MCPJob, descriptor mcpJobDescriptor, owner AuthPrincipal) {
+	descriptor = normalizeMCPJobDescriptor(descriptor, job.Type)
+	switch descriptor.Type {
+	case "import":
+		s.runMCPImportJob(ctx, job.ID, descriptor, owner)
+	case "batch-index":
+		s.runBatchIndexJob(ctx, job.ID, descriptor.KnowledgeBaseID, descriptor.UploadIDs, descriptor.Concurrency, owner)
+	case "reindex":
+		s.runMCPReindexJob(ctx, job.ID, descriptor.KnowledgeBaseID, descriptor.DocumentID)
+	case "eval-dataset":
+		s.runMCPEvalDatasetJob(ctx, job.ID, jobRequestFromMCPDescriptor(descriptor))
+	default:
+		s.completeMCPJob(job.ID, "failed", 100, "任务恢复失败。", nil, "unsupported persisted job type")
+	}
+}
+
+func jobRequestFromMCPDescriptor(descriptor mcpJobDescriptor) model.GenerateEvalDatasetRequest {
+	return model.GenerateEvalDatasetRequest{
+		KnowledgeBaseID: descriptor.KnowledgeBaseID,
+		DocumentID:      descriptor.DocumentID,
+		MaxPerDocument:  descriptor.MaxPerDocument,
+	}
+}
+
+func (s *AppService) startMCPJobFromDescriptor(descriptor mcpJobDescriptor, owner AuthPrincipal) (model.MCPJob, error) {
+	descriptor = normalizeMCPJobDescriptor(descriptor, descriptor.Type)
+	switch descriptor.Type {
+	case "import":
+		return s.StartMCPImportJobAs(model.MCPStartImportJobRequest{
+			KnowledgeBaseID:  descriptor.KnowledgeBaseID,
+			FileName:         descriptor.FileName,
+			UploadID:         descriptor.UploadID,
+			ExpectedChecksum: descriptor.Checksum,
+			JobType:          "import",
+		}, owner)
+	case "batch-index":
+		return s.StartBatchIndexJobAs(descriptor.KnowledgeBaseID, descriptor.UploadIDs, descriptor.Concurrency, owner)
+	case "reindex":
+		return s.StartMCPImportJobAs(model.MCPStartImportJobRequest{
+			KnowledgeBaseID: descriptor.KnowledgeBaseID,
+			DocumentID:      descriptor.DocumentID,
+			JobType:         "reindex",
+		}, owner)
+	case "eval-dataset":
+		return s.StartMCPImportJobAs(model.MCPStartImportJobRequest{
+			KnowledgeBaseID: descriptor.KnowledgeBaseID,
+			DocumentID:      descriptor.DocumentID,
+			MaxPerDocument:  descriptor.MaxPerDocument,
+			JobType:         "eval_dataset",
+		}, owner)
+	default:
+		return model.MCPJob{}, fmt.Errorf("unsupported persisted job type: %s", descriptor.Type)
+	}
+}
+
+func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func(context.Context)) {
+	if s == nil || run == nil {
+		return
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(mcpJobHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if !s.renewMCPJobLease(jobID) {
+					cancel()
+					return
+				}
+			case <-workerCtx.Done():
+				return
+			}
+		}
+	}()
+	run(workerCtx)
+	cancel()
+	<-heartbeatDone
+	if s.isMCPJobsShuttingDown() {
+		s.releaseMCPJobLease(jobID)
+	}
+}
+
+func (s *AppService) isMCPJobsShuttingDown() bool {
+	if s == nil {
+		return false
+	}
+	s.mcpJobLifecycleMu.Lock()
+	defer s.mcpJobLifecycleMu.Unlock()
+	return s.mcpJobsShutdown
+}
+
+func (s *AppService) renewMCPJobLease(jobID string) bool {
+	s.mcpJobMu.Lock()
+	lease, ok := s.mcpJobLeases[jobID]
+	s.mcpJobMu.Unlock()
+	if !ok || s.mcpJobStore == nil {
+		return true
+	}
+	renewed, err := s.mcpJobStore.RenewLease(jobID, lease.Owner, lease.Attempt, mcpJobLeaseDuration, time.Now().UTC())
+	if err != nil {
+		log.Printf("failed to renew MCP job lease %s: %v", jobID, err)
+		return false
+	}
+	if renewed {
+		s.mcpJobMu.Lock()
+		lease.ExpiresAt = time.Now().UTC().Add(mcpJobLeaseDuration).Format(time.RFC3339Nano)
+		s.mcpJobLeases[jobID] = lease
+		if job, exists := s.mcpJobs[jobID]; exists {
+			job.LastHeartbeatAt = util.NowRFC3339()
+			s.mcpJobs[jobID] = job
+		}
+		s.mcpJobMu.Unlock()
+	}
+	return renewed
+}
+
+func (s *AppService) releaseMCPJobLease(jobID string) {
+	if s == nil || s.mcpJobStore == nil {
+		return
+	}
+	s.mcpJobMu.Lock()
+	lease, ok := s.mcpJobLeases[jobID]
+	job, jobOK := s.mcpJobs[jobID]
+	descriptor := s.mcpJobDescriptors[jobID]
+	s.mcpJobMu.Unlock()
+	if !ok || !jobOK {
+		return
+	}
+	if !isMCPJobTerminalStatus(job.Status) {
+		job.Status = "queued"
+		job.RecoveryState = "shutdown"
+		job.NextAction = "worker will resume after restart"
+		job.UpdatedAt = util.NowRFC3339()
+	}
+	record := mcpJobStoreRecord{
+		Job:            job,
+		Descriptor:     descriptor,
+		LeaseOwner:     "",
+		LeaseExpiresAt: "",
+	}
+	if updated, err := s.mcpJobStore.Update(record, lease.Owner, lease.Attempt); err != nil || !updated {
+		if err != nil {
+			log.Printf("failed to release MCP job lease %s: %v", jobID, err)
+		}
+		return
+	}
+	s.mcpJobMu.Lock()
+	if current, exists := s.mcpJobs[jobID]; exists && !isMCPJobTerminalStatus(current.Status) {
+		s.mcpJobs[jobID] = job
+	}
+	delete(s.mcpJobLeases, jobID)
+	delete(s.mcpJobCancels, jobID)
+	s.mcpJobMu.Unlock()
+}
+
+func (s *AppService) releaseMCPJobLeases() {
+	if s == nil {
+		return
+	}
+	s.mcpJobMu.Lock()
+	ids := make([]string, 0, len(s.mcpJobLeases))
+	for id := range s.mcpJobLeases {
+		ids = append(ids, id)
+	}
+	s.mcpJobMu.Unlock()
+	for _, id := range ids {
+		s.releaseMCPJobLease(id)
+	}
+}
+
+func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, descriptor mcpJobDescriptor, owner AuthPrincipal) {
 	s.updateMCPJob(jobID, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 10
-		job.Summary = fmt.Sprintf("正在导入《%s》。", req.FileName)
+		job.Summary = fmt.Sprintf("正在导入《%s》。", descriptor.FileName)
 	})
 
 	select {
@@ -1429,25 +2472,19 @@ func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, req mode
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	if strings.TrimSpace(req.Content) == "" {
+	if strings.TrimSpace(descriptor.UploadID) == "" {
 		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, "content is required")
 		return
 	}
-	if err := validateMCPJobTextFileName(req.FileName, s.GetConfig()); err != nil {
+	if err := validateMCPJobTextFileName(descriptor.FileName, s.GetConfig()); err != nil {
 		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, err.Error())
 		return
 	}
 
 	s.updateMCPJob(jobID, func(job *model.MCPJob) {
 		job.Progress = 45
-		job.Summary = "文件已进入暂存。"
+		job.Summary = "正在校验暂存文件。"
 	})
-	staged, err := s.StageInlineUploadAs(req.FileName, []byte(req.Content), "mcp-job-import", owner)
-	if err != nil {
-		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, err.Error())
-		return
-	}
-
 	select {
 	case <-ctx.Done():
 		s.completeMCPJob(jobID, "cancelled", 50, "导入任务已取消。", nil, "")
@@ -1465,8 +2502,22 @@ func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, req mode
 		return
 	default:
 	}
-	uploaded, err := s.RegisterStagedUploadAs(ctx, staged.ID, req.KnowledgeBaseID, req.FileName, owner)
+	uploaded, err := s.registerStagedUploadAs(ctx, descriptor.UploadID, descriptor.KnowledgeBaseID, descriptor.FileName, owner, jobID, descriptor.Checksum)
 	if err != nil {
+		// A graceful shutdown can land after indexing has committed the document
+		// but before the job reaches its terminal state. In that window the
+		// staging record may already be consumed, so converge on the indexed
+		// document instead of replaying a now-missing upload.
+		if checksum := strings.TrimSpace(descriptor.Checksum); checksum != "" {
+			if existing, found, findErr := s.findDocumentByChecksum(descriptor.KnowledgeBaseID, checksum); findErr == nil && found && isIndexedDocumentStatus(existing.Status) {
+				s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("文档《%s》导入完成。", existing.Name), map[string]any{
+					"uploaded":        existing,
+					"knowledgeBaseId": existing.KnowledgeBaseID,
+					"stagedUploadId":  descriptor.UploadID,
+				}, "")
+				return
+			}
+		}
 		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, err.Error())
 		return
 	}
@@ -1479,7 +2530,7 @@ func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, req mode
 	s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("文档《%s》导入完成。", uploaded.Name), map[string]any{
 		"uploaded":        uploaded,
 		"knowledgeBaseId": uploaded.KnowledgeBaseID,
-		"stagedUploadId":  staged.ID,
+		"stagedUploadId":  descriptor.UploadID,
 	}, "")
 }
 
@@ -1491,17 +2542,21 @@ func (s *AppService) GetMCPJobStatusAs(jobID string, owner AuthPrincipal) (model
 	if s == nil {
 		return model.MCPJob{}, fmt.Errorf("app service is nil")
 	}
-	jobID = strings.TrimSpace(jobID)
-	s.mcpJobMu.Lock()
-	defer s.mcpJobMu.Unlock()
-	job, ok := s.mcpJobs[jobID]
+	job, _, ok, err := s.ensureMCPJobLoaded(jobID)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
 	if !ok {
 		return model.MCPJob{}, fmt.Errorf("job not found")
 	}
+	s.mcpJobMu.Lock()
 	if !mcpJobOwnerMatches(job, owner) {
+		s.mcpJobMu.Unlock()
 		return model.MCPJob{}, fmt.Errorf("job is not owned by this principal")
 	}
-	return cloneMCPJob(job), nil
+	cloned := publicMCPJob(job)
+	s.mcpJobMu.Unlock()
+	return cloned, nil
 }
 
 func (s *AppService) RetryMCPJob(jobID string) (model.MCPJob, error) {
@@ -1513,11 +2568,21 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 		return model.MCPJob{}, fmt.Errorf("app service is nil")
 	}
 	jobID = strings.TrimSpace(jobID)
+	loadedJob, loadedDescriptor, found, err := s.ensureMCPJobLoaded(jobID)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
+	if !found {
+		return model.MCPJob{}, fmt.Errorf("job not found")
+	}
 	s.mcpJobMu.Lock()
+	s.ensureMCPJobMapsLocked()
 	job, ok := s.mcpJobs[jobID]
 	if !ok {
-		s.mcpJobMu.Unlock()
-		return model.MCPJob{}, fmt.Errorf("job not found")
+		job = loadedJob
+		s.mcpJobs[jobID] = loadedJob
+		s.mcpJobDescriptors[jobID] = loadedDescriptor
+		ok = true
 	}
 	if !mcpJobOwnerMatches(job, owner) {
 		s.mcpJobMu.Unlock()
@@ -1532,6 +2597,22 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 		return model.MCPJob{}, fmt.Errorf("job cannot be retried: retry limit reached or job is not retryable")
 	}
 	retryAction := s.mcpJobRetries[jobID]
+	if retryAction == nil {
+		descriptor := s.mcpJobDescriptors[jobID]
+		if descriptor.Type == "batch-index" {
+			retryAction = func() (model.MCPJob, error) {
+				retryUploadIDs, expectedChecksums := s.retryableMCPBatchUploadIDs(jobID, descriptor.UploadIDs)
+				if len(retryUploadIDs) == 0 {
+					return model.MCPJob{}, fmt.Errorf("batch job has no retryable items")
+				}
+				return s.startBatchIndexJobAs(descriptor.KnowledgeBaseID, retryUploadIDs, descriptor.Concurrency, owner, expectedChecksums)
+			}
+		} else if descriptor.Type != "" {
+			retryAction = func() (model.MCPJob, error) {
+				return s.startMCPJobFromDescriptor(descriptor, owner)
+			}
+		}
+	}
 	if retryAction == nil {
 		s.mcpJobMu.Unlock()
 		return model.MCPJob{}, fmt.Errorf("job cannot be retried: retry payload is unavailable")
@@ -1563,6 +2644,7 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 			stored.Retryable = stored.Status == "failed" && nextRetryCount < mcpJobMaxRetries
 		}
 		s.mcpJobs[retriedJob.ID] = stored
+		s.persistMCPJobLocked(stored, false)
 		retriedJob = stored
 	}
 	if stored, exists := s.mcpJobs[jobID]; exists {
@@ -1570,9 +2652,10 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 		stored.Retryable = false
 		stored.UpdatedAt = util.NowRFC3339()
 		s.mcpJobs[jobID] = stored
+		s.persistMCPJobLocked(stored, false)
 	}
 	s.mcpJobMu.Unlock()
-	return cloneMCPJob(retriedJob), nil
+	return publicMCPJob(retriedJob), nil
 }
 
 func (s *AppService) CancelMCPJob(jobID string) (model.MCPJob, error) {
@@ -1584,11 +2667,21 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		return model.MCPJob{}, fmt.Errorf("app service is nil")
 	}
 	jobID = strings.TrimSpace(jobID)
+	loadedJob, loadedDescriptor, found, err := s.ensureMCPJobLoaded(jobID)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
+	if !found {
+		return model.MCPJob{}, fmt.Errorf("job not found")
+	}
 	s.mcpJobMu.Lock()
+	s.ensureMCPJobMapsLocked()
 	job, ok := s.mcpJobs[jobID]
 	if !ok {
-		s.mcpJobMu.Unlock()
-		return model.MCPJob{}, fmt.Errorf("job not found")
+		job = loadedJob
+		s.mcpJobs[jobID] = loadedJob
+		s.mcpJobDescriptors[jobID] = loadedDescriptor
+		ok = true
 	}
 	if !mcpJobOwnerMatches(job, owner) {
 		s.mcpJobMu.Unlock()
@@ -1599,17 +2692,31 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		job.Status = "cancelled"
 		job.Summary = "任务已取消。"
 		job.Retryable = false
+		job.Resumable = false
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
 		job.UpdatedAt = util.NowRFC3339()
 		job.CompletedAt = job.UpdatedAt
+		if s.mcpJobStore != nil {
+			lease := s.mcpJobLeases[jobID]
+			if err := s.mcpJobStore.CancelItems(jobID, lease.Owner, lease.Attempt); err != nil {
+				s.recordMCPJobPersistenceFailure()
+				s.mcpJobMu.Unlock()
+				return model.MCPJob{}, fmt.Errorf("persist cancelled MCP job items failed")
+			}
+		}
+		if !s.persistMCPJobLocked(job, true) {
+			s.mcpJobMu.Unlock()
+			return model.MCPJob{}, fmt.Errorf("persist cancelled MCP job failed")
+		}
 		s.mcpJobs[jobID] = job
 		delete(s.mcpJobCancels, jobID)
+		delete(s.mcpJobLeases, jobID)
 	}
 	s.mcpJobMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	return cloneMCPJob(job), nil
+	return publicMCPJob(job), nil
 }
 
 func (s *AppService) ListRecentMCPJobs(limit int) []model.MCPJob {
@@ -1620,25 +2727,22 @@ func (s *AppService) ListRecentMCPJobsAs(limit int, owner AuthPrincipal) []model
 	if s == nil {
 		return nil
 	}
+	page, err := s.ListMCPJobsPageAs(limit, "", owner)
+	if err == nil {
+		return page.Items
+	}
+	items := s.listMCPJobsFromMemory(owner, nil)
 	if limit <= 0 || limit > 20 {
 		limit = 20
 	}
-	s.mcpJobMu.Lock()
-	defer s.mcpJobMu.Unlock()
-	items := make([]model.MCPJob, 0, len(s.mcpJobs))
-	for _, job := range s.mcpJobs {
-		if !mcpJobOwnerMatches(job, owner) {
-			continue
-		}
-		items = append(items, cloneMCPJob(job))
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].UpdatedAt > items[j].UpdatedAt
-	})
 	if len(items) > limit {
 		items = items[:limit]
 	}
-	return items
+	result := make([]model.MCPJob, 0, len(items))
+	for _, item := range items {
+		result = append(result, publicMCPJob(item))
+	}
+	return result
 }
 
 func mcpJobOwnerMatches(job model.MCPJob, owner AuthPrincipal) bool {
@@ -1665,11 +2769,47 @@ func (s *AppService) updateMCPJob(jobID string, update func(*model.MCPJob)) {
 		return
 	}
 	update(&job)
+	if job.Status == "running" {
+		if job.RecoveryState == "recovering" {
+			job.RecoveryState = "recovered"
+		}
+		job.NextAction = ""
+	}
 	job.UpdatedAt = util.NowRFC3339()
+	if !s.persistMCPJobLocked(job, false) {
+		return
+	}
 	s.mcpJobs[jobID] = job
 }
 
+func (s *AppService) ensureMCPJobMapsLocked() {
+	if s == nil {
+		return
+	}
+	if s.mcpJobs == nil {
+		s.mcpJobs = map[string]model.MCPJob{}
+	}
+	if s.mcpJobCancels == nil {
+		s.mcpJobCancels = map[string]context.CancelFunc{}
+	}
+	if s.mcpJobRetries == nil {
+		s.mcpJobRetries = map[string]mcpJobRetryAction{}
+	}
+	if s.mcpJobRetrying == nil {
+		s.mcpJobRetrying = map[string]bool{}
+	}
+	if s.mcpJobDescriptors == nil {
+		s.mcpJobDescriptors = map[string]mcpJobDescriptor{}
+	}
+	if s.mcpJobLeases == nil {
+		s.mcpJobLeases = map[string]mcpJobLease{}
+	}
+}
+
 func (s *AppService) completeMCPJob(jobID, status string, progress int, summary string, result map[string]any, errorMessage string) {
+	if status == "cancelled" && s.isMCPJobsShuttingDown() {
+		return
+	}
 	s.mcpJobMu.Lock()
 	defer s.mcpJobMu.Unlock()
 	job, ok := s.mcpJobs[jobID]
@@ -1682,16 +2822,128 @@ func (s *AppService) completeMCPJob(jobID, status string, progress int, summary 
 	job.Status = status
 	job.Progress = progress
 	job.Summary = summary
-	job.Result = result
-	job.Error = errorMessage
-	job.Retryable = status == "failed" && s.mcpJobRetries[jobID] != nil && job.RetryCount < mcpJobMaxRetries
+	job.Result = sanitizeMCPJobResult(result)
+	job.Error = PublicMCPJobError(errors.New(errorMessage))
+	job.ErrorCode = classifyMCPJobErrorCode(status, errorMessage)
+	job.Retryable = status == "failed" && job.Resumable && job.RetryCount < mcpJobMaxRetries
 	if status == "cancelled" {
+		job.Resumable = false
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
 	}
+	if job.RecoveryState == "recovering" {
+		job.RecoveryState = "recovered"
+	}
+	job.NextAction = ""
 	job.UpdatedAt = util.NowRFC3339()
 	job.CompletedAt = job.UpdatedAt
+	if !s.persistMCPJobLocked(job, true) {
+		return
+	}
 	s.mcpJobs[jobID] = job
 	delete(s.mcpJobCancels, jobID)
+	delete(s.mcpJobLeases, jobID)
+}
+
+func publicMCPJob(job model.MCPJob) model.MCPJob {
+	job.Error = PublicMCPJobError(errors.New(job.Error))
+	job.Warnings = append([]string(nil), job.Warnings...)
+	for index := range job.Warnings {
+		job.Warnings[index] = PublicMCPJobError(errors.New(job.Warnings[index]))
+	}
+	job.Result = sanitizeMCPJobResult(job.Result)
+	return job
+}
+
+// PublicMCPJobError keeps the job API useful for callers while preventing
+// storage paths, dependency URLs, and implementation details from crossing
+// the HTTP or MCP boundary.
+func PublicMCPJobError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		return ""
+	}
+	lower := strings.ToLower(message)
+	switch {
+	case strings.Contains(lower, "not owned by this principal"):
+		return "job is not owned by this principal"
+	case strings.Contains(lower, "job not found") || strings.Contains(lower, "mcp job not found"):
+		return "job not found"
+	case strings.Contains(lower, "knowledge base") && strings.Contains(lower, "not found"):
+		return "knowledge base not found"
+	case strings.Contains(lower, "document") && strings.Contains(lower, "not found"):
+		return "document not found"
+	case strings.Contains(lower, "staged upload") && strings.Contains(lower, "not found"):
+		return "staged upload not found"
+	case strings.Contains(lower, "not found"):
+		return "resource not found"
+	case strings.Contains(lower, "cannot be retried"):
+		return "job cannot be retried"
+	case strings.Contains(lower, "another retry"):
+		return "another retry is already running"
+	case strings.Contains(lower, "persist") || strings.Contains(lower, "sqlite") || strings.Contains(lower, "job store"):
+		return "job state persistence is temporarily unavailable"
+	default:
+		return redactMCPJobMessage(message)
+	}
+}
+
+func classifyMCPJobErrorCode(status, errorMessage string) string {
+	if status == "cancelled" {
+		return "cancelled"
+	}
+	if status != "failed" {
+		return ""
+	}
+	message := strings.ToLower(strings.TrimSpace(errorMessage))
+	switch {
+	case strings.Contains(message, "not found"):
+		return "not_found"
+	case strings.Contains(message, "required"), strings.Contains(message, "unsupported"):
+		return "invalid_argument"
+	case strings.Contains(message, "timeout"), strings.Contains(message, "deadline"):
+		return "timeout"
+	case strings.Contains(message, "qdrant"), strings.Contains(message, "ollama"), strings.Contains(message, "connection"):
+		return "dependency_unavailable"
+	default:
+		return "internal_error"
+	}
+}
+
+func (s *AppService) persistMCPJobLocked(job model.MCPJob, clearLease bool) bool {
+	if s == nil || s.mcpJobStore == nil {
+		return true
+	}
+	lease := s.mcpJobLeases[job.ID]
+	expectedOwner := lease.Owner
+	expectedAttempt := lease.Attempt
+	if expectedAttempt == 0 {
+		expectedAttempt = job.Attempt
+	}
+	record := mcpJobStoreRecord{
+		Job:            job,
+		Descriptor:     s.mcpJobDescriptors[job.ID],
+		LeaseOwner:     lease.Owner,
+		LeaseExpiresAt: lease.ExpiresAt,
+	}
+	if clearLease {
+		record.LeaseOwner = ""
+		record.LeaseExpiresAt = ""
+	}
+	updated, err := s.mcpJobStore.Update(record, expectedOwner, expectedAttempt)
+	if err != nil {
+		log.Printf("failed to persist MCP job %s: %v", job.ID, err)
+		s.recordMCPJobPersistenceFailure()
+		return false
+	}
+	if !updated {
+		log.Printf("MCP job %s lease is no longer owned by this worker", job.ID)
+		s.recordMCPJobPersistenceFailure()
+		return false
+	}
+	return true
 }
 
 func isMCPJobTerminalStatus(status string) bool {
@@ -1733,12 +2985,32 @@ func (s *AppService) pruneMCPJobsLocked() {
 	if removeCount > len(terminal) {
 		removeCount = len(terminal)
 	}
-	for _, job := range terminal[:removeCount] {
+	for _, job := range terminal {
+		if s.hasMCPJobChildLocked(job.ID) {
+			continue
+		}
+		if removeCount <= 0 {
+			break
+		}
 		delete(s.mcpJobs, job.ID)
 		delete(s.mcpJobCancels, job.ID)
 		delete(s.mcpJobRetries, job.ID)
 		delete(s.mcpJobRetrying, job.ID)
+		removeCount--
 	}
+}
+
+func (s *AppService) hasMCPJobChildLocked(parentJobID string) bool {
+	parentJobID = strings.TrimSpace(parentJobID)
+	if parentJobID == "" {
+		return false
+	}
+	for _, job := range s.mcpJobs {
+		if strings.TrimSpace(job.ParentJobID) == parentJobID {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneMCPJob(job model.MCPJob) model.MCPJob {

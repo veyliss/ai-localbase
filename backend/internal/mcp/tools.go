@@ -59,6 +59,10 @@ type mcpJobRetryService interface {
 	RetryMCPJobAs(jobID string, owner service.AuthPrincipal) (model.MCPJob, error)
 }
 
+type mcpJobListPageService interface {
+	ListMCPJobsPageAs(limit int, cursor string, owner service.AuthPrincipal) (service.MCPJobPage, error)
+}
+
 func contextAwareService(appService AppServiceReader) (contextAwareAppService, bool) {
 	service, ok := appService.(contextAwareAppService)
 	return service, ok
@@ -118,6 +122,13 @@ func listRecentMCPJobsAs(appService AppServiceReader, limit int, owner service.A
 		return enhanced.ListRecentMCPJobsAs(limit, owner)
 	}
 	return appService.ListRecentMCPJobs(limit)
+}
+
+func listMCPJobsPageAs(appService AppServiceReader, limit int, cursor string, owner service.AuthPrincipal) (service.MCPJobPage, error) {
+	if enhanced, ok := appService.(mcpJobListPageService); ok {
+		return enhanced.ListMCPJobsPageAs(limit, cursor, owner)
+	}
+	return service.MCPJobPage{Items: listRecentMCPJobsAs(appService, limit, owner)}, nil
 }
 
 func retryMCPJobAs(appService AppServiceReader, jobID string, owner service.AuthPrincipal) (model.MCPJob, error) {

@@ -7,6 +7,7 @@ type ServerConfig struct {
 	UploadDir                      string
 	IndexedContentDir              string
 	StagingDir                     string
+	MCPJobStoreFile                string
 	MaxUploadBytes                 int64
 	MaxJSONBodyBytes               int64
 	StateFile                      string
@@ -158,33 +159,43 @@ type MCPDangerConfirmationResponse struct {
 }
 
 type MCPStartImportJobRequest struct {
-	KnowledgeBaseID string   `json:"knowledgeBaseId"`
-	FileName        string   `json:"fileName"`
-	Content         string   `json:"content,omitempty"`
-	JobType         string   `json:"jobType,omitempty"`
-	DocumentID      string   `json:"documentId,omitempty"`
-	MaxPerDocument  int      `json:"maxPerDocument,omitempty"`
-	UploadIDs       []string `json:"uploadIds,omitempty"`
-	Concurrency     int      `json:"concurrency,omitempty"`
+	KnowledgeBaseID string `json:"knowledgeBaseId"`
+	FileName        string `json:"fileName"`
+	Content         string `json:"content,omitempty"`
+	UploadID        string `json:"uploadId,omitempty"`
+	// ExpectedChecksum is an internal retry guard and is never accepted from
+	// or returned to external JSON callers.
+	ExpectedChecksum string   `json:"-"`
+	JobType          string   `json:"jobType,omitempty"`
+	DocumentID       string   `json:"documentId,omitempty"`
+	MaxPerDocument   int      `json:"maxPerDocument,omitempty"`
+	UploadIDs        []string `json:"uploadIds,omitempty"`
+	Concurrency      int      `json:"concurrency,omitempty"`
 }
 
 type MCPJob struct {
-	ID            string         `json:"jobId"`
-	Type          string         `json:"type"`
-	Status        string         `json:"status"`
-	Progress      int            `json:"progress"`
-	Summary       string         `json:"summary"`
-	Result        map[string]any `json:"result,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Warnings      []string       `json:"warnings,omitempty"`
-	Retryable     bool           `json:"retryable"`
-	RetryCount    int            `json:"retryCount"`
-	ParentJobID   string         `json:"parentJobId,omitempty"`
-	CreatedAt     string         `json:"createdAt"`
-	UpdatedAt     string         `json:"updatedAt"`
-	CompletedAt   string         `json:"completedAt,omitempty"`
-	OwnerUserID   string         `json:"-"`
-	OwnerAPIKeyID string         `json:"-"`
+	ID              string         `json:"jobId"`
+	Type            string         `json:"type"`
+	Status          string         `json:"status"`
+	Progress        int            `json:"progress"`
+	Summary         string         `json:"summary"`
+	Result          map[string]any `json:"result,omitempty"`
+	Error           string         `json:"error,omitempty"`
+	Warnings        []string       `json:"warnings,omitempty"`
+	Retryable       bool           `json:"retryable"`
+	RetryCount      int            `json:"retryCount"`
+	ParentJobID     string         `json:"parentJobId,omitempty"`
+	ErrorCode       string         `json:"errorCode,omitempty"`
+	Resumable       bool           `json:"resumable"`
+	RecoveryState   string         `json:"recoveryState,omitempty"`
+	Attempt         int            `json:"attempt"`
+	LastHeartbeatAt string         `json:"lastHeartbeatAt,omitempty"`
+	NextAction      string         `json:"nextAction,omitempty"`
+	CreatedAt       string         `json:"createdAt"`
+	UpdatedAt       string         `json:"updatedAt"`
+	CompletedAt     string         `json:"completedAt,omitempty"`
+	OwnerUserID     string         `json:"-"`
+	OwnerAPIKeyID   string         `json:"-"`
 }
 
 type RetrievalConfig struct {
@@ -387,19 +398,22 @@ type UploadResponse struct {
 }
 
 type StagedUpload struct {
-	ID            string `json:"id"`
-	FileName      string `json:"fileName"`
-	Path          string `json:"-"`
-	Size          int64  `json:"size"`
-	SizeLabel     string `json:"sizeLabel"`
-	SHA256        string `json:"sha256"`
-	CreatedAt     string `json:"createdAt"`
-	ExpiresAt     string `json:"expiresAt"`
-	Status        string `json:"status"`
-	Source        string `json:"source,omitempty"`
-	ConsumedAt    string `json:"consumedAt,omitempty"`
-	OwnerUserID   string `json:"-"`
-	OwnerAPIKeyID string `json:"-"`
+	ID                   string `json:"id"`
+	FileName             string `json:"fileName"`
+	Path                 string `json:"-"`
+	Size                 int64  `json:"size"`
+	SizeLabel            string `json:"sizeLabel"`
+	SHA256               string `json:"sha256"`
+	CreatedAt            string `json:"createdAt"`
+	ExpiresAt            string `json:"expiresAt"`
+	Status               string `json:"status"`
+	Source               string `json:"source,omitempty"`
+	ConsumedAt           string `json:"consumedAt,omitempty"`
+	OwnerUserID          string `json:"-"`
+	OwnerAPIKeyID        string `json:"-"`
+	ProcessingOwner      string `json:"-"`
+	ProcessingAttempt    int    `json:"-"`
+	ProcessingLeaseUntil string `json:"-"`
 }
 
 type StageUploadResponse struct {

@@ -62,9 +62,21 @@ func run() error {
 		}
 	}()
 
-	appService := service.NewAppService(qdrantService, stateStore, chatHistoryStore, serverConfig)
+	mcpJobStore, err := service.NewMCPJobStore(serverConfig.MCPJobStoreFile)
+	if err != nil {
+		return fmt.Errorf("failed to initialize MCP job store: %w", err)
+	}
+	defer func() {
+		if closeErr := mcpJobStore.Close(); closeErr != nil {
+			log.Printf("failed to close MCP job store: %v", closeErr)
+		}
+	}()
+
+	appService := service.NewAppServiceWithJobStore(qdrantService, stateStore, chatHistoryStore, serverConfig, mcpJobStore)
 	stopUploadStagingCleanup := startUploadStagingCleanup(appService)
 	defer stopUploadStagingCleanup()
+	stopMCPJobMaintenance := startMCPJobMaintenance(appService)
+	defer stopMCPJobMaintenance()
 	authService, err := service.NewAuthService(appService, serverConfig)
 	if err != nil {
 		return fmt.Errorf("failed to initialize auth service: %w", err)
@@ -162,6 +174,46 @@ func startUploadStagingCleanup(appService *service.AppService) func() {
 			case <-ticker.C:
 				if err := appService.CleanupUploadStaging(); err != nil {
 					log.Printf("failed to clean upload staging directory: %v", err)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		select {
+		case <-stop:
+		default:
+			close(stop)
+		}
+		<-done
+	}
+}
+
+func startMCPJobMaintenance(appService *service.AppService) func() {
+	if appService == nil {
+		return func() {}
+	}
+	if deleted, err := appService.PruneMCPJobs(); err != nil {
+		log.Printf("failed to prune MCP jobs at startup: %v", err)
+	} else if deleted > 0 {
+		log.Printf("pruned %d terminal MCP jobs at startup", deleted)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if deleted, err := appService.PruneMCPJobs(); err != nil {
+					log.Printf("failed to prune MCP jobs: %v", err)
+				} else if deleted > 0 {
+					log.Printf("pruned %d terminal MCP jobs", deleted)
 				}
 			case <-stop:
 				return

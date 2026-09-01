@@ -192,6 +192,16 @@ func TestRetryMCPJobCreatesChildWithRetryMetadata(t *testing.T) {
 	if !called || job.ID != "job-retry" || job.ParentJobID != "job-failed" || job.RetryCount != 1 {
 		t.Fatalf("expected retry metadata, called=%t job=%+v", called, job)
 	}
+	if service.mcpJobs["job-failed"].Retryable {
+		t.Fatal("expected the source job to be non-retryable after creating a child")
+	}
+	calledBeforeDuplicate := called
+	if _, err := service.RetryMCPJobAs("job-failed", AuthPrincipal{}); err == nil {
+		t.Fatal("expected a source job to reject duplicate retry requests")
+	}
+	if called != calledBeforeDuplicate {
+		t.Fatal("expected duplicate retry request not to invoke the retry action")
+	}
 }
 
 func TestRetryMCPJobRejectsNonFailedAndExhaustedJobs(t *testing.T) {

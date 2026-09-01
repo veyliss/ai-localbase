@@ -1565,6 +1565,12 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 		s.mcpJobs[retriedJob.ID] = stored
 		retriedJob = stored
 	}
+	if stored, exists := s.mcpJobs[jobID]; exists {
+		// A failed attempt can produce only one child; continue the retry chain from that child.
+		stored.Retryable = false
+		stored.UpdatedAt = util.NowRFC3339()
+		s.mcpJobs[jobID] = stored
+	}
 	s.mcpJobMu.Unlock()
 	return cloneMCPJob(retriedJob), nil
 }

@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/check-build-budget.mjs && node scripts/compare-build-baseline.mjs",
+    "build:baseline": "vite build && node scripts/check-build-budget.mjs && node scripts/compare-build-baseline.mjs --write",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:fixtures": "E2E_START_SERVER=true E2E_BASE_URL=http://127.0.0.1:4175 playwright test e2e/markdown-rendering.spec.ts",
     "test:e2e:headed": "playwright test --headed",
     "typecheck": "tsc --noEmit"
   },

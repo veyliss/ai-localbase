@@ -225,8 +225,7 @@ function normalizeStepSections(content: string): string {
 function normalizeCompressedAnswerBlocks(content: string): string {
   let normalized = content
 
-  normalized = normalized.replace(/([^\n])\s*[>＞]\s*(?=\S)/g, '$1\n\n')
-  normalized = normalized.replace(/(^|\n)\s*[>＞]\s*(?=\S)/g, '$1')
+  normalized = normalized.replace(/([^\n])[ \t]*[>＞][ \t]*(?=\S)/g, '$1\n\n')
   normalized = normalized.replace(
     /(^|\n)#{1,6}\s*(基本信息|核心能力|能力范围|回答依据|注意事项|总结)\s*[：:]?\s*(作为[^\n]*)/g,
     '$1### $2\n\n$3',
@@ -783,6 +782,7 @@ function normalizeShortReportHeadings(content: string): string {
 }
 
 function sanitizeMermaidLine(line: string): string {
+  const leadingWhitespace = line.match(/^\s*/)?.[0] ?? ''
   let sanitized = line.trim()
   sanitized = sanitized.replace(/^```+/, '')
   sanitized = sanitized.replace(/^mermaid/, '')
@@ -806,7 +806,7 @@ function sanitizeMermaidLine(line: string): string {
   sanitized = sanitized.replace(/mermaidgraph\s*LR/g, 'graph LR')
   sanitized = sanitized.replace(/([A-Za-z0-9_\]\)\}])\s*--\s+([A-Za-z0-9_\[\(\{])/g, '$1 --> $2')
   sanitized = sanitized.replace(/;+\s*$/, '')
-  return sanitized.trim()
+  return `${leadingWhitespace}${sanitized.trim()}`
 }
 
 function rebuildCompressedMermaid(lines: string[]): string[] {
@@ -876,9 +876,21 @@ function normalizeMermaidSection(content: string): string {
   let collecting = false
 
   const flushMermaidBuffer = () => {
-    const rawLines = mermaidBuffer.map((line) => line.trim()).filter(Boolean)
-    const rebuiltLines = rebuildCompressedMermaid(rawLines)
-    const sanitizedLines = rebuiltLines.filter((line) => isValidMermaidLine(line))
+    const rawLines = mermaidBuffer
+      .map((line) => line.replace(/\r/g, ''))
+      .filter((line) => line.trim())
+    const hasIndentedStructure = rawLines.some((line) => /^\s{2,}\S/.test(line))
+    const rebuiltLines = hasIndentedStructure
+      ? rawLines.map((line) => sanitizeMermaidLine(line))
+      : rebuildCompressedMermaid(rawLines)
+    const firstLine = rebuiltLines[0]?.trim() ?? ''
+    const isMindmap = firstLine.toLowerCase() === 'mindmap'
+    const isArchitecture = /^architecture-beta\b/i.test(firstLine)
+    const sanitizedLines = isMindmap || isArchitecture
+      ? rebuiltLines.filter((line) => line.trim()).map((line) => sanitizeMermaidLine(line))
+      : rebuiltLines
+        .filter((line) => isValidMermaidLine(line.trim()))
+        .map((line) => sanitizeMermaidLine(line))
     const outputLines = sanitizedLines.length > 0 ? sanitizedLines : rebuiltLines.length > 0 ? rebuiltLines : rawLines
 
     normalized.push('```mermaid')
@@ -906,7 +918,7 @@ function normalizeMermaidSection(content: string): string {
     }
 
     if (collecting) {
-      const cleaned = sanitizeMermaidLine(trimmed)
+      const cleaned = sanitizeMermaidLine(rawLine)
       if (cleaned) {
         mermaidBuffer.push(cleaned)
       }

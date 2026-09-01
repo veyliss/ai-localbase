@@ -32,6 +32,18 @@ describe('fixMarkdown', () => {
     expect(output).toMatch(/```\s*$/)
   })
 
+  it('preserves blockquotes while repairing compressed answer blocks', () => {
+    const output = fixMarkdown('说明如下：\n> 这是引用内容。')
+
+    expect(output).toContain('> 这是引用内容。')
+  })
+
+  it('preserves mermaid mindmap indentation and leaf labels', () => {
+    const output = fixMarkdown('```mermaid\nmindmap\n  root((知识库))\n    文档\n      证据\n```')
+
+    expect(output).toContain('mindmap\n  root((知识库))\n    文档\n      证据')
+  })
+
   it('does not rewrite fenced source code while repairing prose', () => {
     const output = fixMarkdown('说明 fooBar\n\n```ts\nconst fooBar = "aB"\n```')
 

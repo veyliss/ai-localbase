@@ -552,6 +552,11 @@ func (h *AppHandler) StageUpload(c *gin.Context) {
 func (h *AppHandler) DeleteDocument(c *gin.Context) {
 	removedDocument, err := h.appService.DeleteDocument(c.Param("id"), c.Param("documentId"))
 	if err != nil {
+		var cleanupErr *service.IndexCleanupError
+		if errors.As(err, &cleanupErr) {
+			writeError(c, http.StatusBadGateway, "文档索引清理失败，请稍后重试")
+			return
+		}
 		writeError(c, http.StatusNotFound, err.Error())
 		return
 	}
@@ -926,7 +931,20 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 	uploaded, err := h.appService.IndexDocument(document)
 	if err != nil {
 		_ = os.Remove(destination)
-		writeError(c, http.StatusBadGateway, err.Error())
+		statusCode := http.StatusBadGateway
+		var duplicateErr *service.DuplicateDocumentError
+		if errors.As(err, &duplicateErr) {
+			statusCode = http.StatusConflict
+		}
+		if statusCode == http.StatusConflict {
+			c.JSON(statusCode, model.APIError{Error: model.ErrorDetail{
+				Code:      "duplicate_document",
+				Message:   "相同内容的文档已存在",
+				RequestID: strings.TrimSpace(c.GetHeader("X-Request-Id")),
+			}})
+			return
+		}
+		writeError(c, statusCode, err.Error())
 		return
 	}
 

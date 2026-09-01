@@ -33,6 +33,19 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 			indexed.IndexRunID = runID
 		}
 	}()
+	if existing, found, findErr := s.findDocumentByID(document.KnowledgeBaseID, document.ID); findErr != nil {
+		return model.Document{}, findErr
+	} else if found {
+		if strings.EqualFold(strings.TrimSpace(existing.Checksum), strings.TrimSpace(document.Checksum)) || strings.TrimSpace(document.Checksum) == "" {
+			return existing, nil
+		}
+		return model.Document{}, &DuplicateDocumentError{Existing: existing}
+	}
+	reservation, err := s.reserveDocumentIndex(ctx, document)
+	if err != nil {
+		return model.Document{}, err
+	}
+	defer reservation()
 
 	content, err := util.ExtractDocumentText(document.Path)
 	if err != nil {
@@ -55,7 +68,12 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		document.IndexError = ""
 		document.IndexErrorCode = ""
 		document.IndexVersion = currentIndexVersion
-		return s.AddDocument(document.KnowledgeBaseID, document)
+		uploaded, err := s.AddDocument(document.KnowledgeBaseID, document)
+		if err != nil {
+			_ = s.deleteIndexedDocument(document.KnowledgeBaseID, document.ID)
+			return model.Document{}, err
+		}
+		return uploaded, nil
 	}
 
 	vectors, err := s.rag.EmbedTexts(ctx, s.currentEmbeddingConfig(), chunkTexts(chunks), s.qdrantVectorSize())
@@ -63,12 +81,13 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		return model.Document{}, err
 	}
 
-	if err := s.upsertDocumentChunksWithContext(ctx, document.KnowledgeBaseID, chunks, vectors); err != nil {
+	if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, chunks, vectors); err != nil {
 		return model.Document{}, err
 	}
 	document, err = s.captureIndexedDocument(document, content)
 	if err != nil {
-		_ = s.deleteDocumentChunks(document.KnowledgeBaseID, document.ID)
+		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
+		_ = s.deleteIndexedDocument(document.KnowledgeBaseID, document.ID)
 		return model.Document{}, err
 	}
 
@@ -79,7 +98,13 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	document.IndexError = ""
 	document.IndexErrorCode = ""
 	document.IndexVersion = currentIndexVersion
-	return s.AddDocument(document.KnowledgeBaseID, document)
+	uploaded, err := s.AddDocument(document.KnowledgeBaseID, document)
+	if err != nil {
+		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
+		_ = s.deleteIndexedDocument(document.KnowledgeBaseID, document.ID)
+		return model.Document{}, err
+	}
+	return uploaded, nil
 }
 
 // ReindexDocument rebuilds a document from its source file and records a
@@ -117,6 +142,16 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 		_ = s.updateDocument(knowledgeBaseID, document)
 		return model.Document{}, err
 	}
+	reservation, err := s.reserveDocumentIndex(ctx, document)
+	if err != nil {
+		return model.Document{}, err
+	}
+	defer reservation()
+	latestDocument, err := s.findDocument(knowledgeBaseID, documentID)
+	if err != nil {
+		return model.Document{}, err
+	}
+	document = enrichDocumentGovernance(latestDocument)
 	s.state.Mu.RLock()
 	config := s.state.Config
 	s.state.Mu.RUnlock()
@@ -170,8 +205,14 @@ func (s *AppService) ReindexKnowledgeBase(knowledgeBaseID string) ([]model.Docum
 	reindexed := make([]model.Document, 0, len(originalDocs))
 	for _, document := range originalDocs {
 		doc := enrichDocumentGovernance(document)
+		reservation, err := s.reserveDocumentIndex(context.Background(), doc)
+		if err != nil {
+			s.recordIndexRun(knowledgeBaseID, doc, "bulk_reindex", time.Now(), "failed", err)
+			return nil, fmt.Errorf("reindex document %s: %w", doc.ID, err)
+		}
 		startedAt := time.Now()
 		indexed, err := reindexDocumentWithConfig(context.Background(), s, config, doc)
+		reservation()
 		if err != nil {
 			s.recordIndexRun(knowledgeBaseID, doc, "bulk_reindex", startedAt, "failed", err)
 			return nil, fmt.Errorf("reindex document %s: %w", doc.ID, err)

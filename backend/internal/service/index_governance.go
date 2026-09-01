@@ -18,6 +18,7 @@ import (
 const maxIndexHistoryRecords = 50
 
 const (
+	indexErrorDuplicate               = "duplicate_document"
 	indexErrorSourceMissing           = "source_missing"
 	indexErrorSourceChanged           = "source_changed"
 	indexErrorSourceUnreadable        = "source_unreadable"
@@ -25,6 +26,40 @@ const (
 	indexErrorRuleOutdated            = "index_rule_outdated"
 	indexErrorFailed                  = "index_failed"
 )
+
+// DuplicateDocumentError reports an idempotency conflict without exposing the
+// stored document path or checksum to API callers.
+type DuplicateDocumentError struct {
+	Existing model.Document
+}
+
+func (e *DuplicateDocumentError) Error() string {
+	if e == nil || strings.TrimSpace(e.Existing.ID) == "" {
+		return "document already exists in knowledge base"
+	}
+	return fmt.Sprintf("document already exists in knowledge base: %s", e.Existing.ID)
+}
+
+// IndexCleanupError indicates that a document could not be removed from the
+// vector index. The document remains in application state so the operation
+// can be retried without leaving an invisible, searchable document behind.
+type IndexCleanupError struct {
+	Err error
+}
+
+func (e *IndexCleanupError) Error() string {
+	if e == nil || e.Err == nil {
+		return "document index cleanup failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *IndexCleanupError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 func currentKnowledgeBaseIndexVersion(knowledgeBase model.KnowledgeBase) int {
 	if knowledgeBase.CurrentIndexVersion > 0 {
@@ -90,6 +125,10 @@ func classifyIndexError(err error) string {
 	if err == nil {
 		return ""
 	}
+	var duplicateErr *DuplicateDocumentError
+	if errors.As(err, &duplicateErr) {
+		return indexErrorDuplicate
+	}
 	if errors.Is(err, fs.ErrNotExist) || strings.Contains(strings.ToLower(err.Error()), "source file unavailable") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
 		return indexErrorSourceMissing
 	}
@@ -112,6 +151,8 @@ func publicIndexError(code string) string {
 	switch strings.TrimSpace(code) {
 	case "":
 		return ""
+	case indexErrorDuplicate:
+		return "相同内容的文档已存在"
 	case indexErrorSourceMissing:
 		return "原文文件不可用"
 	case indexErrorSourceChanged:

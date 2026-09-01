@@ -114,6 +114,14 @@ func TestDocumentNeedsReindexWhenOnlyErrorCodeIsPresent(t *testing.T) {
 	}
 }
 
+func TestIndexCleanupErrorPreservesUnderlyingCause(t *testing.T) {
+	underlying := errors.New("delete qdrant points failed")
+	err := &IndexCleanupError{Err: underlying}
+	if !errors.Is(err, underlying) {
+		t.Fatalf("expected cleanup error to unwrap underlying cause, got %v", err)
+	}
+}
+
 func TestGetKnowledgeBaseIndexHistoryFallsBackToCurrentVersion(t *testing.T) {
 	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
 		"kb-1": {ID: "kb-1", Name: "测试知识库"},

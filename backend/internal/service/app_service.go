@@ -86,6 +86,8 @@ type AppService struct {
 	mcpJobLifecycleMu     sync.Mutex
 	mcpJobWG              sync.WaitGroup
 	mcpJobsShutdown       bool
+	indexReservationMu    sync.Mutex
+	indexReservations     map[string]chan struct{}
 }
 
 type mcpDangerConfirmationRecord struct {
@@ -190,6 +192,7 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 		mcpDangerRates:      map[string][]time.Time{},
 		mcpJobs:             map[string]model.MCPJob{},
 		mcpJobCancels:       map[string]context.CancelFunc{},
+		indexReservations:   map[string]chan struct{}{},
 	}
 	service.retrievalOrchestrator = NewRetrievalOrchestrator(service)
 	service.rag.SetQdrantService(qdrant)
@@ -2142,11 +2145,16 @@ func (s *AppService) ResolveKnowledgeBaseID(candidate string) (string, error) {
 }
 
 func (s *AppService) AddDocument(knowledgeBaseID string, document model.Document) (model.Document, error) {
+	document = enrichDocumentGovernance(document)
 	s.state.Mu.Lock()
 	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
 	if !ok {
 		s.state.Mu.Unlock()
 		return model.Document{}, fmt.Errorf("knowledge base not found")
+	}
+	if existing, duplicate := findDuplicateDocument(kb.Documents, document); duplicate {
+		s.state.Mu.Unlock()
+		return model.Document{}, &DuplicateDocumentError{Existing: existing}
 	}
 	kb.Documents = append([]model.Document{document}, kb.Documents...)
 	s.state.KnowledgeBases[knowledgeBaseID] = kb
@@ -2193,6 +2201,24 @@ func (s *AppService) updateDocument(knowledgeBaseID string, nextDocument model.D
 }
 
 func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.Document, error) {
+	removedDocument, err := s.findDocument(knowledgeBaseID, documentID)
+	if err != nil {
+		return model.Document{}, err
+	}
+	removedDocument = enrichDocumentGovernance(removedDocument)
+	reservation, err := s.reserveDocumentIndex(context.Background(), removedDocument)
+	if err != nil {
+		return model.Document{}, err
+	}
+	defer reservation()
+
+	// Remove external index state first. If Qdrant is unavailable, keep the
+	// document visible and retryable instead of leaving an orphaned searchable
+	// document after its metadata has been deleted.
+	if err := s.deleteDocumentChunks(knowledgeBaseID, documentID); err != nil {
+		return model.Document{}, &IndexCleanupError{Err: err}
+	}
+
 	s.state.Mu.Lock()
 	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
 	if !ok {
@@ -2202,11 +2228,9 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 
 	filtered := make([]model.Document, 0, len(kb.Documents))
 	removed := false
-	var removedDocument model.Document
 	for _, document := range kb.Documents {
 		if document.ID == documentID {
 			removed = true
-			removedDocument = document
 			continue
 		}
 		filtered = append(filtered, document)
@@ -2228,9 +2252,6 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 		s.state.KnowledgeBases[knowledgeBaseID] = kb
 		s.state.Mu.Unlock()
 		return model.Document{}, err
-	}
-	if err := s.deleteDocumentChunks(knowledgeBaseID, documentID); err != nil {
-		log.Printf("failed to delete qdrant points for document %s: %v", documentID, err)
 	}
 	if err := s.deleteIndexedDocument(knowledgeBaseID, documentID); err != nil {
 		log.Printf("failed to delete indexed content for document %s: %v", documentID, err)

@@ -77,6 +77,7 @@ docker compose -f docker-compose.prod.yml up -d
 - `ENABLE_AUTH`：生产 Compose 在变量未提供时默认 `true`；使用 `.env.example` 时也必须显式确认其为 `true`
 - `STAGING_DIR`：上传暂存目录，默认 `/app/data/staging`，必须与应用数据卷保持一致
 - `INDEXED_CONTENT_DIR`：索引后的全文和结构化快照目录，默认 `/app/data/indexed-content`，必须与应用数据卷保持一致
+- `MCP_JOB_STORE_FILE`：MCP 长任务 SQLite 文件，默认 `/app/data/mcp-jobs.db`，必须位于持久化数据卷内；服务重启后依靠它恢复可恢复任务
 - `MAX_UPLOAD_BYTES`：单文件上传大小上限，默认 `26214400`，即 25 MiB
 - `MAX_JSON_BODY_BYTES`：登录、Chat、配置和 MCP 等非 multipart 请求体上限，默认 `4194304`，即 4 MiB
 - `LOG_MAX_SIZE` / `LOG_MAX_FILE`：Docker JSON 日志轮转参数，默认每个日志文件 10 MiB、保留 3 个文件
@@ -85,7 +86,7 @@ docker compose -f docker-compose.prod.yml up -d
 - `FRONTEND_MEMORY_LIMIT` / `FRONTEND_CPU_LIMIT`：前端容器资源上限，默认 `256m` / `1.0`
 - 后端业务进程以固定 UID `10001` 的非 root 用户运行。首次启动时会将 `/app/data` 的现有文件权限迁移到该用户，并写入权限迁移标记，以兼容升级前由 root 创建的数据目录且避免每次重启重复扫描。
 
-应用层按单实例运行。SQLite 聊天记录、应用状态文件和内存中的 MCP Job 不支持多个后端副本共享写入，请勿使用 `docker compose scale backend=2`；如未来需要水平扩展，应先替换为共享状态存储和持久化 Job 队列。
+应用层按单实例运行。SQLite 聊天记录、应用状态文件和 MCP Job Store 不支持多个后端副本共享写入，请勿使用 `docker compose scale backend=2`；如未来需要水平扩展，应先替换为共享状态存储和持久化 Job 队列。
 
 ### 验证连接
 

@@ -55,6 +55,7 @@ services:
       MAX_JSON_BODY_BYTES: ${MAX_JSON_BODY_BYTES:-4194304}
       STATE_FILE: ${STATE_FILE:-/app/data/app-state.json}
       CHAT_HISTORY_FILE: ${CHAT_HISTORY_FILE:-/app/data/chat-history.db}
+      MCP_JOB_STORE_FILE: ${MCP_JOB_STORE_FILE:-/app/data/mcp-jobs.db}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_COLLECTION_PREFIX: ${QDRANT_COLLECTION_PREFIX:-kb_}

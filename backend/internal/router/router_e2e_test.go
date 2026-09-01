@@ -629,6 +629,9 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 	if !containsString(toolNames, "list_recent_jobs") {
 		t.Fatalf("expected list_recent_jobs in tools list, got %v", toolNames)
 	}
+	if !containsString(toolNames, "retry_job") {
+		t.Fatalf("expected retry_job in tools list, got %v", toolNames)
+	}
 
 	capabilitiesResp := performRequestWithHeaders(
 		t,
@@ -650,7 +653,7 @@ func TestMCPToolsListAndCreateKnowledgeBase(t *testing.T) {
 	if capabilitiesResp.Code != http.StatusOK {
 		t.Fatalf("expected capabilities status 200, got %d, body=%s", capabilitiesResp.Code, capabilitiesResp.Body.String())
 	}
-	if !strings.Contains(capabilitiesResp.Body.String(), `"toolCount":30`) ||
+	if !strings.Contains(capabilitiesResp.Body.String(), `"toolCount":31`) ||
 		!strings.Contains(capabilitiesResp.Body.String(), fmt.Sprintf(`"version":"%s"`, version.Value)) ||
 		!strings.Contains(capabilitiesResp.Body.String(), `"permissionCounts"`) ||
 		!strings.Contains(capabilitiesResp.Body.String(), `"resultContractVersion":"1.0"`) {
@@ -1209,6 +1212,15 @@ func TestMCPJobWorkflow(t *testing.T) {
 	failedJob = waitForMCPJobStatus(t, engine, headers, failedJob.ID, "failed")
 	if failedJob.Error == "" {
 		t.Fatalf("expected failed job error, got %+v", failedJob)
+	}
+	retryResp := performMCPToolCall(t, engine, headers, 506, "retry_job", map[string]any{"jobId": failedJob.ID})
+	if retryResp.Code != http.StatusOK {
+		t.Fatalf("expected retry job status 200, got %d, body=%s", retryResp.Code, retryResp.Body.String())
+	}
+	retriedJob := decodeMCPJobFromResponse(t, retryResp)
+	retriedJob = waitForMCPJobStatus(t, engine, headers, retriedJob.ID, "failed")
+	if retriedJob.ParentJobID != failedJob.ID || retriedJob.RetryCount != 1 || !retriedJob.Retryable {
+		t.Fatalf("expected failed retry child metadata, got %+v", retriedJob)
 	}
 
 	cancelStartResp := performMCPToolCall(t, engine, headers, 503, "start_import_job", map[string]any{

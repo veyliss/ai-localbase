@@ -83,6 +83,8 @@ type AppService struct {
 	mcpJobMu              sync.Mutex
 	mcpJobs               map[string]model.MCPJob
 	mcpJobCancels         map[string]context.CancelFunc
+	mcpJobRetries         map[string]mcpJobRetryAction
+	mcpJobRetrying        map[string]bool
 	mcpJobLifecycleMu     sync.Mutex
 	mcpJobWG              sync.WaitGroup
 	mcpJobsShutdown       bool
@@ -99,10 +101,13 @@ type mcpDangerConfirmationRecord struct {
 	OwnerAPIKeyID string
 }
 
+type mcpJobRetryAction func() (model.MCPJob, error)
+
 const (
 	mcpDangerConfirmationDefaultTTL = 5 * time.Minute
 	mcpDangerConfirmationRateWindow = time.Minute
 	mcpDangerConfirmationRateLimit  = 10
+	mcpJobMaxRetries                = 3
 )
 
 // ContextCompressor 上下文压缩器接口
@@ -192,6 +197,8 @@ func NewAppService(qdrant *QdrantService, store *AppStateStore, chatHistory Chat
 		mcpDangerRates:      map[string][]time.Time{},
 		mcpJobs:             map[string]model.MCPJob{},
 		mcpJobCancels:       map[string]context.CancelFunc{},
+		mcpJobRetries:       map[string]mcpJobRetryAction{},
+		mcpJobRetrying:      map[string]bool{},
 		indexReservations:   map[string]chan struct{}{},
 	}
 	service.retrievalOrchestrator = NewRetrievalOrchestrator(service)
@@ -1044,14 +1051,19 @@ func (s *AppService) StartBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 		Status:        "queued",
 		Progress:      0,
 		Summary:       fmt.Sprintf("准备索引 %d 个文档。", len(ids)),
+		Retryable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
 		OwnerAPIKeyID: strings.TrimSpace(owner.APIKeyID),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	retryUploadIDs := append([]string(nil), ids...)
+	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
+		return s.StartBatchIndexJobAs(knowledgeBaseID, retryUploadIDs, concurrency, owner)
+	})
 
-	if !s.registerMCPJob(job, cancel) {
+	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
 		cancel()
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
@@ -1175,14 +1187,21 @@ func (s *AppService) StartMCPImportJobAs(req model.MCPStartImportJobRequest, own
 		Status:        "queued",
 		Progress:      0,
 		Summary:       fmt.Sprintf("准备导入《%s》。", fileName),
+		Retryable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
 		OwnerAPIKeyID: strings.TrimSpace(owner.APIKeyID),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	retryRequest := req
+	retryRequest.KnowledgeBaseID = knowledgeBaseID
+	retryRequest.FileName = fileName
+	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
+		return s.StartMCPImportJobAs(retryRequest, owner)
+	})
 
-	if !s.registerMCPJob(job, cancel) {
+	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
 		cancel()
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
@@ -1218,13 +1237,20 @@ func (s *AppService) startMCPReindexJob(req model.MCPStartImportJobRequest, owne
 		Type:          "reindex",
 		Status:        "queued",
 		Summary:       fmt.Sprintf("准备重建文档 %s 的索引。", documentID),
+		Retryable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
 		OwnerAPIKeyID: strings.TrimSpace(owner.APIKeyID),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if !s.registerMCPJob(job, cancel) {
+	retryRequest := req
+	retryRequest.KnowledgeBaseID = knowledgeBaseID
+	retryRequest.DocumentID = documentID
+	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
+		return s.StartMCPImportJobAs(retryRequest, owner)
+	})
+	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
 		cancel()
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
@@ -1267,13 +1293,18 @@ func (s *AppService) startMCPEvalDatasetJob(req model.MCPStartImportJobRequest, 
 		Type:          "eval-dataset",
 		Status:        "queued",
 		Summary:       "准备生成评估数据集。",
+		Retryable:     true,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		OwnerUserID:   strings.TrimSpace(owner.UserID),
 		OwnerAPIKeyID: strings.TrimSpace(owner.APIKeyID),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	if !s.registerMCPJob(job, cancel) {
+	retryRequest := req
+	retryAction := mcpJobRetryAction(func() (model.MCPJob, error) {
+		return s.StartMCPImportJobAs(retryRequest, owner)
+	})
+	if !s.registerMCPJobWithRetry(job, cancel, retryAction) {
 		cancel()
 		return model.MCPJob{}, fmt.Errorf("mcp jobs are shutting down")
 	}
@@ -1310,6 +1341,10 @@ func (s *AppService) runMCPEvalDatasetJob(ctx context.Context, jobID string, req
 }
 
 func (s *AppService) registerMCPJob(job model.MCPJob, cancel context.CancelFunc) bool {
+	return s.registerMCPJobWithRetry(job, cancel, nil)
+}
+
+func (s *AppService) registerMCPJobWithRetry(job model.MCPJob, cancel context.CancelFunc, retryAction mcpJobRetryAction) bool {
 	if s == nil {
 		return false
 	}
@@ -1327,8 +1362,17 @@ func (s *AppService) registerMCPJob(job model.MCPJob, cancel context.CancelFunc)
 	if s.mcpJobCancels == nil {
 		s.mcpJobCancels = map[string]context.CancelFunc{}
 	}
+	if s.mcpJobRetries == nil {
+		s.mcpJobRetries = map[string]mcpJobRetryAction{}
+	}
+	if s.mcpJobRetrying == nil {
+		s.mcpJobRetrying = map[string]bool{}
+	}
 	s.mcpJobs[job.ID] = job
 	s.mcpJobCancels[job.ID] = cancel
+	if retryAction != nil {
+		s.mcpJobRetries[job.ID] = retryAction
+	}
 	s.pruneMCPJobsLocked()
 	s.mcpJobWG.Add(1)
 	return true
@@ -1460,6 +1504,71 @@ func (s *AppService) GetMCPJobStatusAs(jobID string, owner AuthPrincipal) (model
 	return cloneMCPJob(job), nil
 }
 
+func (s *AppService) RetryMCPJob(jobID string) (model.MCPJob, error) {
+	return s.RetryMCPJobAs(jobID, AuthPrincipal{})
+}
+
+func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCPJob, error) {
+	if s == nil {
+		return model.MCPJob{}, fmt.Errorf("app service is nil")
+	}
+	jobID = strings.TrimSpace(jobID)
+	s.mcpJobMu.Lock()
+	job, ok := s.mcpJobs[jobID]
+	if !ok {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, fmt.Errorf("job not found")
+	}
+	if !mcpJobOwnerMatches(job, owner) {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, fmt.Errorf("job is not owned by this principal")
+	}
+	if job.Status != "failed" {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, fmt.Errorf("job cannot be retried: only failed jobs can be retried")
+	}
+	if job.RetryCount >= mcpJobMaxRetries || !job.Retryable {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, fmt.Errorf("job cannot be retried: retry limit reached or job is not retryable")
+	}
+	retryAction := s.mcpJobRetries[jobID]
+	if retryAction == nil {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, fmt.Errorf("job cannot be retried: retry payload is unavailable")
+	}
+	if s.mcpJobRetrying == nil {
+		s.mcpJobRetrying = map[string]bool{}
+	}
+	if s.mcpJobRetrying[jobID] {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, fmt.Errorf("job cannot be retried: another retry is already running")
+	}
+	s.mcpJobRetrying[jobID] = true
+	nextRetryCount := job.RetryCount + 1
+	s.mcpJobMu.Unlock()
+
+	retriedJob, err := retryAction()
+	s.mcpJobMu.Lock()
+	delete(s.mcpJobRetrying, jobID)
+	if err != nil {
+		s.mcpJobMu.Unlock()
+		return model.MCPJob{}, err
+	}
+	retriedJob.RetryCount = nextRetryCount
+	retriedJob.ParentJobID = jobID
+	if stored, exists := s.mcpJobs[retriedJob.ID]; exists {
+		stored.RetryCount = nextRetryCount
+		stored.ParentJobID = jobID
+		if isMCPJobTerminalStatus(stored.Status) {
+			stored.Retryable = stored.Status == "failed" && nextRetryCount < mcpJobMaxRetries
+		}
+		s.mcpJobs[retriedJob.ID] = stored
+		retriedJob = stored
+	}
+	s.mcpJobMu.Unlock()
+	return cloneMCPJob(retriedJob), nil
+}
+
 func (s *AppService) CancelMCPJob(jobID string) (model.MCPJob, error) {
 	return s.CancelMCPJobAs(jobID, AuthPrincipal{})
 }
@@ -1483,6 +1592,7 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 	if job.Status == "queued" || job.Status == "running" {
 		job.Status = "cancelled"
 		job.Summary = "任务已取消。"
+		job.Retryable = false
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
 		job.UpdatedAt = util.NowRFC3339()
 		job.CompletedAt = job.UpdatedAt
@@ -1568,6 +1678,7 @@ func (s *AppService) completeMCPJob(jobID, status string, progress int, summary 
 	job.Summary = summary
 	job.Result = result
 	job.Error = errorMessage
+	job.Retryable = status == "failed" && s.mcpJobRetries[jobID] != nil && job.RetryCount < mcpJobMaxRetries
 	if status == "cancelled" {
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
 	}
@@ -1619,6 +1730,8 @@ func (s *AppService) pruneMCPJobsLocked() {
 	for _, job := range terminal[:removeCount] {
 		delete(s.mcpJobs, job.ID)
 		delete(s.mcpJobCancels, job.ID)
+		delete(s.mcpJobRetries, job.ID)
+		delete(s.mcpJobRetrying, job.ID)
 	}
 }
 

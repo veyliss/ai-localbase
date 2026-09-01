@@ -17,6 +17,7 @@ import (
 
 	"ai-localbase/internal/model"
 	"ai-localbase/internal/service"
+	"ai-localbase/internal/util"
 
 	"github.com/gin-gonic/gin"
 )
@@ -86,6 +87,7 @@ type authContext struct {
 }
 
 type principalContextKey struct{}
+type mcpResultContractVersionContextKey struct{}
 
 func principalFromContext(ctx context.Context) service.AuthPrincipal {
 	if ctx == nil {
@@ -93,6 +95,79 @@ func principalFromContext(ctx context.Context) service.AuthPrincipal {
 	}
 	principal, _ := ctx.Value(principalContextKey{}).(service.AuthPrincipal)
 	return principal
+}
+
+func mcpResultContractVersionFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return resultContractVersion
+	}
+	if version, ok := ctx.Value(mcpResultContractVersionContextKey{}).(string); ok {
+		return normalizeMCPResultContractVersion(version)
+	}
+	return resultContractVersion
+}
+
+func ensureMCPRequestID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	requestID := ""
+	if value, ok := c.Get("requestId"); ok {
+		requestID, _ = value.(string)
+	}
+	if strings.TrimSpace(requestID) == "" {
+		requestID = strings.TrimSpace(c.GetHeader("X-Request-Id"))
+	}
+	if !isValidMCPRequestID(requestID) {
+		requestID = util.NextRequestID()
+	}
+	c.Set("requestId", requestID)
+	c.Header("X-Request-Id", requestID)
+	return requestID
+}
+
+func isValidMCPRequestID(requestID string) bool {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || len(requestID) > 128 {
+		return false
+	}
+	for _, character := range requestID {
+		if character < 0x21 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func setMCPContractHeaders(c *gin.Context, contractVersion string) {
+	if c == nil {
+		return
+	}
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
+	c.Header(mcpResultContractVersionHeader, contractVersion)
+	c.Header("X-MCP-Supported-Contract-Versions", strings.Join(supportedMCPResultContractVersions(), ", "))
+}
+
+func prepareMCPResponse(c *gin.Context, params JSONRPCParams) (string, string) {
+	ensureMCPRequestID(c)
+	contractVersion, requested := negotiateMCPResultContractVersion(c.GetHeader(mcpResultContractVersionHeader), params)
+	setMCPContractHeaders(c, contractVersion)
+	if c != nil {
+		c.Set("mcpResultContractVersion", contractVersion)
+	}
+	return contractVersion, requested
+}
+
+func mcpResultContractVersionFromContextValue(c *gin.Context) string {
+	if c == nil {
+		return resultContractVersion
+	}
+	if value, ok := c.Get("mcpResultContractVersion"); ok {
+		if version, ok := value.(string); ok {
+			return normalizeMCPResultContractVersion(version)
+		}
+	}
+	return resultContractVersion
 }
 
 const (
@@ -156,6 +231,7 @@ func (s *Server) RegisterRoutes(group *gin.RouterGroup) {
 func (s *Server) handleInfo(c *gin.Context) {
 	startedAt := time.Now()
 	requestSucceeded := false
+	contractVersion, requestedContractVersion := prepareMCPResponse(c, nil)
 	defer func() {
 		s.recordMCPRequestMetric(requestSucceeded, time.Since(startedAt))
 	}()
@@ -168,15 +244,17 @@ func (s *Server) handleInfo(c *gin.Context) {
 	}
 	requestSucceeded = true
 	c.JSON(http.StatusOK, gin.H{
-		"name":                  serverName,
-		"version":               serverVersion,
-		"protocolVersion":       protocolVersion,
-		"jsonrpc":               jsonRPCVersion,
-		"capabilities":          gin.H{"tools": gin.H{"listChanged": false}, "metrics": gin.H{"path": "/metrics", "scope": scopeMCPRead}},
-		"resultContractVersion": resultContractVersion,
-		"errorCodes":            mcpErrorCatalog(),
-		"transport":             "http",
-		"toolCount":             len(s.registry.List()),
+		"name":                            serverName,
+		"version":                         serverVersion,
+		"protocolVersion":                 protocolVersion,
+		"jsonrpc":                         jsonRPCVersion,
+		"capabilities":                    gin.H{"tools": gin.H{"listChanged": false}, "metrics": gin.H{"path": "/metrics", "scope": scopeMCPRead}},
+		"resultContractVersion":           contractVersion,
+		"supportedResultContractVersions": supportedMCPResultContractVersions(),
+		"contractNegotiation":             mcpContractNegotiationPayload(contractVersion, requestedContractVersion),
+		"errorCodes":                      mcpErrorCatalog(),
+		"transport":                       "http",
+		"toolCount":                       len(s.registry.List()),
 	})
 	s.recordMCPRequestAudit(c, authCtx, "GET /mcp", startedAt, true, "")
 }
@@ -184,6 +262,7 @@ func (s *Server) handleInfo(c *gin.Context) {
 func (s *Server) handleMetrics(c *gin.Context) {
 	startedAt := time.Now()
 	requestSucceeded := false
+	contractVersion, _ := prepareMCPResponse(c, nil)
 	defer func() {
 		s.recordMCPRequestMetric(requestSucceeded, time.Since(startedAt))
 	}()
@@ -195,13 +274,14 @@ func (s *Server) handleMetrics(c *gin.Context) {
 		return
 	}
 	requestSucceeded = true
-	c.JSON(http.StatusOK, s.metricsSnapshot())
+	c.JSON(http.StatusOK, s.metricsSnapshotForVersion(contractVersion))
 	s.recordMCPRequestAudit(c, authCtx, "GET /mcp/metrics", startedAt, true, "")
 }
 
 func (s *Server) handleListTools(c *gin.Context) {
 	startedAt := time.Now()
 	requestSucceeded := false
+	contractVersion, requestedContractVersion := prepareMCPResponse(c, nil)
 	defer func() {
 		s.recordMCPRequestMetric(requestSucceeded, time.Since(startedAt))
 	}()
@@ -214,9 +294,11 @@ func (s *Server) handleListTools(c *gin.Context) {
 	}
 	requestSucceeded = true
 	c.JSON(http.StatusOK, gin.H{
-		"tools":                 s.toolDescriptors(),
-		"resultContractVersion": resultContractVersion,
-		"errorCodes":            mcpErrorCatalog(),
+		"tools":                           s.toolDescriptorsForVersion(contractVersion),
+		"resultContractVersion":           contractVersion,
+		"supportedResultContractVersions": supportedMCPResultContractVersions(),
+		"contractNegotiation":             mcpContractNegotiationPayload(contractVersion, requestedContractVersion),
+		"errorCodes":                      mcpErrorCatalog(),
 	})
 	s.recordMCPRequestAudit(c, authCtx, "GET /mcp/tools", startedAt, true, "")
 }
@@ -224,6 +306,7 @@ func (s *Server) handleListTools(c *gin.Context) {
 func (s *Server) handleJSONRPC(c *gin.Context) {
 	startedAt := time.Now()
 	requestSucceeded := false
+	contractVersion, requestedContractVersion := prepareMCPResponse(c, nil)
 	defer func() {
 		s.recordMCPRequestMetric(requestSucceeded, time.Since(startedAt))
 	}()
@@ -246,17 +329,20 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		defer cancel()
 	}
 	ctx = context.WithValue(ctx, principalContextKey{}, authCtx.Principal)
+	ctx = context.WithValue(ctx, mcpResultContractVersionContextKey{}, contractVersion)
 
 	var request JSONRPCRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		s.recordMCPEvent(c, authCtx, "mcp_protocol_failed", "invalid JSON-RPC request body")
-		log.Printf("mcp request failed remote=%s error=%s", c.ClientIP(), sanitizeMCPError(err.Error()))
-		c.JSON(http.StatusBadRequest, errorResponse(nil, -32700, "invalid json-rpc request body"))
+		log.Printf("mcp request_id=%s failed remote=%s error=%s", requestIDFromContext(c), c.ClientIP(), sanitizeMCPError(err.Error()))
+		c.JSON(http.StatusBadRequest, protocolErrorResponseForVersion(nil, -32700, "invalid json-rpc request body", MCPErrorInvalidArgument, requestIDFromContext(c), contractVersion))
 		return
 	}
+	contractVersion, requestedContractVersion = prepareMCPResponse(c, request.Params)
+	ctx = context.WithValue(ctx, mcpResultContractVersionContextKey{}, contractVersion)
 	if request.JSONRPC != jsonRPCVersion || strings.TrimSpace(request.Method) == "" {
 		s.recordMCPEvent(c, authCtx, "mcp_protocol_failed", "invalid JSON-RPC request envelope")
-		writeJSONRPCResponse(c, http.StatusOK, errorResponse(request.ID, -32600, "invalid json-rpc request"), request.ID == nil)
+		writeJSONRPCResponse(c, http.StatusOK, protocolErrorResponseForVersion(request.ID, -32600, "invalid json-rpc request", MCPErrorInvalidArgument, requestIDFromContext(c), contractVersion), request.ID == nil)
 		return
 	}
 
@@ -286,12 +372,14 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 						"scope": scopeMCPRead,
 					},
 				},
-				"resultContractVersion": resultContractVersion,
-				"errorCodes":            mcpErrorCatalog(),
+				"resultContractVersion":           contractVersion,
+				"supportedResultContractVersions": supportedMCPResultContractVersions(),
+				"contractNegotiation":             mcpContractNegotiationPayload(contractVersion, requestedContractVersion),
+				"errorCodes":                      mcpErrorCatalog(),
 			},
 		}
 		s.recordMCPRequestAudit(c, authCtx, method, startedAt, true, "")
-		log.Printf("mcp request method=%s remote=%s duration_ms=%d", method, c.ClientIP(), time.Since(startedAt).Milliseconds())
+		log.Printf("mcp request_id=%s method=%s remote=%s duration_ms=%d", requestIDFromContext(c), method, c.ClientIP(), time.Since(startedAt).Milliseconds())
 		writeJSONRPCResponse(c, http.StatusOK, response, isNotification)
 	case "notifications/initialized":
 		requestSucceeded = true
@@ -319,15 +407,17 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 			JSONRPC: jsonRPCVersion,
 			ID:      request.ID,
 			Result: map[string]any{
-				"tools":                 s.toolDescriptors(),
-				"resultContractVersion": resultContractVersion,
-				"errorCodes":            mcpErrorCatalog(),
+				"tools":                           s.toolDescriptorsForVersion(contractVersion),
+				"resultContractVersion":           contractVersion,
+				"supportedResultContractVersions": supportedMCPResultContractVersions(),
+				"contractNegotiation":             mcpContractNegotiationPayload(contractVersion, requestedContractVersion),
+				"errorCodes":                      mcpErrorCatalog(),
 			},
 		}, isNotification)
 	case "tools/call":
 		if request.Params == nil {
 			s.recordMCPEvent(c, authCtx, "mcp_protocol_failed", "tools/call missing params")
-			writeJSONRPCResponse(c, http.StatusOK, protocolErrorResponse(request.ID, "invalid tools/call params", MCPErrorInvalidArgument, requestIDFromContext(c)), isNotification)
+			writeJSONRPCResponse(c, http.StatusOK, protocolErrorResponseForVersion(request.ID, -32602, "invalid tools/call params", MCPErrorInvalidArgument, requestIDFromContext(c), contractVersion), isNotification)
 			return
 		}
 		toolName, _ := request.Params["name"].(string)
@@ -337,7 +427,7 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 			arguments, valid = rawArguments.(map[string]any)
 			if !valid {
 				s.recordMCPEvent(c, authCtx, "mcp_protocol_failed", "tools/call arguments must be an object")
-				writeJSONRPCResponse(c, http.StatusOK, protocolErrorResponse(request.ID, "invalid tools/call arguments", MCPErrorInvalidArgument, requestIDFromContext(c)), isNotification)
+				writeJSONRPCResponse(c, http.StatusOK, protocolErrorResponseForVersion(request.ID, -32602, "invalid tools/call arguments", MCPErrorInvalidArgument, requestIDFromContext(c), contractVersion), isNotification)
 				return
 			}
 		}
@@ -369,54 +459,46 @@ func (s *Server) handleJSONRPC(c *gin.Context) {
 		if hasDefinition && definition.PermissionLevel == ToolPermissionDanger {
 			arguments = withoutConfirmNonce(arguments)
 		}
-		log.Printf("mcp tool call start tool=%s permission=%s remote=%s args=%s", toolName, permissionLevel, c.ClientIP(), summarizeToolArguments(arguments))
+		log.Printf("mcp request_id=%s tool call start tool=%s permission=%s remote=%s args=%s", requestIDFromContext(c), toolName, permissionLevel, c.ClientIP(), summarizeToolArguments(arguments))
 		result, err := s.registry.Call(ctx, toolName, arguments)
 		if err != nil {
 			if ctx.Err() != nil {
-				log.Printf("mcp tool call timeout tool=%s permission=%s remote=%s duration_ms=%d", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds())
+				log.Printf("mcp request_id=%s tool call timeout tool=%s permission=%s remote=%s duration_ms=%d", requestIDFromContext(c), toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds())
 				s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, ctx.Err().Error())
-				writeJSONRPCResponse(c, http.StatusGatewayTimeout, toolErrorResponse(request.ID, toolName, requestIDFromContext(c), -32001, "mcp request timed out", ctx.Err(), ctx), isNotification)
+				writeJSONRPCResponse(c, http.StatusGatewayTimeout, toolErrorResponseForVersion(request.ID, toolName, requestIDFromContext(c), -32001, "mcp request timed out", ctx.Err(), ctx, contractVersion), isNotification)
 				return
 			}
 			safeError := sanitizeMCPError(err.Error())
-			log.Printf("mcp tool call failed tool=%s permission=%s remote=%s duration_ms=%d error=%s", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), safeError)
+			log.Printf("mcp request_id=%s tool call failed tool=%s permission=%s remote=%s duration_ms=%d error=%s", requestIDFromContext(c), toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), safeError)
 			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, safeError)
-			writeJSONRPCResponse(c, http.StatusOK, toolErrorResponse(request.ID, toolName, requestIDFromContext(c), -32000, safeError, err, ctx), isNotification)
+			writeJSONRPCResponse(c, http.StatusOK, toolErrorResponseForVersion(request.ID, toolName, requestIDFromContext(c), -32000, safeError, err, ctx, contractVersion), isNotification)
 			return
 		}
 		if ctx.Err() != nil {
-			log.Printf("mcp tool call timeout tool=%s permission=%s remote=%s duration_ms=%d", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds())
+			log.Printf("mcp request_id=%s tool call timeout tool=%s permission=%s remote=%s duration_ms=%d", requestIDFromContext(c), toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds())
 			s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, false, isDanger, ctx.Err().Error())
-			writeJSONRPCResponse(c, http.StatusGatewayTimeout, toolErrorResponse(request.ID, toolName, requestIDFromContext(c), -32001, "mcp request timed out", ctx.Err(), ctx), isNotification)
+			writeJSONRPCResponse(c, http.StatusGatewayTimeout, toolErrorResponseForVersion(request.ID, toolName, requestIDFromContext(c), -32001, "mcp request timed out", ctx.Err(), ctx, contractVersion), isNotification)
 			return
 		}
-		result = normalizeToolCallResult(result, requestIDFromContext(c))
+		result = normalizeToolCallResultForVersion(result, requestIDFromContext(c), contractVersion)
 		requestSucceeded = !result.IsError
-		log.Printf("mcp tool call tool=%s permission=%s remote=%s duration_ms=%d is_error=%t", toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), result.IsError)
+		log.Printf("mcp request_id=%s tool call tool=%s permission=%s remote=%s duration_ms=%d is_error=%t", requestIDFromContext(c), toolName, permissionLevel, c.ClientIP(), time.Since(startedAt).Milliseconds(), result.IsError)
 		s.recordMCPAudit(c, authCtx, toolName, permissionLevel, startedAt, !result.IsError, isDanger, "")
 		writeJSONRPCResponse(c, http.StatusOK, JSONRPCResponse{
 			JSONRPC: jsonRPCVersion,
 			ID:      request.ID,
-			Result: map[string]any{
-				"summary":         result.Summary,
-				"content":         result.Content,
-				"data":            result.Data,
-				"warnings":        result.Warnings,
-				"nextActions":     result.NextActions,
-				"requestId":       result.RequestID,
-				"isError":         result.IsError,
-				"contractVersion": result.ContractVersion,
-				"error":           result.Error,
-			},
+			Result:  toolResultPayload(result, contractVersion),
 		}, isNotification)
 	default:
 		s.recordMCPEvent(c, authCtx, "mcp_protocol_failed", "method not found")
-		log.Printf("mcp request method_not_found method=%s remote=%s duration_ms=%d", method, c.ClientIP(), time.Since(startedAt).Milliseconds())
-		writeJSONRPCResponse(c, http.StatusOK, errorResponse(request.ID, -32601, "method not found"), isNotification)
+		log.Printf("mcp request_id=%s method_not_found method=%s remote=%s duration_ms=%d", requestIDFromContext(c), method, c.ClientIP(), time.Since(startedAt).Milliseconds())
+		writeJSONRPCResponse(c, http.StatusOK, protocolErrorResponseForVersion(request.ID, -32601, "method not found", MCPErrorNotFound, requestIDFromContext(c), contractVersion), isNotification)
 	}
 }
 
 func writeJSONRPCResponse(c *gin.Context, status int, response JSONRPCResponse, notification bool) {
+	ensureMCPRequestID(c)
+	setMCPContractHeaders(c, mcpResultContractVersionFromContextValue(c))
 	if notification {
 		c.Status(http.StatusAccepted)
 		return
@@ -439,8 +521,15 @@ func validateJSONRPCHeaders(c *gin.Context) bool {
 }
 
 func normalizeToolCallResult(result ToolCallResult, requestID string) ToolCallResult {
+	return normalizeToolCallResultForVersion(result, requestID, resultContractVersion)
+}
+
+func normalizeToolCallResultForVersion(result ToolCallResult, requestID, contractVersion string) ToolCallResult {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
 	if strings.TrimSpace(result.ContractVersion) == "" {
-		result.ContractVersion = resultContractVersion
+		result.ContractVersion = contractVersion
+	} else {
+		result.ContractVersion = contractVersion
 	}
 	if strings.TrimSpace(result.Summary) == "" && len(result.Content) > 0 {
 		result.Summary = strings.TrimSpace(result.Content[0].Text)
@@ -472,6 +561,33 @@ func normalizeToolCallResult(result ToolCallResult, requestID string) ToolCallRe
 	return result
 }
 
+func toolResultPayload(result ToolCallResult, contractVersion string) map[string]any {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
+	payload := map[string]any{
+		"summary":         result.Summary,
+		"content":         result.Content,
+		"data":            result.Data,
+		"warnings":        result.Warnings,
+		"nextActions":     result.NextActions,
+		"requestId":       result.RequestID,
+		"isError":         result.IsError,
+		"contractVersion": result.ContractVersion,
+		"error":           result.Error,
+	}
+	if contractVersion == resultContractVersion11 {
+		meta := map[string]any{
+			"contractVersion": contractVersion,
+			"requestId":       result.RequestID,
+		}
+		if result.Error != nil {
+			meta["errorCode"] = result.Error.Code
+			meta["retryable"] = result.Error.Retryable
+		}
+		payload["meta"] = meta
+	}
+	return payload
+}
+
 func requestIDFromContext(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -485,6 +601,11 @@ func requestIDFromContext(c *gin.Context) string {
 }
 
 func (s *Server) toolDescriptors() []map[string]any {
+	return s.toolDescriptorsForVersion(resultContractVersion)
+}
+
+func (s *Server) toolDescriptorsForVersion(contractVersion string) []map[string]any {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
 	tools := s.registry.List()
 	items := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
@@ -492,6 +613,7 @@ func (s *Server) toolDescriptors() []map[string]any {
 			"readOnlyHint":    tool.ReadOnly,
 			"permissionLevel": tool.PermissionLevel,
 			"requiredScopes":  requiredScopesForTool(tool),
+			"retryPolicy":     mcpToolRetryPolicy(tool),
 		}
 		if tool.Name == "start_import_job" {
 			annotations["scopeVariants"] = map[string][]string{
@@ -505,7 +627,8 @@ func (s *Server) toolDescriptors() []map[string]any {
 			"name":                  tool.Name,
 			"description":           tool.Description,
 			"inputSchema":           inputSchemaForTool(tool),
-			"resultContractVersion": resultContractVersion,
+			"contractVersions":      supportedMCPResultContractVersions(),
+			"resultContractVersion": contractVersion,
 			"errorCodes":            mcpErrorCatalog(),
 			"annotations":           annotations,
 		})
@@ -579,10 +702,21 @@ func writeMCPHTTPErrorWithData(c *gin.Context, status int, code MCPErrorCode, me
 	if c == nil {
 		return
 	}
+	ensureMCPRequestID(c)
+	contractVersion := mcpResultContractVersionFromContextValue(c)
+	setMCPContractHeaders(c, contractVersion)
 	payload := gin.H{
-		"error":     sanitizeMCPError(message),
-		"errorCode": string(normalizeMCPErrorCode(string(code))),
-		"requestId": requestIDFromContext(c),
+		"error":           sanitizeMCPError(message),
+		"errorCode":       string(normalizeMCPErrorCode(string(code))),
+		"requestId":       requestIDFromContext(c),
+		"contractVersion": contractVersion,
+	}
+	if contractVersion == resultContractVersion11 {
+		payload["meta"] = map[string]any{
+			"contractVersion": contractVersion,
+			"requestId":       requestIDFromContext(c),
+			"errorCode":       string(normalizeMCPErrorCode(string(code))),
+		}
 	}
 	for key, value := range data {
 		payload[key] = value
@@ -591,26 +725,52 @@ func writeMCPHTTPErrorWithData(c *gin.Context, status int, code MCPErrorCode, me
 }
 
 func protocolErrorResponse(id any, message string, code MCPErrorCode, requestID string) JSONRPCResponse {
+	return protocolErrorResponseForVersion(id, -32602, message, code, requestID, resultContractVersion)
+}
+
+func protocolErrorResponseForVersion(id any, jsonRPCCode int, message string, code MCPErrorCode, requestID, contractVersion string) JSONRPCResponse {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
 	errorValue := newMCPToolError(code, message, requestID)
-	response := errorResponse(id, -32602, sanitizeMCPError(message))
+	response := errorResponse(id, jsonRPCCode, sanitizeMCPError(message))
 	response.Error.Data = map[string]any{
-		"contractVersion": resultContractVersion,
+		"contractVersion": contractVersion,
 		"requestId":       strings.TrimSpace(requestID),
 		"error":           errorValue,
+	}
+	if contractVersion == resultContractVersion11 {
+		response.Error.Data.(map[string]any)["meta"] = map[string]any{
+			"contractVersion": contractVersion,
+			"requestId":       strings.TrimSpace(requestID),
+			"errorCode":       errorValue.Code,
+			"retryable":       errorValue.Retryable,
+		}
 	}
 	return response
 }
 
 func toolErrorResponse(id any, toolName, requestID string, jsonRPCCode int, message string, err error, ctx context.Context) JSONRPCResponse {
+	return toolErrorResponseForVersion(id, toolName, requestID, jsonRPCCode, message, err, ctx, resultContractVersion)
+}
+
+func toolErrorResponseForVersion(id any, toolName, requestID string, jsonRPCCode int, message string, err error, ctx context.Context, contractVersion string) JSONRPCResponse {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
 	toolError := classifyToolCallError(err, ctx)
 	toolError.Message = sanitizeMCPError(message)
 	toolError.RequestID = strings.TrimSpace(requestID)
 	response := errorResponse(id, jsonRPCCode, toolError.Message)
 	response.Error.Data = map[string]any{
-		"contractVersion": resultContractVersion,
+		"contractVersion": contractVersion,
 		"tool":            strings.TrimSpace(toolName),
 		"requestId":       strings.TrimSpace(requestID),
 		"error":           toolError,
+	}
+	if contractVersion == resultContractVersion11 {
+		response.Error.Data.(map[string]any)["meta"] = map[string]any{
+			"contractVersion": contractVersion,
+			"requestId":       strings.TrimSpace(requestID),
+			"errorCode":       toolError.Code,
+			"retryable":       toolError.Retryable,
+		}
 	}
 	return response
 }
@@ -635,7 +795,7 @@ func classifyToolCallError(err error, ctx context.Context) ToolCallError {
 		return newMCPToolError(MCPErrorInvalidArgument, message, "")
 	case strings.Contains(lower, "not found"), strings.Contains(lower, "does not exist"):
 		return newMCPToolError(MCPErrorNotFound, message, "")
-	case strings.Contains(lower, "already exists"), strings.Contains(lower, "conflict"):
+	case strings.Contains(lower, "already exists"), strings.Contains(lower, "conflict"), strings.Contains(lower, "cannot be retried"), strings.Contains(lower, "not retryable"):
 		return newMCPToolError(MCPErrorConflict, message, "")
 	case strings.Contains(lower, "not indexed"), strings.Contains(lower, "indexing") || strings.Contains(lower, "index not"):
 		return newMCPToolError(MCPErrorIndexNotReady, message, "")
@@ -757,6 +917,10 @@ func (s *Server) recordMCPEvent(c *gin.Context, authCtx authContext, eventType, 
 			username = "anonymous"
 		}
 	}
+	requestID := requestIDFromContext(c)
+	if requestID != "" {
+		message = fmt.Sprintf("requestId=%s %s", requestID, message)
+	}
 	message = sanitizeMCPError(message)
 	s.auditRecorder.RecordSecurityEvent(eventType, username, c.ClientIP(), c.Request.UserAgent(), message)
 }
@@ -766,7 +930,7 @@ func (s *Server) recordMCPRequestAudit(c *gin.Context, authCtx authContext, meth
 	if !success {
 		eventType = "mcp_request_failed"
 	}
-	message := fmt.Sprintf("method=%s success=%t durationMs=%d", method, success, time.Since(startedAt).Milliseconds())
+	message := fmt.Sprintf("requestId=%s method=%s success=%t durationMs=%d", requestIDFromContext(c), method, success, time.Since(startedAt).Milliseconds())
 	if strings.TrimSpace(errorSummary) != "" {
 		message += " error=" + sanitizeMCPError(errorSummary)
 	}
@@ -941,7 +1105,8 @@ func (s *Server) recordMCPAudit(c *gin.Context, authCtx authContext, toolName, p
 		apiKeyID = "-"
 	}
 	message := fmt.Sprintf(
-		"tool=%s permission=%s auth=%s apiKeyId=%s success=%t danger=%t durationMs=%d",
+		"requestId=%s tool=%s permission=%s auth=%s apiKeyId=%s success=%t danger=%t durationMs=%d",
+		requestIDFromContext(c),
 		toolName,
 		permissionLevel,
 		authCtx.Mode,
@@ -1040,8 +1205,13 @@ func appendMetricLatency(values []int64, duration time.Duration) []int64 {
 }
 
 func (s *Server) metricsSnapshot() MCPMetricsSnapshot {
+	return s.metricsSnapshotForVersion(resultContractVersion)
+}
+
+func (s *Server) metricsSnapshotForVersion(contractVersion string) MCPMetricsSnapshot {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
 	if s == nil {
-		return MCPMetricsSnapshot{ContractVersion: resultContractVersion, ServerVersion: serverVersion}
+		return MCPMetricsSnapshot{ContractVersion: contractVersion, SupportedContractVersions: supportedMCPResultContractVersions(), ServerVersion: serverVersion}
 	}
 	s.metricsMu.Lock()
 	defer s.metricsMu.Unlock()
@@ -1066,25 +1236,26 @@ func (s *Server) metricsSnapshot() MCPMetricsSnapshot {
 		return toolMetrics[i].ToolName < toolMetrics[j].ToolName
 	})
 	return MCPMetricsSnapshot{
-		ContractVersion:    resultContractVersion,
-		ServerVersion:      serverVersion,
-		StartedAt:          startedAt.Format(time.RFC3339),
-		RequestsTotal:      s.metrics.requestsTotal,
-		RequestsSucceeded:  s.metrics.requestsSucceeded,
-		RequestsFailed:     s.metrics.requestsFailed,
-		ToolCallsTotal:     s.metrics.toolCallsTotal,
-		ToolCallsSucceeded: s.metrics.toolCallsSucceeded,
-		ToolCallsFailed:    s.metrics.toolCallsFailed,
-		RateLimited:        s.metrics.rateLimited,
-		AuthFailures:       s.metrics.authFailures,
-		ScopeDenied:        s.metrics.scopeDenied,
-		RequestP50Ms:       metricPercentile(s.metrics.requestLatencies, 0.50),
-		RequestP95Ms:       metricPercentile(s.metrics.requestLatencies, 0.95),
-		RequestMaxMs:       metricMax(s.metrics.requestLatencies),
-		ToolP50Ms:          metricPercentile(s.metrics.toolLatencies, 0.50),
-		ToolP95Ms:          metricPercentile(s.metrics.toolLatencies, 0.95),
-		ToolMaxMs:          metricMax(s.metrics.toolLatencies),
-		ToolMetrics:        toolMetrics,
+		ContractVersion:           contractVersion,
+		SupportedContractVersions: supportedMCPResultContractVersions(),
+		ServerVersion:             serverVersion,
+		StartedAt:                 startedAt.Format(time.RFC3339),
+		RequestsTotal:             s.metrics.requestsTotal,
+		RequestsSucceeded:         s.metrics.requestsSucceeded,
+		RequestsFailed:            s.metrics.requestsFailed,
+		ToolCallsTotal:            s.metrics.toolCallsTotal,
+		ToolCallsSucceeded:        s.metrics.toolCallsSucceeded,
+		ToolCallsFailed:           s.metrics.toolCallsFailed,
+		RateLimited:               s.metrics.rateLimited,
+		AuthFailures:              s.metrics.authFailures,
+		ScopeDenied:               s.metrics.scopeDenied,
+		RequestP50Ms:              metricPercentile(s.metrics.requestLatencies, 0.50),
+		RequestP95Ms:              metricPercentile(s.metrics.requestLatencies, 0.95),
+		RequestMaxMs:              metricMax(s.metrics.requestLatencies),
+		ToolP50Ms:                 metricPercentile(s.metrics.toolLatencies, 0.50),
+		ToolP95Ms:                 metricPercentile(s.metrics.toolLatencies, 0.95),
+		ToolMaxMs:                 metricMax(s.metrics.toolLatencies),
+		ToolMetrics:               toolMetrics,
 	}
 }
 

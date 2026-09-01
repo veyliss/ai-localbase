@@ -17,6 +17,104 @@ var mcpErrorDescriptors = []MCPErrorDescriptor{
 	{Code: MCPErrorInternal, Retryable: false, Description: "服务端未分类的内部错误。", ClientAction: "使用 requestId 排查服务日志。"},
 }
 
+func supportedMCPResultContractVersions() []string {
+	return []string{resultContractVersion, resultContractVersion11}
+}
+
+func isSupportedMCPResultContractVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	for _, supported := range supportedMCPResultContractVersions() {
+		if version == supported {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeMCPResultContractVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if isSupportedMCPResultContractVersion(version) {
+		return version
+	}
+	return resultContractVersion
+}
+
+func negotiateMCPResultContractVersion(header string, params JSONRPCParams) (string, string) {
+	requested := strings.TrimSpace(header)
+	if requested == "" && params != nil {
+		for _, key := range []string{"resultContractVersion", "contractVersion"} {
+			if value, ok := params[key].(string); ok && strings.TrimSpace(value) != "" {
+				requested = strings.TrimSpace(value)
+				break
+			}
+		}
+	}
+	return normalizeMCPResultContractVersion(requested), requested
+}
+
+func mcpContractNegotiationPayload(selected, requested string) map[string]any {
+	selected = normalizeMCPResultContractVersion(selected)
+	payload := map[string]any{
+		"resultContractVersion":           selected,
+		"supportedResultContractVersions": supportedMCPResultContractVersions(),
+	}
+	if strings.TrimSpace(requested) != "" {
+		payload["requestedResultContractVersion"] = strings.TrimSpace(requested)
+		payload["fallback"] = selected != strings.TrimSpace(requested)
+	}
+	return payload
+}
+
+func mcpToolRetryPolicy(tool ToolDefinition) MCPToolRetryPolicy {
+	retryableErrors := []MCPErrorCode{MCPErrorDependencyUnavailable, MCPErrorTimeout, MCPErrorRateLimited}
+	switch tool.Name {
+	case "retry_job":
+		return MCPToolRetryPolicy{
+			Mode:            "explicit_job_retry",
+			MaxRetries:      3,
+			SafeToReplay:    false,
+			RetryableErrors: retryableErrors,
+		}
+	case "start_import_job":
+		return MCPToolRetryPolicy{
+			Mode:            "job_status_then_retry",
+			MaxRetries:      0,
+			SafeToReplay:    false,
+			RetryableErrors: retryableErrors,
+		}
+	case "cancel_job", "delete_knowledge_base", "delete_document", "delete_conversation":
+		return MCPToolRetryPolicy{
+			Mode:            "none",
+			MaxRetries:      0,
+			SafeToReplay:    false,
+			RetryableErrors: []MCPErrorCode{},
+		}
+	case "get_job_status", "list_recent_jobs":
+		return MCPToolRetryPolicy{
+			Mode:            "safe",
+			MaxRetries:      2,
+			SafeToReplay:    true,
+			RetryableErrors: retryableErrors,
+		}
+	case "":
+		return MCPToolRetryPolicy{Mode: "none", RetryableErrors: []MCPErrorCode{}}
+	}
+	if tool.ReadOnly {
+		return MCPToolRetryPolicy{
+			Mode:            "safe",
+			MaxRetries:      2,
+			SafeToReplay:    true,
+			RetryableErrors: append(retryableErrors, MCPErrorIndexNotReady),
+		}
+	}
+	return MCPToolRetryPolicy{
+		Mode:            "none",
+		MaxRetries:      0,
+		SafeToReplay:    false,
+		RetryableErrors: retryableErrors,
+	}
+}
+
 func mcpErrorCatalog() []MCPErrorDescriptor {
 	items := make([]MCPErrorDescriptor, len(mcpErrorDescriptors))
 	copy(items, mcpErrorDescriptors)

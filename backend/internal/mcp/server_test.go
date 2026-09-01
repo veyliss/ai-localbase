@@ -86,6 +86,10 @@ func newProtocolTestServer() (*Server, *gin.Engine) {
 }
 
 func performProtocolRequest(router http.Handler, body string, contentType, accept string) *httptest.ResponseRecorder {
+	return performProtocolRequestWithHeaders(router, body, contentType, accept, nil)
+}
+
+func performProtocolRequestWithHeaders(router http.Handler, body string, contentType, accept string, headers map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer test-token")
 	if contentType != "" {
@@ -94,9 +98,104 @@ func performProtocolRequest(router http.Handler, body string, contentType, accep
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	return resp
+}
+
+func TestMCPContractNegotiationDefaultsToV10AndSupportsV11(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, router := newProtocolTestServer()
+
+	defaultResponse := performProtocolRequest(router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_knowledge_bases","arguments":{}}}`, "application/json", "application/json")
+	if defaultResponse.Code != http.StatusOK {
+		t.Fatalf("expected default contract call to succeed, got %d body=%s", defaultResponse.Code, defaultResponse.Body.String())
+	}
+	if got := defaultResponse.Header().Get(mcpResultContractVersionHeader); got != resultContractVersion {
+		t.Fatalf("expected default contract %q, got %q", resultContractVersion, got)
+	}
+	if requestID := defaultResponse.Header().Get("X-Request-Id"); requestID == "" || !isValidMCPRequestID(requestID) {
+		t.Fatalf("expected generated request id, got %q", requestID)
+	}
+	if strings.Contains(defaultResponse.Body.String(), `"meta"`) {
+		t.Fatalf("did not expect 1.1 metadata in default result: %s", defaultResponse.Body.String())
+	}
+
+	v11Response := performProtocolRequestWithHeaders(router, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_knowledge_bases","arguments":{}}}`, "application/json", "application/json", map[string]string{
+		mcpResultContractVersionHeader: "1.1",
+		"X-Request-Id":                 "trace-mcp-11",
+	})
+	if v11Response.Code != http.StatusOK {
+		t.Fatalf("expected v1.1 contract call to succeed, got %d body=%s", v11Response.Code, v11Response.Body.String())
+	}
+	if got := v11Response.Header().Get(mcpResultContractVersionHeader); got != resultContractVersion11 {
+		t.Fatalf("expected negotiated contract %q, got %q", resultContractVersion11, got)
+	}
+	if got := v11Response.Header().Get("X-Request-Id"); got != "trace-mcp-11" {
+		t.Fatalf("expected request id to be preserved, got %q", got)
+	}
+	for _, expected := range []string{`"contractVersion":"1.1"`, `"meta"`, `"requestId":"trace-mcp-11"`} {
+		if !strings.Contains(v11Response.Body.String(), expected) {
+			t.Fatalf("expected v1.1 response to contain %q, got %s", expected, v11Response.Body.String())
+		}
+	}
+	if got := v11Response.Header().Get("X-MCP-Supported-Contract-Versions"); got != "1.0, 1.1" {
+		t.Fatalf("expected supported contract response header, got %q", got)
+	}
+}
+
+func TestMCPContractNegotiationUsesInitializeParameterAndFallsBackSafely(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, router := newProtocolTestServer()
+
+	response := performProtocolRequest(router, `{"jsonrpc":"2.0","id":3,"method":"initialize","params":{"resultContractVersion":"1.1"}}`, "application/json", "application/json")
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected initialize to succeed, got %d body=%s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{`"resultContractVersion":"1.1"`, `"requestedResultContractVersion":"1.1"`, `"fallback":false`} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("expected initialize negotiation field %q, got %s", expected, response.Body.String())
+		}
+	}
+
+	unknown := performProtocolRequestWithHeaders(router, `{"jsonrpc":"2.0","id":4,"method":"ping"}`, "application/json", "application/json", map[string]string{
+		mcpResultContractVersionHeader: "9.9",
+	})
+	if unknown.Code != http.StatusOK || unknown.Header().Get(mcpResultContractVersionHeader) != resultContractVersion {
+		t.Fatalf("expected unknown contract to fall back to 1.0, status=%d header=%q body=%s", unknown.Code, unknown.Header().Get(mcpResultContractVersionHeader), unknown.Body.String())
+	}
+}
+
+func TestMCPV11ErrorsExposeStructuredMetadataAndHTTPDiscoveryHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, router := newProtocolTestServer()
+
+	missingTool := performProtocolRequestWithHeaders(router, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"missing_tool","arguments":{}}}`, "application/json", "application/json", map[string]string{
+		mcpResultContractVersionHeader: "1.1",
+	})
+	if missingTool.Code != http.StatusOK {
+		t.Fatalf("expected missing tool to return JSON-RPC error, got %d body=%s", missingTool.Code, missingTool.Body.String())
+	}
+	for _, expected := range []string{`"contractVersion":"1.1"`, `"error":{"code":"not_found"`, `"meta"`, `"retryable":false`} {
+		if !strings.Contains(missingTool.Body.String(), expected) {
+			t.Fatalf("expected v1.1 error metadata %q, got %s", expected, missingTool.Body.String())
+		}
+	}
+
+	infoRequest := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	infoRequest.Header.Set("Authorization", "Bearer test-token")
+	infoRequest.Header.Set(mcpResultContractVersionHeader, "1.1")
+	infoResponse := httptest.NewRecorder()
+	router.ServeHTTP(infoResponse, infoRequest)
+	if infoResponse.Code != http.StatusOK || infoResponse.Header().Get(mcpResultContractVersionHeader) != resultContractVersion11 {
+		t.Fatalf("expected v1.1 discovery response, status=%d header=%q body=%s", infoResponse.Code, infoResponse.Header().Get(mcpResultContractVersionHeader), infoResponse.Body.String())
+	}
+	if infoResponse.Header().Get("X-Request-Id") == "" || !strings.Contains(infoResponse.Body.String(), `"supportedResultContractVersions":["1.0","1.1"]`) {
+		t.Fatalf("expected discovery request correlation and supported versions, headers=%v body=%s", infoResponse.Header(), infoResponse.Body.String())
+	}
 }
 
 func TestMCPJSONRPCProtocolBoundaries(t *testing.T) {
@@ -237,6 +336,40 @@ func TestMCPToolDescriptorPublishesDynamicImportScopes(t *testing.T) {
 	}
 	if variants["reindex"][0] != scopeMCPWrite || variants["eval_dataset"][0] != scopeMCPEval {
 		t.Fatalf("unexpected dynamic scopes: %#v", variants)
+	}
+	contractVersions, ok := descriptors[0]["contractVersions"].([]string)
+	if !ok || len(contractVersions) != 2 || contractVersions[1] != resultContractVersion11 {
+		t.Fatalf("expected tool contract versions, got %#v", descriptors[0]["contractVersions"])
+	}
+	retryPolicy, ok := annotations["retryPolicy"].(MCPToolRetryPolicy)
+	if !ok || retryPolicy.Mode == "" {
+		t.Fatalf("expected tool retry policy, got %#v", annotations["retryPolicy"])
+	}
+}
+
+func TestMCPRetryToolDescriptorPublishesExplicitRetryPolicy(t *testing.T) {
+	server := NewServer(NewToolRegistry(ToolDefinition{
+		Name:            "retry_job",
+		Description:     "retry job",
+		InputSchema:     requiredStringPropertySchema("jobId", "Job ID"),
+		PermissionLevel: ToolPermissionWrite,
+		Handler:         noopToolHandler,
+	}), nil, nil, model.ServerConfig{})
+
+	descriptors := server.toolDescriptors()
+	if len(descriptors) != 1 {
+		t.Fatalf("expected one descriptor, got %d", len(descriptors))
+	}
+	annotations, ok := descriptors[0]["annotations"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected descriptor annotations, got %#v", descriptors[0]["annotations"])
+	}
+	policy, ok := annotations["retryPolicy"].(MCPToolRetryPolicy)
+	if !ok || policy.Mode != "explicit_job_retry" || policy.MaxRetries != 3 || policy.SafeToReplay {
+		t.Fatalf("expected explicit non-replay retry policy, got %#v", annotations["retryPolicy"])
+	}
+	if scopes, ok := annotations["requiredScopes"].([]string); !ok || len(scopes) != 1 || scopes[0] != scopeMCPWrite {
+		t.Fatalf("expected write scope on retry tool, got %#v", annotations["requiredScopes"])
 	}
 }
 

@@ -1,17 +1,33 @@
-# MCP 平台化契约（v1.0）
+# MCP 平台化契约（v1.1）
 
-本文档描述 AI LocalBase 当前 MCP 工具调用的稳定扩展契约。它建立在现有 MCP `2024-11-05` HTTP JSON-RPC 接口之上，**不改变已有工具名称、参数和权限级别**。
+本文档描述 AI LocalBase 当前 MCP 工具调用的稳定扩展契约。它建立在现有 MCP `2024-11-05` HTTP JSON-RPC 接口之上，**已有工具的参数和权限级别保持兼容；新增能力只做增量扩展**。
 
 ## 1. 版本标识
 
 - JSON-RPC：`2.0`
 - MCP 协议：`2024-11-05`
-- 工具结果契约：`1.0`
+- 默认工具结果契约：`1.0`
+- 支持工具结果契约：`1.0`、`1.1`
 - 服务信息：`GET /mcp`
 - 工具列表：`GET /mcp/tools`
 - 观测指标：`GET /mcp/metrics`
 
-服务信息、`initialize`、`tools/list`、工具描述和工具结果都会返回 `resultContractVersion` 或 `contractVersion`，并公布 `errorCodes` 目录。当前版本仍为 `1.0`；本次新增字段均为向后兼容扩展，客户端应使用版本字段和已知字段判断兼容性，不应因为未知字段失败。
+服务信息、`initialize`、`tools/list`、工具描述和工具结果都会返回 `resultContractVersion` 或 `contractVersion`，并公布 `errorCodes` 目录。**未声明版本时始终使用 `1.0`**，因此现有客户端不需要修改即可继续工作。
+
+### 1.1 协商
+
+由于当前 HTTP MCP 不保存会话，客户端需要在每次请求中声明 `1.1`：
+
+- HTTP 请求头：`X-MCP-Result-Contract-Version: 1.1`
+- JSON-RPC `initialize.params.resultContractVersion`：`1.1`
+- 也接受 `tools/call` 等请求参数中的 `resultContractVersion`，便于无自定义请求头的客户端使用
+
+HTTP 响应会返回：
+
+- `X-MCP-Result-Contract-Version`：本次实际使用的版本
+- `X-MCP-Supported-Contract-Versions`：当前支持的版本列表
+
+`initialize`、`tools/list`、服务信息和能力摘要还会返回 `contractNegotiation`，其中包含请求版本、实际版本和是否回退。未支持的版本会安全回退到 `1.0`，不会破坏旧客户端；客户端应检查实际返回版本。
 
 ## 2. 工具成功结果
 
@@ -36,6 +52,19 @@
 - `warnings`：不会阻断结果、但需要调用方注意的问题。
 - `nextActions`：建议的后续工具或人工动作。
 - `requestId`：与 HTTP `X-Request-Id` 对应，用于日志关联。
+
+当实际版本为 `1.1` 时，结果会额外提供 `meta`，核心字段保持不变：
+
+```json
+{
+  "meta": {
+    "contractVersion": "1.1",
+    "requestId": "req-xxx"
+  }
+}
+```
+
+如果结果包含工具错误，`meta` 还会提供 `errorCode` 和 `retryable`，方便客户端统一处理错误。
 
 ## 3. 工具错误
 
@@ -76,13 +105,15 @@
 | `cancelled` | 请求被取消 | 是 |
 | `internal_error` | 未分类的服务端错误 | 否 |
 
-客户端不应根据中文错误消息判断错误类型，应优先读取 `error.data.error.code`、`retryable` 和 `requestId`。HTTP 鉴权、scope、限流和危险操作拒绝也会保留字符串 `error` 兼容字段，同时返回 `errorCode` 与 `requestId`。
+客户端不应根据中文错误消息判断错误类型，应优先读取 `error.data.error.code`、`retryable` 和 `requestId`；使用 `1.1` 时也可以读取 `error.data.meta`。HTTP 鉴权、scope、限流和危险操作拒绝也会保留字符串 `error` 兼容字段，同时返回 `errorCode`、`requestId` 和契约版本。
 
 ## 4. 权限与敏感信息
 
 - `/mcp`、`/mcp/tools`、`/mcp/metrics` 至少需要 `mcp:read`。
 - 工具实际调用继续使用现有权限矩阵和 `mcp:admin` 管理员覆盖。
 - `start_import_job` 根据 `jobType` 选择 scope：`import` / `batch_index` 使用 `mcp:upload`，`reindex` 使用 `mcp:write`，`eval_dataset` 使用 `mcp:eval`；工具描述中的 `annotations.scopeVariants` 会公布这组映射。
+- `retry_job` 使用 `mcp:write`，但只允许重试当前身份拥有的失败 Job；原任务的输入权限在首次启动时已经校验，重试不会绕过资源归属检查。
+- `tools/list` 的每个工具描述都会公布 `contractVersions`、`annotations.permissionLevel`、`annotations.requiredScopes` 和 `annotations.retryPolicy`。
 - `/mcp/metrics` 只返回计数、延迟和错误类别，不返回 Token、参数内容、文件路径、Qdrant 地址或原文。
 - 危险工具仍必须使用一次性 `confirmNonce`，不会恢复旧确认头。
 
@@ -96,6 +127,7 @@
 - 请求和工具调用的 P50、P95、最大耗时，单位为毫秒。
 - `toolMetrics`：按工具名称统计调用量、成功/失败数量和 P50、P95、最大耗时。
 - 服务启动时间和当前契约版本。
+- 支持的契约版本列表；通过 `X-MCP-Result-Contract-Version` 请求头选择本次响应版本。
 
 延迟样本按全局和工具分别在进程内保留最近 512 条，仅用于当前进程诊断；重启后重新统计。该端点受 MCP 鉴权和 `mcp:read` scope 保护。
 
@@ -110,3 +142,13 @@
 - 最近索引运行记录、触发来源、结果和错误分类。
 
 索引错误分类包括 `source_missing`、`source_unreadable`、`vector_dimension_mismatch`、`index_rule_outdated` 和 `index_failed`。详细错误不会通过 MCP 质量结果泄露内部路径或基础设施地址。
+
+## 7. 异步 Job 重试
+
+长任务结果会返回以下重试字段：
+
+- `retryable`：当前 Job 失败后是否允许显式重试。
+- `retryCount`：当前 Job 已经被重试的次数。
+- `parentJobId`：重试产生的子 Job 对应的原 Job ID。
+
+客户端应先使用 `get_job_status` 等待任务进入 `failed`，再调用 `retry_job`。每次重试都会创建新的 Job，原 Job 不会被覆盖；最多允许 3 次。运行中、成功、取消或达到上限的 Job 会返回 `conflict`，不会因为重复请求再次执行。

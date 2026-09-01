@@ -164,3 +164,51 @@ func TestMCPJobOwnerIsolation(t *testing.T) {
 		t.Fatalf("expected session owner to see only session jobs, got %+v", jobs)
 	}
 }
+
+func TestRetryMCPJobCreatesChildWithRetryMetadata(t *testing.T) {
+	called := false
+	service := &AppService{
+		mcpJobs: map[string]model.MCPJob{
+			"job-failed": {
+				ID:         "job-failed",
+				Status:     "failed",
+				Retryable:  true,
+				RetryCount: 0,
+			},
+		},
+		mcpJobRetries: map[string]mcpJobRetryAction{
+			"job-failed": func() (model.MCPJob, error) {
+				called = true
+				return model.MCPJob{ID: "job-retry", Status: "queued", Retryable: true}, nil
+			},
+		},
+		mcpJobCancels: map[string]context.CancelFunc{},
+	}
+
+	job, err := service.RetryMCPJobAs("job-failed", AuthPrincipal{})
+	if err != nil {
+		t.Fatalf("retry failed job: %v", err)
+	}
+	if !called || job.ID != "job-retry" || job.ParentJobID != "job-failed" || job.RetryCount != 1 {
+		t.Fatalf("expected retry metadata, called=%t job=%+v", called, job)
+	}
+}
+
+func TestRetryMCPJobRejectsNonFailedAndExhaustedJobs(t *testing.T) {
+	service := &AppService{
+		mcpJobs: map[string]model.MCPJob{
+			"job-running":   {ID: "job-running", Status: "running", Retryable: true},
+			"job-exhausted": {ID: "job-exhausted", Status: "failed", Retryable: false, RetryCount: mcpJobMaxRetries},
+		},
+		mcpJobRetries: map[string]mcpJobRetryAction{
+			"job-running":   func() (model.MCPJob, error) { return model.MCPJob{}, nil },
+			"job-exhausted": func() (model.MCPJob, error) { return model.MCPJob{}, nil },
+		},
+	}
+
+	for _, jobID := range []string{"job-running", "job-exhausted"} {
+		if _, err := service.RetryMCPJobAs(jobID, AuthPrincipal{}); err == nil {
+			t.Fatalf("expected retry %s to be rejected", jobID)
+		}
+	}
+}

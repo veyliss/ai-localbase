@@ -15,6 +15,8 @@
 - 提供调用日志与耗时记录
 - 提供受保护的 `/mcp/metrics` 调用统计与延迟指标
 - 工具结果统一使用 [MCP 平台化契约](mcp-platform-contract.md)，包含契约版本和结构化错误码
+- 支持 MCP 工具结果契约 `1.0` / `1.1` 协商，未声明时默认使用 `1.0`
+- 每个响应都返回 `X-Request-Id`，并将请求 ID 关联到工具结果、日志和审计事件
 - 知识库索引治理字段和错误分类见 [知识库治理规格](knowledge-governance-spec.md)
 - 提供工具权限分级（只读 / 写入 / 危险）
 - 提供 MCP 级限流与超时保护
@@ -49,7 +51,7 @@ MCP 默认关闭。服务器部署如需开启 MCP，必须同时设置 `ENABLE_
 
 当前危险工具确认 **只接受 `confirmNonce`**。即使启用了 `ENABLE_MCP_LEGACY_TOKEN=true`，服务端也不会再接受 `X-MCP-Confirm` 或 `?confirm_token=` 作为危险操作确认方式。
 
-POST 请求必须使用 `Content-Type: application/json`。客户端可以使用 `Accept: application/json`，或使用 `Accept: application/json, text/event-stream`；当前服务始终返回 JSON，不支持仅接受 `text/event-stream` 的请求。`notifications/initialized` 是无响应通知，服务返回 `202` 空响应。
+POST 请求必须使用 `Content-Type: application/json`。客户端可以使用 `Accept: application/json`，或使用 `Accept: application/json, text/event-stream`；当前服务始终返回 JSON，不支持仅接受 `text/event-stream` 的请求。`notifications/initialized` 是无响应通知，服务返回 `202` 空响应。需要 `1.1` 时，在每次请求加上 `X-MCP-Result-Contract-Version: 1.1`；未加时默认 `1.0`。
 
 如果将 `MCP_BASE_PATH` 改成不以 `/mcp` 结尾的路径，需要自行配置外部反向代理，或让 MCP 客户端直接访问后端端口。
 
@@ -87,7 +89,22 @@ POST 请求必须使用 `Content-Type: application/json`。客户端可以使用
 
 ### `initialize`
 
-用于初始化 MCP 会话，返回协议版本、服务信息与工具能力描述。
+用于初始化 MCP 连接，返回协议版本、服务信息、结果契约协商结果与工具能力描述。当前 HTTP 接口无会话状态；客户端如需 `1.1`，应在每次后续请求加上 `X-MCP-Result-Contract-Version: 1.1`。
+
+初始化参数可选声明 `resultContractVersion`：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "resultContractVersion": "1.1"
+  }
+}
+```
+
+未声明时使用 `1.0`；服务端会在 `contractNegotiation` 和响应头中返回实际版本及支持版本列表。
 
 ### `tools/list`
 
@@ -120,6 +137,8 @@ POST 请求必须使用 `Content-Type: application/json`。客户端可以使用
 - `nextActions`：建议后续动作
 - `requestId`：服务端请求 ID
 - `isError`：工具级错误标记
+- `contractVersion`：本次实际使用的结果契约版本
+- `meta`：仅 `1.1` 提供的请求 ID、错误码和重试属性补充信息
 
 旧客户端可继续读取 `content` 和 `data`；新客户端建议优先读取 `summary`、`data` 和 `requestId`。
 
@@ -135,7 +154,7 @@ POST 请求必须使用 `Content-Type: application/json`。客户端可以使用
 
 ## 当前内置工具
 
-当前共提供 **30 个 MCP 工具**，分为 **17 个只读工具**、**10 个写工具**、**3 个危险工具**。
+当前共提供 **31 个 MCP 工具**，分为 **17 个只读工具**、**11 个写工具**、**3 个危险工具**。
 
 ### 权限级别说明
 
@@ -173,6 +192,7 @@ POST 请求必须使用 `Content-Type: application/json`。客户端可以使用
 | `start_import_job` | `write` | 启动导入、重建索引、评估数据集或批量索引任务 |
 | `get_job_status` | `read-only` | 查询 Job 状态 |
 | `cancel_job` | `write` | 取消 Job |
+| `retry_job` | `write` | 显式重试失败 Job |
 | `list_recent_jobs` | `read-only` | 列出最近 Job |
 | `delete_knowledge_base` | `danger` | 删除知识库 |
 | `delete_document` | `danger` | 删除文档 |
@@ -620,6 +640,9 @@ Job 工具用于避免长任务占用一次 JSON-RPC 调用。当前实现使用
 - `result`：成功结果
 - `error`：失败原因
 - `warnings`：警告列表；取消类 Job 会提示取消是 best-effort，底层导入进入注册或索引阶段后可能已经完成副作用
+- `retryable`：是否可以通过 `retry_job` 显式重试
+- `retryCount`：已经重试次数，最多 3 次
+- `parentJobId`：重试产生的子 Job 对应的原 Job ID
 
 #### `start_import_job`
 
@@ -653,6 +676,16 @@ Job 工具用于避免长任务占用一次 JSON-RPC 调用。当前实现使用
 输入参数：
 
 - `jobId`（必填）
+
+#### `retry_job`
+
+权限级别：`write`，需要 `mcp:write` 或 `mcp:admin`
+
+输入参数：
+
+- `jobId`（必填）
+
+只有 `failed` 状态的 Job 可以重试。每次重试都会创建新的 Job，原 Job 保留；新 Job 通过 `parentJobId` 和 `retryCount` 关联。最多允许 3 次，其他状态或达到上限时返回 `conflict`，不会重复执行任务。
 
 #### `list_recent_jobs`
 
@@ -719,6 +752,7 @@ Job 工具用于避免长任务占用一次 JSON-RPC 调用。当前实现使用
 - 每分钟请求数限制
 - 单次请求超时保护
 - 危险工具一次性确认机制
+- 请求 ID 贯穿响应头、工具结果、日志和审计事件
 
 日志输出位置在 [`backend/internal/mcp/server.go`](../backend/internal/mcp/server.go:1)。
 
@@ -768,6 +802,7 @@ MCP 服务按进程内窗口计数方式做每分钟限流：
 
 - 由 `MCP_REQUESTS_PER_MINUTE` 控制
 - 超出后返回 `429 Too Many Requests`
+- 响应会携带 `Retry-After`，客户端应等待后再重试
 
 ### 超时
 

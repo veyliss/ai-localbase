@@ -176,9 +176,9 @@ func corsMiddleware(authEnabled bool) gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Vary", "Origin")
 		}
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-Id")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-Id, X-MCP-Result-Contract-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Expose-Headers", "X-Request-Id")
+		c.Header("Access-Control-Expose-Headers", "X-Request-Id, X-MCP-Result-Contract-Version, X-MCP-Supported-Contract-Versions")
 
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

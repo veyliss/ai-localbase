@@ -7,10 +7,12 @@ import (
 )
 
 const (
-	jsonRPCVersion        = "2.0"
-	protocolVersion       = "2024-11-05"
-	resultContractVersion = "1.0"
-	serverName            = "ai-localbase-mcp"
+	jsonRPCVersion                 = "2.0"
+	protocolVersion                = "2024-11-05"
+	resultContractVersion          = "1.0"
+	resultContractVersion11        = "1.1"
+	serverName                     = "ai-localbase-mcp"
+	mcpResultContractVersionHeader = "X-MCP-Result-Contract-Version"
 )
 
 // MCPErrorCode is stable across minor server releases. Messages may become
@@ -82,6 +84,13 @@ type ToolDefinition struct {
 	Handler         ToolCallHandler
 }
 
+type MCPToolRetryPolicy struct {
+	Mode            string         `json:"mode"`
+	MaxRetries      int            `json:"maxRetries"`
+	SafeToReplay    bool           `json:"safeToReplay"`
+	RetryableErrors []MCPErrorCode `json:"retryableErrors"`
+}
+
 type ToolCallResult struct {
 	ContractVersion string         `json:"contractVersion"`
 	Summary         string         `json:"summary,omitempty"`
@@ -113,25 +122,26 @@ type MCPToolMetrics struct {
 }
 
 type MCPMetricsSnapshot struct {
-	ContractVersion    string           `json:"contractVersion"`
-	ServerVersion      string           `json:"serverVersion"`
-	StartedAt          string           `json:"startedAt"`
-	RequestsTotal      int64            `json:"requestsTotal"`
-	RequestsSucceeded  int64            `json:"requestsSucceeded"`
-	RequestsFailed     int64            `json:"requestsFailed"`
-	ToolCallsTotal     int64            `json:"toolCallsTotal"`
-	ToolCallsSucceeded int64            `json:"toolCallsSucceeded"`
-	ToolCallsFailed    int64            `json:"toolCallsFailed"`
-	RateLimited        int64            `json:"rateLimited"`
-	AuthFailures       int64            `json:"authFailures"`
-	ScopeDenied        int64            `json:"scopeDenied"`
-	RequestP50Ms       int64            `json:"requestP50Ms"`
-	RequestP95Ms       int64            `json:"requestP95Ms"`
-	RequestMaxMs       int64            `json:"requestMaxMs"`
-	ToolP50Ms          int64            `json:"toolP50Ms"`
-	ToolP95Ms          int64            `json:"toolP95Ms"`
-	ToolMaxMs          int64            `json:"toolMaxMs"`
-	ToolMetrics        []MCPToolMetrics `json:"toolMetrics"`
+	ContractVersion           string           `json:"contractVersion"`
+	SupportedContractVersions []string         `json:"supportedResultContractVersions"`
+	ServerVersion             string           `json:"serverVersion"`
+	StartedAt                 string           `json:"startedAt"`
+	RequestsTotal             int64            `json:"requestsTotal"`
+	RequestsSucceeded         int64            `json:"requestsSucceeded"`
+	RequestsFailed            int64            `json:"requestsFailed"`
+	ToolCallsTotal            int64            `json:"toolCallsTotal"`
+	ToolCallsSucceeded        int64            `json:"toolCallsSucceeded"`
+	ToolCallsFailed           int64            `json:"toolCallsFailed"`
+	RateLimited               int64            `json:"rateLimited"`
+	AuthFailures              int64            `json:"authFailures"`
+	ScopeDenied               int64            `json:"scopeDenied"`
+	RequestP50Ms              int64            `json:"requestP50Ms"`
+	RequestP95Ms              int64            `json:"requestP95Ms"`
+	RequestMaxMs              int64            `json:"requestMaxMs"`
+	ToolP50Ms                 int64            `json:"toolP50Ms"`
+	ToolP95Ms                 int64            `json:"toolP95Ms"`
+	ToolMaxMs                 int64            `json:"toolMaxMs"`
+	ToolMetrics               []MCPToolMetrics `json:"toolMetrics"`
 }
 
 type ToolContent struct {

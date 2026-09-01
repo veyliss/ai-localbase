@@ -19,7 +19,7 @@ func newSystemTools(appService AppServiceReader) []ToolDefinition {
 			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
 				_ = ctx
 				tools := NewReadOnlyTools(appService)
-				capabilities := buildMCPCapabilities(appService.GetConfig(), tools)
+				capabilities := buildMCPCapabilitiesForVersion(appService.GetConfig(), tools, mcpResultContractVersionFromContext(ctx))
 				return NewTextResult(
 					fmt.Sprintf("MCP Server %s 当前提供 %d 个工具。", serverVersion, capabilities["toolCount"]),
 					map[string]any{"capabilities": capabilities},

@@ -55,6 +55,10 @@ type contextAwareAppService interface {
 	ReindexDocumentWithContext(ctx context.Context, knowledgeBaseID, documentID string) (model.Document, error)
 }
 
+type mcpJobRetryService interface {
+	RetryMCPJobAs(jobID string, owner service.AuthPrincipal) (model.MCPJob, error)
+}
+
 func contextAwareService(appService AppServiceReader) (contextAwareAppService, bool) {
 	service, ok := appService.(contextAwareAppService)
 	return service, ok
@@ -114,6 +118,13 @@ func listRecentMCPJobsAs(appService AppServiceReader, limit int, owner service.A
 		return enhanced.ListRecentMCPJobsAs(limit, owner)
 	}
 	return appService.ListRecentMCPJobs(limit)
+}
+
+func retryMCPJobAs(appService AppServiceReader, jobID string, owner service.AuthPrincipal) (model.MCPJob, error) {
+	if enhanced, ok := appService.(mcpJobRetryService); ok {
+		return enhanced.RetryMCPJobAs(jobID, owner)
+	}
+	return model.MCPJob{}, fmt.Errorf("mcp job retry is unavailable")
 }
 
 func reindexDocumentWithContext(appService AppServiceReader, ctx context.Context, knowledgeBaseID, documentID string) (model.Document, error) {
@@ -498,6 +509,11 @@ func truncateText(value string, limit int) string {
 }
 
 func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[string]any {
+	return buildMCPCapabilitiesForVersion(cfg, tools, resultContractVersion)
+}
+
+func buildMCPCapabilitiesForVersion(cfg model.AppConfig, tools []ToolDefinition, contractVersion string) map[string]any {
+	contractVersion = normalizeMCPResultContractVersion(contractVersion)
 	permissionCounts := map[string]int{
 		string(ToolPermissionReadOnly): 0,
 		string(ToolPermissionWrite):    0,
@@ -512,7 +528,9 @@ func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[strin
 			"readOnly":              tool.ReadOnly,
 			"permissionLevel":       permission,
 			"requiredScopes":        requiredScopesForTool(tool),
-			"resultContractVersion": resultContractVersion,
+			"contractVersions":      supportedMCPResultContractVersions(),
+			"resultContractVersion": contractVersion,
+			"retryPolicy":           mcpToolRetryPolicy(tool),
 		}
 		if tool.Name == "start_import_job" {
 			toolItem["scopeVariants"] = map[string][]string{
@@ -526,16 +544,17 @@ func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[strin
 	}
 
 	return map[string]any{
-		"name":             serverName,
-		"version":          serverVersion,
-		"protocolVersion":  protocolVersion,
-		"jsonrpc":          jsonRPCVersion,
-		"transport":        "http",
-		"enabled":          cfg.MCP.Enabled,
-		"basePath":         cfg.MCP.BasePath,
-		"toolCount":        len(tools),
-		"permissionCounts": permissionCounts,
-		"tools":            toolItems,
+		"name":                serverName,
+		"version":             serverVersion,
+		"protocolVersion":     protocolVersion,
+		"contractNegotiation": mcpContractNegotiationPayload(contractVersion, ""),
+		"jsonrpc":             jsonRPCVersion,
+		"transport":           "http",
+		"enabled":             cfg.MCP.Enabled,
+		"basePath":            cfg.MCP.BasePath,
+		"toolCount":           len(tools),
+		"permissionCounts":    permissionCounts,
+		"tools":               toolItems,
 		"capabilities": map[string]any{
 			"tools":   map[string]any{"listChanged": false},
 			"metrics": map[string]any{"path": "/metrics", "scope": scopeMCPRead},
@@ -554,9 +573,10 @@ func buildMCPCapabilities(cfg model.AppConfig, tools []ToolDefinition) map[strin
 			"endpoint":     "/api/config/mcp/danger-confirmations",
 			"legacyHeader": "X-MCP-Confirm",
 		},
-		"jobSupport":            true,
-		"resultContractVersion": resultContractVersion,
-		"errorCodes":            mcpErrorCatalog(),
+		"jobSupport":                      true,
+		"resultContractVersion":           contractVersion,
+		"supportedResultContractVersions": supportedMCPResultContractVersions(),
+		"errorCodes":                      mcpErrorCatalog(),
 		"auth": map[string]any{
 			"type":                  "api_key_scope",
 			"legacyTokenCompatible": cfg.MCP.LegacyTokenEnabled,

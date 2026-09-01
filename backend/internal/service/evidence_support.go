@@ -28,6 +28,7 @@ type CitationClaimSupport struct {
 	Text              string   `json:"text"`
 	Supported         bool     `json:"supported"`
 	EvidenceIDs       []string `json:"evidenceIds,omitempty"`
+	EvidenceSnippets  []string `json:"evidenceSnippets,omitempty"`
 	MissingAnchors    []string `json:"missingAnchors,omitempty"`
 	MatchedTermCount  int      `json:"matchedTermCount"`
 	RequiredTermCount int      `json:"requiredTermCount"`
@@ -38,6 +39,7 @@ type citationSourceSupport struct {
 	index           int
 	score           int
 	supportedClaims int
+	excerpts        []string
 }
 
 type citationClaim struct {
@@ -124,6 +126,10 @@ func AssessCitationSupport(question, answer string, sources []map[string]string,
 			if evidenceID := strings.TrimSpace(scoredSources[bestSourceIndex].source["evidenceId"]); evidenceID != "" {
 				claimResult.EvidenceIDs = []string{evidenceID}
 			}
+			if excerpt := citationExcerptForClaim(claim, questionTerms, scoredSources[bestSourceIndex].source["snippet"]); excerpt != "" {
+				claimResult.EvidenceSnippets = []string{excerpt}
+				scoredSources[bestSourceIndex].excerpts = appendCitationExcerpt(scoredSources[bestSourceIndex].excerpts, excerpt)
+			}
 		}
 		report.Claims = append(report.Claims, claimResult)
 	}
@@ -159,6 +165,9 @@ func AssessCitationSupport(question, answer string, sources []map[string]string,
 		source := cloneEvidenceSource(scored.source)
 		source["citationSupport"] = "supported"
 		source["supportedClaimCount"] = formatEvidenceInt(scored.supportedClaims)
+		if citationSnippet := strings.Join(scored.excerpts, "\n"); citationSnippet != "" {
+			source["citationSnippet"] = truncateEvidenceRunes(citationSnippet, 720)
+		}
 		report.SupportedSources = append(report.SupportedSources, source)
 		if len(report.SupportedSources) >= 4 {
 			break
@@ -232,6 +241,177 @@ func splitCitationSentences(value string) []string {
 		result = append(result, tail)
 	}
 	return result
+}
+
+// citationExcerptForClaim selects the smallest sentence or line that can
+// support a claim. The complete chunk remains available as "snippet" for
+// compatibility, while the excerpt is what the UI should foreground.
+func citationExcerptForClaim(claim citationClaim, questionTerms []string, sourceText string) string {
+	segments := splitCitationEvidenceSegments(sourceText)
+	if len(segments) == 0 {
+		return ""
+	}
+
+	answerOnlyTerms := citationAnswerOnlyTerms(claim, questionTerms)
+	type candidate struct {
+		index      int
+		text       string
+		score      int
+		anchorHits int
+		answerHits int
+		termHits   int
+		queryHits  int
+	}
+	candidates := make([]candidate, 0, len(segments))
+	for index, segment := range segments {
+		lower := strings.ToLower(segment)
+		anchorHits := countEvidenceTerms(claim.anchors, lower)
+		answerHits := countEvidenceTerms(answerOnlyTerms, lower)
+		termHits := countEvidenceTerms(claim.terms, lower)
+		queryHits := countEvidenceTerms(questionTerms, lower)
+		if anchorHits == 0 && answerHits == 0 {
+			continue
+		}
+		score := anchorHits*1000 + answerHits*100 + termHits*2 + queryHits
+		if anchorHits == len(claim.anchors) && len(claim.anchors) > 0 {
+			score += 500
+		}
+		candidates = append(candidates, candidate{
+			index:      index,
+			text:       segment,
+			score:      score,
+			anchorHits: anchorHits,
+			answerHits: answerHits,
+			termHits:   termHits,
+			queryHits:  queryHits,
+		})
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		if len([]rune(candidates[i].text)) != len([]rune(candidates[j].text)) {
+			return len([]rune(candidates[i].text)) < len([]rune(candidates[j].text))
+		}
+		return candidates[i].index < candidates[j].index
+	})
+
+	selected := make([]candidate, 0, 3)
+	covered := ""
+	for _, item := range candidates {
+		if len(selected) >= 3 {
+			break
+		}
+		if len(selected) > 0 && strings.Contains(covered, strings.ToLower(strings.TrimSpace(item.text))) {
+			continue
+		}
+		selected = append(selected, item)
+		covered += " " + strings.ToLower(item.text)
+		if citationExcerptCoversClaim(covered, claim, answerOnlyTerms, questionTerms) {
+			break
+		}
+	}
+
+	sort.SliceStable(selected, func(i, j int) bool {
+		return selected[i].index < selected[j].index
+	})
+	excerpts := make([]string, 0, len(selected))
+	for _, item := range selected {
+		excerpts = appendCitationExcerpt(excerpts, truncateEvidenceRunes(item.text, 360))
+	}
+	return strings.Join(excerpts, "\n")
+}
+
+func splitCitationEvidenceSegments(sourceText string) []string {
+	sourceText = strings.ReplaceAll(sourceText, "\r\n", "\n")
+	sourceText = strings.ReplaceAll(sourceText, "\r", "\n")
+	segments := make([]string, 0)
+	for _, line := range strings.Split(sourceText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		for _, sentence := range splitCitationSentences(line) {
+			if sentence = strings.TrimSpace(sentence); sentence != "" && !isCitationSeparatorLine(sentence) {
+				segments = append(segments, sentence)
+			}
+		}
+	}
+	return segments
+}
+
+func citationAnswerOnlyTerms(claim citationClaim, questionTerms []string) []string {
+	questionSet := make(map[string]struct{}, len(questionTerms))
+	for _, term := range questionTerms {
+		questionSet[term] = struct{}{}
+	}
+	answerOnly := make([]string, 0, len(claim.terms))
+	for _, term := range claim.terms {
+		if _, exists := questionSet[term]; !exists {
+			answerOnly = append(answerOnly, term)
+		}
+	}
+	return removeEvidenceContainedTerms(answerOnly)
+}
+
+func citationExcerptCoversClaim(sourceText string, claim citationClaim, answerOnlyTerms, questionTerms []string) bool {
+	clauses := splitCitationAnswerClauses(claim.text)
+	if len(clauses) > 1 {
+		for _, clause := range clauses {
+			clauseTerms := citationAnswerOnlyTerms(citationClaim{terms: evidenceSupportTerms(clause)}, questionTerms)
+			if len(clauseTerms) == 0 {
+				clauseTerms = evidenceSupportTerms(clause)
+			}
+			if countEvidenceTerms(clauseTerms, sourceText) == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	for _, anchor := range claim.anchors {
+		if !strings.Contains(sourceText, strings.ToLower(anchor)) {
+			return false
+		}
+	}
+	answerHits := countEvidenceTerms(answerOnlyTerms, sourceText)
+	if answerHits > 0 {
+		requiredAnswerHits := 1
+		if len(answerOnlyTerms) > 1 {
+			requiredAnswerHits = 2
+		}
+		return answerHits >= requiredAnswerHits
+	}
+	return len(claim.anchors) > 0
+}
+
+func splitCitationAnswerClauses(value string) []string {
+	clauses := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '，' || r == ','
+	})
+	result := make([]string, 0, len(clauses))
+	for _, clause := range clauses {
+		if clause = strings.TrimSpace(clause); clause != "" {
+			result = append(result, clause)
+		}
+	}
+	return result
+}
+
+func appendCitationExcerpt(excerpts []string, excerpt string) []string {
+	excerpt = strings.TrimSpace(excerpt)
+	if excerpt == "" {
+		return excerpts
+	}
+	for _, existing := range excerpts {
+		if existing == excerpt {
+			return excerpts
+		}
+	}
+	return append(excerpts, excerpt)
 }
 
 func scoreCitationClaim(claim citationClaim, questionTerms []string, sourceText string) (int, []string, bool) {

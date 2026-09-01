@@ -77,6 +77,7 @@ export interface CitationClaimSupport {
   text: string
   supported: boolean
   evidenceIds?: string[]
+  evidenceSnippets?: string[]
   missingAnchors?: string[]
   matchedTermCount: number
   requiredTermCount: number
@@ -110,6 +111,7 @@ export interface ChatSourceMetadata {
   lineEnd?: string
   tableRow?: string
   tableColumns?: string
+  citationSnippet?: string
 }
 
 export interface CitationNavigationTarget {

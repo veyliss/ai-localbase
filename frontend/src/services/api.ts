@@ -518,6 +518,10 @@ export interface EvalRunMetrics {
   evidenceGateDroppedCount: number
   evidenceGateAffectedCases: number
   evidenceGateEmptyResults: number
+  citationPrecision?: number
+  evidenceCoverage?: number
+  irrelevantEvidenceRate?: number
+  citationLocationMissingRate?: number
 }
 
 export interface EvalRunCaseResult {
@@ -537,6 +541,10 @@ export interface EvalRunCaseResult {
   evidenceGateInputCount: number
   evidenceGateOutputCount: number
   evidenceGateDroppedCount: number
+  citationPrecision?: number
+  evidenceCoverage?: number
+  irrelevantEvidenceRate?: number
+  citationLocationMissingRate?: number
   error?: string
   retrieved: RetrievalDebugChunk[]
 }

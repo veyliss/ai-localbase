@@ -36,6 +36,85 @@ func TestAssessCitationSupportRequiresAnswerSpecificEvidence(t *testing.T) {
 	}
 }
 
+func TestAssessCitationSupportReturnsMinimalClaimEvidence(t *testing.T) {
+	sources := []map[string]string{{
+		"knowledgeBaseId": "kb-1",
+		"documentId":      "doc-school",
+		"documentName":    "学校简介.md",
+		"chunkId":         "chunk-school",
+		"evidenceId":      "ev-school",
+		"snippet":         "文档说明：该文件还包含校园交通和招生流程。\n示例学校成立于 1893 年。\n附录介绍其他学校的历史。",
+	}}
+
+	report := AssessCitationSupport(
+		"示例学校的成立时间是什么？",
+		"示例学校成立于 1893 年。",
+		sources,
+		"kb-1",
+		"",
+	)
+	if report.Status != "supported" || len(report.SupportedSources) != 1 {
+		t.Fatalf("expected supported claim with one source, got %+v", report)
+	}
+
+	excerpt := report.SupportedSources[0]["citationSnippet"]
+	if excerpt != "示例学校成立于 1893 年。" {
+		t.Fatalf("expected minimal citation snippet, got %q", excerpt)
+	}
+	if len(report.Claims) != 1 || len(report.Claims[0].EvidenceSnippets) != 1 || report.Claims[0].EvidenceSnippets[0] != excerpt {
+		t.Fatalf("expected claim-level evidence snippet, got %+v", report.Claims)
+	}
+}
+
+func TestAssessCitationSupportSelectsTableRowsAndCrossSentenceEvidence(t *testing.T) {
+	sources := []map[string]string{
+		{
+			"knowledgeBaseId": "kb-1",
+			"documentId":      "doc-table",
+			"documentName":    "教师信息.csv",
+			"chunkId":         "chunk-table",
+			"evidenceId":      "ev-table",
+			"snippet":         "|姓名|职称|薪资|\n|---|---|---|\n|张三|高级职称|24000|\n|李四|中级职称|18000|",
+		},
+		{
+			"knowledgeBaseId": "kb-1",
+			"documentId":      "doc-text",
+			"documentName":    "学校简介.md",
+			"chunkId":         "chunk-text",
+			"evidenceId":      "ev-text",
+			"snippet":         "学校位于示例城市。\n学校创建于 1893 年。",
+		},
+	}
+
+	tableReport := AssessCitationSupport(
+		"谁的薪资最高？",
+		"张三的薪资最高，为 24000。",
+		sources,
+		"kb-1",
+		"doc-table",
+	)
+	if tableReport.Status != "supported" || len(tableReport.SupportedSources) != 1 {
+		t.Fatalf("expected table claim to be supported by one source, got %+v", tableReport)
+	}
+	if got := tableReport.SupportedSources[0]["citationSnippet"]; got != "|张三|高级职称|24000|" {
+		t.Fatalf("expected table row citation, got %q", got)
+	}
+
+	textReport := AssessCitationSupport(
+		"学校的创建时间和所在城市是什么？",
+		"学校创建于 1893 年，位于示例城市。",
+		sources,
+		"kb-1",
+		"doc-text",
+	)
+	if textReport.Status != "supported" || len(textReport.Claims) != 1 {
+		t.Fatalf("expected cross-sentence claim to be supported, got %+v", textReport)
+	}
+	if got := textReport.SupportedSources[0]["citationSnippet"]; got != "学校位于示例城市。\n学校创建于 1893 年。" {
+		t.Fatalf("expected both supporting sentences in source order, got %q", got)
+	}
+}
+
 func TestAssessCitationSupportDetectsPartialClaimsAndNumericConflicts(t *testing.T) {
 	sources := []map[string]string{{
 		"knowledgeBaseId": "kb-1",

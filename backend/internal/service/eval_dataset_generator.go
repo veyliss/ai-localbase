@@ -561,6 +561,10 @@ func buildEvalRunMetrics(results []model.EvalRunCaseResult, skippedDisabled int)
 
 	latencies := make([]int64, 0, len(results))
 	var reciprocalSum float64
+	var citationPrecisionSum float64
+	var evidenceCoverageSum float64
+	var irrelevantEvidenceRateSum float64
+	var locationMissingRateSum float64
 	for _, result := range results {
 		if result.Hit {
 			metrics.HitCount++
@@ -591,6 +595,10 @@ func buildEvalRunMetrics(results []model.EvalRunCaseResult, skippedDisabled int)
 			metrics.ErrorCount++
 		}
 		latencies = append(latencies, result.ElapsedMs)
+		citationPrecisionSum += result.CitationPrecision
+		evidenceCoverageSum += result.EvidenceCoverage
+		irrelevantEvidenceRateSum += result.IrrelevantEvidenceRate
+		locationMissingRateSum += result.CitationLocationMissingRate
 	}
 	metrics.HitRate = float64(metrics.HitCount) / float64(len(results))
 	metrics.MRR = reciprocalSum / float64(len(results))
@@ -598,7 +606,121 @@ func buildEvalRunMetrics(results []model.EvalRunCaseResult, skippedDisabled int)
 	metrics.DirectEvidenceHitRate = float64(metrics.DirectEvidenceHitCount) / float64(len(results))
 	metrics.LatencyP50Ms = percentileInt64(latencies, 0.50)
 	metrics.LatencyP95Ms = percentileInt64(latencies, 0.95)
+	metrics.CitationPrecision = citationPrecisionSum / float64(len(results))
+	metrics.EvidenceCoverage = evidenceCoverageSum / float64(len(results))
+	metrics.IrrelevantEvidenceRate = irrelevantEvidenceRateSum / float64(len(results))
+	metrics.CitationLocationMissingRate = locationMissingRateSum / float64(len(results))
 	return metrics
+}
+
+type evalCaseEvidenceMetricValues struct {
+	citationPrecision   float64
+	coverage            float64
+	irrelevantRate      float64
+	locationMissingRate float64
+}
+
+func evalCaseEvidenceMetrics(item model.EvalGroundTruthCase, chunks []model.RetrievalDebugChunk) evalCaseEvidenceMetricValues {
+	if len(chunks) == 0 {
+		return evalCaseEvidenceMetricValues{}
+	}
+
+	matchedSnippets := 0
+	for _, snippet := range item.AnswerSnippets {
+		snippet = strings.ToLower(strings.TrimSpace(snippet))
+		if snippet == "" {
+			continue
+		}
+		for _, chunk := range chunks {
+			if strings.Contains(strings.ToLower(strings.TrimSpace(chunk.Text)), snippet) {
+				matchedSnippets++
+				break
+			}
+		}
+	}
+
+	matchedSources := 0
+	relevantChunks := 0
+	locatedRelevantChunks := 0
+	for _, chunk := range chunks {
+		if !evalChunkMatchesExpectedEvidence(item, chunk) {
+			continue
+		}
+		relevantChunks++
+		if hasRetrievalEvidenceLocation(chunk) {
+			locatedRelevantChunks++
+		}
+	}
+	for _, source := range item.SourceDocuments {
+		for _, chunk := range chunks {
+			if evalChunkMatchesSource(chunk, source) {
+				matchedSources++
+				break
+			}
+		}
+	}
+
+	coverage := 0.0
+	if len(item.AnswerSnippets) > 0 {
+		coverage = float64(matchedSnippets) / float64(len(item.AnswerSnippets))
+	} else if len(item.SourceDocuments) > 0 {
+		coverage = float64(matchedSources) / float64(len(item.SourceDocuments))
+	} else if relevantChunks > 0 {
+		coverage = 1
+	}
+	precision := float64(relevantChunks) / float64(len(chunks))
+	locationMissingRate := 0.0
+	if relevantChunks > 0 {
+		locationMissingRate = float64(relevantChunks-locatedRelevantChunks) / float64(relevantChunks)
+	}
+	return evalCaseEvidenceMetricValues{
+		citationPrecision:   clampEvalEvidenceMetric(precision),
+		coverage:            clampEvalEvidenceMetric(coverage),
+		irrelevantRate:      clampEvalEvidenceMetric(1 - precision),
+		locationMissingRate: clampEvalEvidenceMetric(locationMissingRate),
+	}
+}
+
+func evalChunkMatchesExpectedEvidence(item model.EvalGroundTruthCase, chunk model.RetrievalDebugChunk) bool {
+	if len(item.SourceDocuments) > 0 {
+		for _, source := range item.SourceDocuments {
+			if evalChunkMatchesSource(chunk, source) {
+				return true
+			}
+		}
+	}
+	chunkText := strings.ToLower(strings.TrimSpace(chunk.Text))
+	for _, snippet := range item.AnswerSnippets {
+		snippet = strings.ToLower(strings.TrimSpace(snippet))
+		if snippet != "" && strings.Contains(chunkText, snippet) {
+			return true
+		}
+	}
+	return false
+}
+
+func evalChunkMatchesSource(chunk model.RetrievalDebugChunk, source model.EvalSourceDocument) bool {
+	if source.EvidenceID != "" && chunk.EvidenceID == source.EvidenceID {
+		return true
+	}
+	if source.ChunkID != "" && chunk.ID == source.ChunkID {
+		return true
+	}
+	return source.ChunkID == "" && source.DocumentID != "" && chunk.DocumentID == source.DocumentID
+}
+
+func hasRetrievalEvidenceLocation(chunk model.RetrievalDebugChunk) bool {
+	return chunk.EvidenceID != "" || chunk.CharEnd > chunk.CharStart || chunk.LineStart > 0 || chunk.TableRow > 0
+}
+
+func clampEvalEvidenceMetric(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func evalCaseEvidenceSupport(item model.EvalGroundTruthCase, chunks []model.RetrievalDebugChunk, hit bool) (bool, string) {

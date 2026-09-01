@@ -18,6 +18,14 @@ describe('citation source filtering', () => {
     expect(isDocumentCitationSource(documentSource)).toBe(true)
   })
 
+  it('preserves the precise citation excerpt alongside the compatibility snippet', () => {
+    const source = {
+      ...documentSource,
+      citationSnippet: '示例机构成立于 1893 年。',
+    }
+    expect(filterDocumentCitationSources([source])).toEqual([source])
+  })
+
   it('drops tool records and sources without snippets', () => {
     expect(filterDocumentCitationSources([
       { toolName: 'search_knowledge_base' },

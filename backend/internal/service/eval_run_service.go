@@ -116,6 +116,11 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 			EvidenceGateDroppedCount: response.EvidenceGateDroppedCount,
 			Retrieved:                response.Items,
 		}
+		evidenceMetrics := evalCaseEvidenceMetrics(item, response.Items)
+		caseResult.CitationPrecision = evidenceMetrics.citationPrecision
+		caseResult.EvidenceCoverage = evidenceMetrics.coverage
+		caseResult.IrrelevantEvidenceRate = evidenceMetrics.irrelevantRate
+		caseResult.CitationLocationMissingRate = evidenceMetrics.locationMissingRate
 		if err != nil {
 			caseResult.Error = err.Error()
 			results = append(results, caseResult)

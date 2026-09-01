@@ -100,7 +100,11 @@ const MessageCitations: React.FC<MessageCitationsProps> = ({
                 </button>
               )}
             </div>
-            {source.snippet && <p>{source.snippet}</p>}
+            {(source.citationSnippet || source.snippet) && (
+              <p className={source.citationSnippet ? 'message-citation-excerpt' : undefined}>
+                {source.citationSnippet || source.snippet}
+              </p>
+            )}
           </article>
         ))}
       </div>

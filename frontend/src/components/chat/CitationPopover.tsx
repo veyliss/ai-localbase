@@ -15,13 +15,14 @@ const CitationPopover: React.FC<CitationPopoverProps> = ({
   onNavigateToDocument,
 }) => {
   const [copied, setCopied] = useState(false)
+  const citationText = source.citationSnippet || source.snippet || ''
 
   if (!isOpen) return null
 
   const handleCopySnippet = async () => {
-    if (!source.snippet) return
+    if (!citationText) return
     try {
-      await navigator.clipboard.writeText(source.snippet)
+      await navigator.clipboard.writeText(citationText)
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -108,11 +109,11 @@ const CitationPopover: React.FC<CitationPopoverProps> = ({
             </div>
           )}
 
-          {source.snippet && (
+          {citationText && (
             <div className="citation-field">
-              <label>内容片段</label>
+              <label>{source.citationSnippet ? '支撑证据' : '内容片段'}</label>
               <div className="citation-snippet">
-                {source.snippet}
+                {citationText}
                 <button
                   type="button"
                   className="citation-copy-btn"
@@ -125,6 +126,12 @@ const CitationPopover: React.FC<CitationPopoverProps> = ({
                 </button>
               </div>
             </div>
+          )}
+          {source.citationSnippet && source.snippet && source.citationSnippet !== source.snippet && (
+            <details className="citation-field citation-full-snippet">
+              <summary>查看完整召回片段</summary>
+              <div className="citation-value">{source.snippet}</div>
+            </details>
           )}
         </div>
 

@@ -616,6 +616,27 @@ func TestBuildEvalRunMetrics(t *testing.T) {
 	}
 }
 
+func TestEvalCaseEvidenceMetricsSeparateRelevantAndIrrelevantChunks(t *testing.T) {
+	item := model.EvalGroundTruthCase{
+		Question:      "示例机构的成立时间是什么？",
+		AnswerSnippets: []string{"成立于 1893 年"},
+		SourceDocuments: []model.EvalSourceDocument{{
+			DocumentID: "doc-1",
+			ChunkID:    "chunk-1",
+		}},
+	}
+	metrics := evalCaseEvidenceMetrics(item, []model.RetrievalDebugChunk{
+		{ID: "chunk-1", DocumentID: "doc-1", Text: "示例机构成立于 1893 年。", EvidenceID: "ev-1", LineStart: 3, LineEnd: 3},
+		{ID: "chunk-2", DocumentID: "doc-2", Text: "这是无关的部署说明。"},
+	})
+	if metrics.citationPrecision != 0.5 || metrics.coverage != 1 || metrics.irrelevantRate != 0.5 {
+		t.Fatalf("unexpected evidence precision metrics: %+v", metrics)
+	}
+	if metrics.locationMissingRate != 0 {
+		t.Fatalf("expected located citation evidence, got %+v", metrics)
+	}
+}
+
 func TestEvalCaseEvidenceSupportDetectsCitationMismatch(t *testing.T) {
 	item := model.EvalGroundTruthCase{
 		Question:       "成员甲的手机号是多少？",

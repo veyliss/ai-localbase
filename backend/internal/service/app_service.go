@@ -2834,6 +2834,24 @@ func validMCPJobLease(lease mcpJobLease) bool {
 	return strings.TrimSpace(lease.Owner) != "" && lease.Attempt > 0
 }
 
+// indexFenceForContext returns a generation token for durable MCP workers.
+// It is intentionally derived from the immutable job attempt, so every retry
+// or lease takeover writes into a separate Qdrant generation.
+func indexFenceForContext(ctx context.Context) string {
+	execution, ok := mcpJobExecutionFromContext(ctx)
+	if !ok || execution.JobID == "" || execution.Lease.Attempt <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("mcp:%s:%d", execution.JobID, execution.Lease.Attempt)
+}
+
+func documentWithIndexFence(document model.Document, ctx context.Context) model.Document {
+	if fence := indexFenceForContext(ctx); fence != "" {
+		document.IndexFence = fence
+	}
+	return document
+}
+
 func mcpJobLeaseMatches(left, right mcpJobLease) bool {
 	return strings.TrimSpace(left.Owner) == strings.TrimSpace(right.Owner) && left.Attempt == right.Attempt
 }
@@ -4502,6 +4520,13 @@ func (s *AppService) updateDocumentWithContext(ctx context.Context, knowledgeBas
 	updated := false
 	for index, document := range kb.Documents {
 		if document.ID == nextDocument.ID {
+			if incomingFence := strings.TrimSpace(nextDocument.IndexFence); incomingFence != "" {
+				currentFence := strings.TrimSpace(document.IndexFence)
+				if currentFence != "" && currentFence != incomingFence {
+					s.state.Mu.Unlock()
+					return ErrMCPJobLeaseLost
+				}
+			}
 			kb.Documents[index] = nextDocument
 			updated = true
 			break
@@ -4575,7 +4600,7 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 		s.state.Mu.Unlock()
 		return model.Document{}, err
 	}
-	if err := s.deleteIndexedDocument(knowledgeBaseID, documentID); err != nil {
+	if err := s.deleteIndexedDocumentGenerationWithContext(context.Background(), removedDocument); err != nil {
 		log.Printf("failed to delete indexed content for document %s: %v", documentID, err)
 	}
 	return removedDocument, nil
@@ -5282,13 +5307,14 @@ func (s *AppService) upsertDocumentChunksWithContext(ctx context.Context, knowle
 			copy(vector, vectors[index])
 		}
 		points = append(points, QdrantPoint{
-			ID:     qdrantPointID(chunk.ID),
+			ID:     qdrantPointID(indexedChunkID(chunk)),
 			Vector: qdrantPointVectors(vector, BuildSparseVector(chunk.Text)),
 			Payload: map[string]any{
 				"knowledge_base_id": chunk.KnowledgeBaseID,
 				"document_id":       chunk.DocumentID,
 				"document_name":     chunk.DocumentName,
 				"chunk_id":          chunk.ID,
+				"index_fence":       strings.TrimSpace(chunk.IndexFence),
 				"evidence_id":       evidenceIDForChunk(chunk),
 				"chunk_index":       chunk.Index,
 				"chunk_kind":        chunk.Kind,
@@ -5333,10 +5359,14 @@ func (s *AppService) replaceDocumentChunksWithContext(ctx context.Context, knowl
 
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 10*time.Minute)
 	defer cancel()
+	indexFence := indexFenceForContext(ctx)
+	if indexFence == "" && len(chunks) > 0 {
+		indexFence = strings.TrimSpace(chunks[0].IndexFence)
+	}
 	if err := s.ensureIndexOperationLease(ctx); err != nil {
 		return err
 	}
-	previousPoints, err := s.qdrant.ScrollPointPayloadsByFilter(ctx, knowledgeBaseID, documentFilter(documentID))
+	previousPoints, err := s.qdrant.ScrollPointPayloadsByFilter(ctx, knowledgeBaseID, documentFilterForIndexFence(documentID, indexFence))
 	if err != nil {
 		return fmt.Errorf("inspect existing qdrant points for document %s: %w", documentID, err)
 	}
@@ -5355,7 +5385,7 @@ func (s *AppService) replaceDocumentChunksWithContext(ctx context.Context, knowl
 
 	currentIDs := make(map[string]struct{}, len(chunks))
 	for _, chunk := range chunks {
-		currentIDs[fmt.Sprint(qdrantPointID(chunk.ID))] = struct{}{}
+		currentIDs[fmt.Sprint(qdrantPointID(indexedChunkID(chunk)))] = struct{}{}
 	}
 	staleIDs := make([]any, 0)
 	for _, point := range previousPoints {
@@ -5781,6 +5811,63 @@ func documentFilter(documentID string) map[string]any {
 			},
 		},
 	}
+}
+
+func documentFilterForIndexFence(documentID, indexFence string) map[string]any {
+	filter := documentFilter(documentID)
+	indexFence = strings.TrimSpace(indexFence)
+	if indexFence == "" {
+		return filter
+	}
+	must, _ := filter["must"].([]map[string]any)
+	filter["must"] = append(must, map[string]any{
+		"key":   "index_fence",
+		"match": map[string]any{"value": indexFence},
+	})
+	return filter
+}
+
+func documentSupersededIndexFilter(documentID, currentFence string) map[string]any {
+	return map[string]any{
+		"must": []map[string]any{
+			{
+				"key": "document_id",
+				"match": map[string]any{
+					"value": documentID,
+				},
+			},
+		},
+		"must_not": []map[string]any{
+			{
+				"key": "index_fence",
+				"match": map[string]any{
+					"value": currentFence,
+				},
+			},
+		},
+	}
+}
+
+func indexedChunkID(chunk DocumentChunk) string {
+	chunkID := strings.TrimSpace(chunk.ID)
+	if fence := strings.TrimSpace(chunk.IndexFence); fence != "" {
+		return fence + "|" + chunkID
+	}
+	return chunkID
+}
+
+func (s *AppService) cleanupSupersededDocumentIndexWithContext(ctx context.Context, knowledgeBaseID, documentID, currentFence string) error {
+	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() || strings.TrimSpace(currentFence) == "" {
+		return nil
+	}
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
+	if err := s.qdrant.DeletePointsByFilter(ctx, knowledgeBaseID, documentSupersededIndexFilter(documentID, currentFence)); err != nil {
+		return fmt.Errorf("delete superseded qdrant points for document %s: %w", documentID, err)
+	}
+	return s.ensureIndexOperationLease(ctx)
 }
 
 func buildDocumentDetailResponse(s *AppService, document model.Document, content, contentSource string, chunks []DocumentChunk, focusChunkID string, options DocumentDetailOptions) model.DocumentDetailResponse {

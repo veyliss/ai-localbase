@@ -21,6 +21,7 @@ type indexedDocumentArtifact struct {
 	KnowledgeBaseID string               `json:"knowledgeBaseId"`
 	DocumentID      string               `json:"documentId"`
 	DocumentName    string               `json:"documentName"`
+	IndexFence      string               `json:"indexFence,omitempty"`
 	Content         string               `json:"content"`
 	Tables          []model.IndexedTable `json:"tables,omitempty"`
 }
@@ -49,6 +50,7 @@ func (s *IndexedContentStore) Put(document model.Document, content string, table
 		KnowledgeBaseID: document.KnowledgeBaseID,
 		DocumentID:      document.ID,
 		DocumentName:    document.Name,
+		IndexFence:      strings.TrimSpace(document.IndexFence),
 		Content:         content,
 		Tables:          cloneIndexedTables(tables),
 	}
@@ -80,7 +82,7 @@ func (s *IndexedContentStore) Put(document model.Document, content string, table
 		return fmt.Errorf("close indexed content temp file: %w", err)
 	}
 
-	if err := os.Rename(tempPath, s.pathFor(document.KnowledgeBaseID, document.ID)); err != nil {
+	if err := os.Rename(tempPath, s.pathForGeneration(document.KnowledgeBaseID, document.ID, document.IndexFence)); err != nil {
 		return fmt.Errorf("replace indexed content: %w", err)
 	}
 	return nil
@@ -90,7 +92,7 @@ func (s *IndexedContentStore) Load(document model.Document) (indexedDocumentArti
 	if s == nil || s.root == "" {
 		return indexedDocumentArtifact{}, false, nil
 	}
-	content, err := os.ReadFile(s.pathFor(document.KnowledgeBaseID, document.ID))
+	content, err := os.ReadFile(s.pathForGeneration(document.KnowledgeBaseID, document.ID, document.IndexFence))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return indexedDocumentArtifact{}, false, nil
@@ -108,6 +110,9 @@ func (s *IndexedContentStore) Load(document model.Document) (indexedDocumentArti
 	if artifact.KnowledgeBaseID != document.KnowledgeBaseID || artifact.DocumentID != document.ID {
 		return indexedDocumentArtifact{}, false, fmt.Errorf("indexed content identity mismatch")
 	}
+	if strings.TrimSpace(artifact.IndexFence) != strings.TrimSpace(document.IndexFence) {
+		return indexedDocumentArtifact{}, false, fmt.Errorf("indexed content generation mismatch")
+	}
 	return artifact, true, nil
 }
 
@@ -115,8 +120,47 @@ func (s *IndexedContentStore) Delete(knowledgeBaseID, documentID string) error {
 	if s == nil || s.root == "" {
 		return nil
 	}
-	if err := os.Remove(s.pathFor(knowledgeBaseID, documentID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("delete indexed content: %w", err)
+	return s.deleteAllGenerations(knowledgeBaseID, documentID)
+}
+
+func (s *IndexedContentStore) DeleteGeneration(knowledgeBaseID, documentID, indexFence string) error {
+	if s == nil || s.root == "" {
+		return nil
+	}
+	paths := []string{s.pathFor(knowledgeBaseID, documentID), s.pathForGeneration(knowledgeBaseID, documentID, indexFence)}
+	matches, err := filepath.Glob(s.generationPattern(knowledgeBaseID, documentID))
+	if err != nil {
+		return fmt.Errorf("find indexed content generations: %w", err)
+	}
+	paths = append(paths, matches...)
+	seen := make(map[string]struct{}, len(paths))
+	for _, filePath := range paths {
+		if _, exists := seen[filePath]; exists {
+			continue
+		}
+		seen[filePath] = struct{}{}
+		if err := s.deletePaths(filePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *IndexedContentStore) deleteAllGenerations(knowledgeBaseID, documentID string) error {
+	paths := []string{s.pathFor(knowledgeBaseID, documentID)}
+	matches, err := filepath.Glob(s.generationPattern(knowledgeBaseID, documentID))
+	if err != nil {
+		return fmt.Errorf("find indexed content generations: %w", err)
+	}
+	paths = append(paths, matches...)
+	return s.deletePaths(paths...)
+}
+
+func (s *IndexedContentStore) deletePaths(paths ...string) error {
+	for _, filePath := range paths {
+		if err := os.Remove(filePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("delete indexed content: %w", err)
+		}
 	}
 	return nil
 }
@@ -124,6 +168,20 @@ func (s *IndexedContentStore) Delete(knowledgeBaseID, documentID string) error {
 func (s *IndexedContentStore) pathFor(knowledgeBaseID, documentID string) string {
 	hash := sha256.Sum256([]byte(knowledgeBaseID + "\x00" + documentID))
 	return filepath.Join(s.root, hex.EncodeToString(hash[:])+".json")
+}
+
+func (s *IndexedContentStore) pathForGeneration(knowledgeBaseID, documentID, indexFence string) string {
+	if strings.TrimSpace(indexFence) == "" {
+		return s.pathFor(knowledgeBaseID, documentID)
+	}
+	baseHash := sha256.Sum256([]byte(knowledgeBaseID + "\x00" + documentID))
+	fenceHash := sha256.Sum256([]byte(strings.TrimSpace(indexFence)))
+	return filepath.Join(s.root, hex.EncodeToString(baseHash[:])+"-"+hex.EncodeToString(fenceHash[:])[:16]+".json")
+}
+
+func (s *IndexedContentStore) generationPattern(knowledgeBaseID, documentID string) string {
+	hash := sha256.Sum256([]byte(knowledgeBaseID + "\x00" + documentID))
+	return filepath.Join(s.root, hex.EncodeToString(hash[:])+"-*.json")
 }
 
 func cloneIndexedTables(source []model.IndexedTable) []model.IndexedTable {

@@ -275,6 +275,7 @@ type Document struct {
 	IndexedContentAvailable bool   `json:"indexedContentAvailable,omitempty"`
 	IndexedContentChars     int    `json:"indexedContentChars,omitempty"`
 	IndexedTablesCount      int    `json:"indexedTablesCount,omitempty"`
+	IndexFence              string `json:"-"`
 }
 
 type IndexedTable struct {

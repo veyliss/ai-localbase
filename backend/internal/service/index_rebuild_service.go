@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		return model.Document{}, err
 	}
 	document = enrichDocumentGovernance(document)
+	document = documentWithIndexFence(document, ctx)
 	startedAt := time.Now()
 	if document.Version <= 0 {
 		document.Version = 1
@@ -164,12 +166,15 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 		return model.Document{}, err
 	}
 	document = enrichDocumentGovernance(latestDocument)
+	previousIndexFence := strings.TrimSpace(document.IndexFence)
+	document = documentWithIndexFence(document, ctx)
 	s.state.Mu.RLock()
 	config := s.state.Config
 	s.state.Mu.RUnlock()
 
 	indexed, err = reindexDocumentWithConfig(ctx, s, config, document)
 	if err != nil {
+		document.IndexFence = previousIndexFence
 		document.Status = "failed"
 		document.IndexErrorCode = classifyIndexError(err)
 		document.IndexError = publicIndexError(document.IndexErrorCode)
@@ -179,6 +184,11 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 	}
 	if err := s.updateDocumentWithContext(ctx, knowledgeBaseID, indexed); err != nil {
 		return model.Document{}, err
+	}
+	if err := s.cleanupSupersededDocumentIndexWithContext(ctx, knowledgeBaseID, documentID, indexed.IndexFence); err != nil {
+		// The current generation is already durable and retrieval is fenced by
+		// the document metadata. Cleanup is best-effort and can be retried later.
+		log.Printf("failed to cleanup superseded index generations for document %s: %v", documentID, err)
 	}
 	return indexed, nil
 }

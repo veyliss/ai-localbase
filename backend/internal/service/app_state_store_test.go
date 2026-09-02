@@ -40,6 +40,7 @@ func TestAppStateStoreSaveAndLoad(t *testing.T) {
 					Name:         "demo.md",
 					Path:         "/srv/ai-localbase/uploads/doc-1_demo.md",
 					IndexVersion: currentIndexVersion,
+					IndexFence:   "mcp:job-state:1",
 				}},
 			},
 		},
@@ -85,6 +86,9 @@ func TestAppStateStoreSaveAndLoad(t *testing.T) {
 	}
 	if got := loaded.KnowledgeBases["kb-1"].Documents[0].IndexVersion; got != currentIndexVersion {
 		t.Fatalf("expected persisted index version %d, got %d", currentIndexVersion, got)
+	}
+	if got := loaded.KnowledgeBases["kb-1"].Documents[0].IndexFence; got != "mcp:job-state:1" {
+		t.Fatalf("expected persisted index fence, got %q", got)
 	}
 	publicJSON, err := json.Marshal(loaded.KnowledgeBases["kb-1"].Documents[0])
 	if err != nil {

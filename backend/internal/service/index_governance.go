@@ -314,6 +314,20 @@ func (s *AppService) recordIndexRunWithContext(
 	kb, ok := s.state.KnowledgeBases[record.KnowledgeBaseID]
 	if ok {
 		previous := cloneKnowledgeBases(map[string]model.KnowledgeBase{record.KnowledgeBaseID: kb})[record.KnowledgeBaseID]
+		if documentID := strings.TrimSpace(document.ID); documentID != "" {
+			incomingFence := strings.TrimSpace(document.IndexFence)
+			for _, currentDocument := range kb.Documents {
+				if strings.TrimSpace(currentDocument.ID) != documentID {
+					continue
+				}
+				currentFence := strings.TrimSpace(currentDocument.IndexFence)
+				if incomingFence != "" && currentFence != "" && incomingFence != currentFence {
+					s.state.Mu.Unlock()
+					return ""
+				}
+				break
+			}
+		}
 		kb.UpdatedAt = completedAt.Format(time.RFC3339)
 		if kb.CurrentIndexVersion == 0 {
 			kb.CurrentIndexVersion = currentIndexVersion

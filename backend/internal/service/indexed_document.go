@@ -116,3 +116,17 @@ func (s *AppService) deleteIndexedDocumentWithContext(ctx context.Context, knowl
 	}
 	return s.ensureIndexOperationLease(ctx)
 }
+
+func (s *AppService) deleteIndexedDocumentGenerationWithContext(ctx context.Context, document model.Document) error {
+	if s == nil || s.indexedContentStore == nil {
+		return nil
+	}
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
+	if err := s.indexedContentStore.DeleteGeneration(document.KnowledgeBaseID, document.ID, document.IndexFence); err != nil {
+		return err
+	}
+	return s.ensureIndexOperationLease(ctx)
+}

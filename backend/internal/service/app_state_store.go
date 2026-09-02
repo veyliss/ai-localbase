@@ -63,6 +63,9 @@ type persistedDocument struct {
 	IndexedContentChars     int    `json:"indexedContentChars,omitempty"`
 	IndexedTablesCount      int    `json:"indexedTablesCount,omitempty"`
 	IndexFence              string `json:"indexFence,omitempty"`
+	IndexOperationFence     string `json:"indexOperationFence,omitempty"`
+	IndexOperationOwner     string `json:"indexOperationOwner,omitempty"`
+	IndexOperationAttempt   int    `json:"indexOperationAttempt,omitempty"`
 }
 
 func (s persistentAppState) MarshalJSON() ([]byte, error) {
@@ -198,6 +201,9 @@ func persistedDocumentFromModel(document model.Document) persistedDocument {
 		IndexedContentChars:     document.IndexedContentChars,
 		IndexedTablesCount:      document.IndexedTablesCount,
 		IndexFence:              strings.TrimSpace(document.IndexFence),
+		IndexOperationFence:     strings.TrimSpace(document.IndexOperationFence),
+		IndexOperationOwner:     strings.TrimSpace(document.IndexOperationOwner),
+		IndexOperationAttempt:   document.IndexOperationAttempt,
 	}
 }
 
@@ -225,6 +231,9 @@ func documentToModel(document persistedDocument) model.Document {
 		IndexedContentChars:     document.IndexedContentChars,
 		IndexedTablesCount:      document.IndexedTablesCount,
 		IndexFence:              strings.TrimSpace(document.IndexFence),
+		IndexOperationFence:     strings.TrimSpace(document.IndexOperationFence),
+		IndexOperationOwner:     strings.TrimSpace(document.IndexOperationOwner),
+		IndexOperationAttempt:   document.IndexOperationAttempt,
 	}
 }
 

@@ -276,6 +276,11 @@ type Document struct {
 	IndexedContentChars     int    `json:"indexedContentChars,omitempty"`
 	IndexedTablesCount      int    `json:"indexedTablesCount,omitempty"`
 	IndexFence              string `json:"-"`
+	// IndexOperationFence identifies the generation currently being built.
+	// These fields are persisted for recovery but hidden from API callers.
+	IndexOperationFence   string `json:"-"`
+	IndexOperationOwner   string `json:"-"`
+	IndexOperationAttempt int    `json:"-"`
 }
 
 type IndexedTable struct {

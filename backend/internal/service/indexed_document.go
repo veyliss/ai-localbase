@@ -27,9 +27,16 @@ func (s *AppService) captureIndexedDocument(document model.Document, content str
 }
 
 func (s *AppService) captureIndexedDocumentWithContext(ctx context.Context, document model.Document, content string) (model.Document, error) {
+	return s.captureIndexedDocumentWithContextForOperation(ctx, indexOperation{Managed: false}, document, content)
+}
+
+func (s *AppService) captureIndexedDocumentWithContextForOperation(ctx context.Context, operation indexOperation, document model.Document, content string) (model.Document, error) {
 	ctx = normalizeServiceContext(ctx)
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
 		return model.Document{}, err
+	}
+	if operation.Managed {
+		document.IndexFence = operation.Fence
 	}
 	document.IndexedContentAvailable = true
 	document.IndexedContentChars = len([]rune(content))
@@ -44,17 +51,20 @@ func (s *AppService) captureIndexedDocumentWithContext(ctx context.Context, docu
 		tables = structuredTablesToModel(parsed)
 		document.IndexedTablesCount = len(tables)
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
 		return model.Document{}, err
 	}
 
 	if s == nil || s.indexedContentStore == nil || s.indexedContentStore.root == "" {
 		return document, nil
 	}
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return model.Document{}, err
+	}
 	if err := s.indexedContentStore.Put(document, content, tables); err != nil {
 		return model.Document{}, err
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
 		return model.Document{}, err
 	}
 	return document, nil

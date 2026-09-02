@@ -24,20 +24,7 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		return model.Document{}, err
 	}
 	document = enrichDocumentGovernance(document)
-	document = documentWithIndexFence(document, ctx)
 	startedAt := time.Now()
-	if document.Version <= 0 {
-		document.Version = 1
-	}
-	defer func() {
-		status := "failed"
-		if err == nil {
-			status = "succeeded"
-		}
-		if runID := s.recordIndexRunWithContext(ctx, document.KnowledgeBaseID, indexedOrDocument(indexed, document), "upload", startedAt, status, err); runID != "" && indexed.ID != "" {
-			indexed.IndexRunID = runID
-		}
-	}()
 	if existing, found, findErr := s.findDocumentByID(document.KnowledgeBaseID, document.ID); findErr != nil {
 		return model.Document{}, findErr
 	} else if found {
@@ -52,70 +39,45 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	}
 	defer reservation()
 
-	content, err := util.ExtractDocumentText(document.Path)
-	if err != nil {
-		return model.Document{}, fmt.Errorf("extract uploaded document text: %w", err)
-	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return model.Document{}, err
-	}
-
-	chunks := s.rag.BuildDocumentChunks(document, content)
-	if len(chunks) == 0 {
-		if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, nil, nil); err != nil {
-			return model.Document{}, err
+	// Re-read after taking the process-local reservation. Another caller may
+	// have completed the same upload while the first state check was running.
+	if existing, found, findErr := s.findDocumentByID(document.KnowledgeBaseID, document.ID); findErr != nil {
+		return model.Document{}, findErr
+	} else if found {
+		if strings.EqualFold(strings.TrimSpace(existing.Checksum), strings.TrimSpace(document.Checksum)) || strings.TrimSpace(document.Checksum) == "" {
+			return existing, nil
 		}
-		document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
-		if err != nil {
-			return model.Document{}, err
-		}
-		document.ContentPreview = util.BuildContentPreviewFromText(content)
-		document.Status = "ready"
-		document.ChunkCount = 0
-		document.IndexedAt = util.NowRFC3339()
-		document.IndexError = ""
-		document.IndexErrorCode = ""
-		document.IndexVersion = currentIndexVersion
-		uploaded, err := s.addDocumentWithContext(ctx, document.KnowledgeBaseID, document)
-		if err != nil {
-			_ = s.deleteIndexedDocumentWithContext(ctx, document.KnowledgeBaseID, document.ID)
-			return model.Document{}, err
-		}
-		return uploaded, nil
+		return model.Document{}, &DuplicateDocumentError{Existing: existing}
 	}
 
-	vectors, err := s.rag.EmbedTexts(ctx, s.currentEmbeddingConfig(), chunkTexts(chunks), s.qdrantVectorSize())
+	operation, err := s.beginIndexOperation(ctx, document)
 	if err != nil {
 		return model.Document{}, err
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return model.Document{}, err
-	}
+	document.IndexFence = operation.Fence
+	document.IndexOperationFence = operation.Fence
+	document.IndexOperationOwner = operation.Owner
+	document.IndexOperationAttempt = operation.Attempt
 
-	if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, chunks, vectors); err != nil {
-		return model.Document{}, err
-	}
-	document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
+	s.state.Mu.RLock()
+	config := s.state.Config
+	s.state.Mu.RUnlock()
+	var generation indexGenerationReceipt
+	indexed, generation, err = reindexDocumentWithConfig(ctx, s, config, operation, document)
 	if err != nil {
-		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
-		_ = s.deleteIndexedDocumentWithContext(ctx, document.KnowledgeBaseID, document.ID)
+		_ = s.abortIndexGeneration(ctx, generation)
+		_ = s.failIndexOperation(ctx, operation, "upload", startedAt, err)
 		return model.Document{}, err
 	}
-
-	document.Status = "indexed"
-	document.ContentPreview = previewFromChunks(chunks)
-	document.ChunkCount = len(chunks)
-	document.IndexedAt = util.NowRFC3339()
-	document.IndexError = ""
-	document.IndexErrorCode = ""
-	document.IndexVersion = currentIndexVersion
-	uploaded, err := s.addDocumentWithContext(ctx, document.KnowledgeBaseID, document)
+	indexed, err = s.commitIndexOperation(ctx, operation, indexed, "upload", startedAt)
 	if err != nil {
-		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
-		_ = s.deleteIndexedDocumentWithContext(ctx, document.KnowledgeBaseID, document.ID)
+		_ = s.abortIndexGeneration(ctx, generation)
 		return model.Document{}, err
 	}
-	return uploaded, nil
+	if err := s.retirePreviousGeneration(ctx, generation); err != nil {
+		log.Printf("failed to cleanup superseded index generation for document %s: %v", document.ID, err)
+	}
+	return indexed, nil
 }
 
 // ReindexDocument rebuilds a document from its source file and records a
@@ -125,6 +87,10 @@ func (s *AppService) ReindexDocument(knowledgeBaseID, documentID string) (model.
 }
 
 func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBaseID, documentID string) (indexed model.Document, err error) {
+	return s.reindexDocumentWithContext(ctx, knowledgeBaseID, documentID, "reindex")
+}
+
+func (s *AppService) reindexDocumentWithContext(ctx context.Context, knowledgeBaseID, documentID, trigger string) (indexed model.Document, err error) {
 	ctx = normalizeServiceContext(ctx)
 	if s == nil {
 		return model.Document{}, fmt.Errorf("app service is nil")
@@ -139,23 +105,6 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 	}
 	document = enrichDocumentGovernance(document)
 	startedAt := time.Now()
-	defer func() {
-		status := "failed"
-		if err == nil {
-			status = "succeeded"
-		}
-		if runID := s.recordIndexRunWithContext(ctx, knowledgeBaseID, indexedOrDocument(indexed, document), "reindex", startedAt, status, err); runID != "" && indexed.ID != "" {
-			indexed.IndexRunID = runID
-		}
-	}()
-	if err := verifyDocumentSource(document); err != nil {
-		document.Status = "failed"
-		document.IndexErrorCode = classifyIndexError(err)
-		document.IndexError = publicIndexError(document.IndexErrorCode)
-		document.IndexedAt = util.NowRFC3339()
-		_ = s.updateDocumentWithContext(ctx, knowledgeBaseID, document)
-		return model.Document{}, err
-	}
 	reservation, err := s.reserveDocumentIndex(ctx, document)
 	if err != nil {
 		return model.Document{}, err
@@ -166,29 +115,36 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 		return model.Document{}, err
 	}
 	document = enrichDocumentGovernance(latestDocument)
-	previousIndexFence := strings.TrimSpace(document.IndexFence)
-	document = documentWithIndexFence(document, ctx)
+	operation, err := s.beginIndexOperation(ctx, document)
+	if err != nil {
+		return model.Document{}, err
+	}
+	document.IndexFence = operation.Fence
+	document.IndexOperationFence = operation.Fence
+	document.IndexOperationOwner = operation.Owner
+	document.IndexOperationAttempt = operation.Attempt
+	if err := verifyDocumentSource(document); err != nil {
+		_ = s.failIndexOperation(ctx, operation, trigger, startedAt, err)
+		return model.Document{}, err
+	}
 	s.state.Mu.RLock()
 	config := s.state.Config
 	s.state.Mu.RUnlock()
 
-	indexed, err = reindexDocumentWithConfig(ctx, s, config, document)
+	var generation indexGenerationReceipt
+	indexed, generation, err = reindexDocumentWithConfig(ctx, s, config, operation, document)
 	if err != nil {
-		document.IndexFence = previousIndexFence
-		document.Status = "failed"
-		document.IndexErrorCode = classifyIndexError(err)
-		document.IndexError = publicIndexError(document.IndexErrorCode)
-		document.IndexedAt = util.NowRFC3339()
-		_ = s.updateDocumentWithContext(ctx, knowledgeBaseID, document)
+		_ = s.abortIndexGeneration(ctx, generation)
+		_ = s.failIndexOperation(ctx, operation, trigger, startedAt, err)
 		return model.Document{}, err
 	}
-	if err := s.updateDocumentWithContext(ctx, knowledgeBaseID, indexed); err != nil {
+	indexed, err = s.commitIndexOperation(ctx, operation, indexed, trigger, startedAt)
+	if err != nil {
+		_ = s.abortIndexGeneration(ctx, generation)
 		return model.Document{}, err
 	}
-	if err := s.cleanupSupersededDocumentIndexWithContext(ctx, knowledgeBaseID, documentID, indexed.IndexFence); err != nil {
-		// The current generation is already durable and retrieval is fenced by
-		// the document metadata. Cleanup is best-effort and can be retried later.
-		log.Printf("failed to cleanup superseded index generations for document %s: %v", documentID, err)
+	if err := s.retirePreviousGeneration(ctx, generation); err != nil {
+		log.Printf("failed to cleanup superseded index generation for document %s: %v", documentID, err)
 	}
 	return indexed, nil
 }
@@ -212,7 +168,6 @@ func (s *AppService) ReindexKnowledgeBase(knowledgeBaseID string) ([]model.Docum
 	}
 	originalDocs := make([]model.Document, len(kb.Documents))
 	copy(originalDocs, kb.Documents)
-	config := s.state.Config
 	s.state.Mu.RUnlock()
 
 	// Confirm the complete source set before the first write, so a missing
@@ -226,44 +181,42 @@ func (s *AppService) ReindexKnowledgeBase(knowledgeBaseID string) ([]model.Docum
 
 	reindexed := make([]model.Document, 0, len(originalDocs))
 	for _, document := range originalDocs {
-		doc := enrichDocumentGovernance(document)
-		reservation, err := s.reserveDocumentIndex(context.Background(), doc)
+		indexed, err := s.reindexDocumentWithContext(context.Background(), knowledgeBaseID, document.ID, "bulk_reindex")
 		if err != nil {
-			s.recordIndexRun(knowledgeBaseID, doc, "bulk_reindex", time.Now(), "failed", err)
-			return nil, fmt.Errorf("reindex document %s: %w", doc.ID, err)
-		}
-		startedAt := time.Now()
-		indexed, err := reindexDocumentWithConfig(context.Background(), s, config, doc)
-		reservation()
-		if err != nil {
-			s.recordIndexRun(knowledgeBaseID, doc, "bulk_reindex", startedAt, "failed", err)
-			return nil, fmt.Errorf("reindex document %s: %w", doc.ID, err)
-		}
-		runID := s.recordIndexRun(knowledgeBaseID, indexed, "bulk_reindex", startedAt, "succeeded", nil)
-		indexed.IndexRunID = runID
-		if err := s.updateDocument(knowledgeBaseID, indexed); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reindex document %s: %w", document.ID, err)
 		}
 		reindexed = append(reindexed, indexed)
 	}
 	return reindexed, nil
 }
 
-func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.AppConfig, document model.Document) (model.Document, error) {
+func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.AppConfig, operation indexOperation, document model.Document) (model.Document, indexGenerationReceipt, error) {
 	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return model.Document{}, indexGenerationReceipt{}, err
+	}
+	document.IndexFence = operation.Fence
 	content, err := util.ExtractDocumentText(document.Path)
 	if err != nil {
-		return model.Document{}, fmt.Errorf("extract uploaded document text: %w", err)
+		return model.Document{}, indexGenerationReceipt{}, fmt.Errorf("extract uploaded document text: %w", err)
+	}
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return model.Document{}, indexGenerationReceipt{}, err
 	}
 
 	chunks := s.rag.BuildDocumentChunks(document, content)
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return model.Document{}, indexGenerationReceipt{}, err
+	}
+	var generation indexGenerationReceipt
 	if len(chunks) == 0 {
-		if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, nil, nil); err != nil {
-			return model.Document{}, err
-		}
-		document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
+		generation, err = s.replaceDocumentChunksWithContextReceipt(ctx, operation, nil, nil)
 		if err != nil {
-			return model.Document{}, err
+			return model.Document{}, generation, err
+		}
+		document, err = s.captureIndexedDocumentWithContextForOperation(ctx, operation, document, content)
+		if err != nil {
+			return model.Document{}, generation, err
 		}
 		document.ContentPreview = util.BuildContentPreviewFromText(content)
 		document.Status = "ready"
@@ -272,7 +225,7 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 		document.IndexError = ""
 		document.IndexErrorCode = ""
 		document.IndexVersion = currentIndexVersion
-		return document, nil
+		return document, generation, nil
 	}
 
 	vectors, err := s.rag.EmbedTexts(ctx, model.EmbeddingModelConfig{
@@ -282,16 +235,18 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 		APIKey:   strings.TrimSpace(cfg.Embedding.APIKey),
 	}, chunkTexts(chunks), s.qdrantVectorSize())
 	if err != nil {
-		return model.Document{}, err
+		return model.Document{}, generation, err
 	}
-
-	if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, chunks, vectors); err != nil {
-		return model.Document{}, err
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return model.Document{}, generation, err
 	}
-	document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
+	generation, err = s.replaceDocumentChunksWithContextReceipt(ctx, operation, chunks, vectors)
 	if err != nil {
-		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
-		return model.Document{}, err
+		return model.Document{}, generation, err
+	}
+	document, err = s.captureIndexedDocumentWithContextForOperation(ctx, operation, document, content)
+	if err != nil {
+		return model.Document{}, generation, err
 	}
 
 	document.Status = "indexed"
@@ -301,5 +256,5 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 	document.IndexError = ""
 	document.IndexErrorCode = ""
 	document.IndexVersion = currentIndexVersion
-	return document, nil
+	return document, generation, nil
 }

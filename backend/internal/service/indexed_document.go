@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,14 @@ func isStructuredDocument(document model.Document) bool {
 }
 
 func (s *AppService) captureIndexedDocument(document model.Document, content string) (model.Document, error) {
+	return s.captureIndexedDocumentWithContext(context.Background(), document, content)
+}
+
+func (s *AppService) captureIndexedDocumentWithContext(ctx context.Context, document model.Document, content string) (model.Document, error) {
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 	document.IndexedContentAvailable = true
 	document.IndexedContentChars = len([]rune(content))
 	document.IndexedTablesCount = 0
@@ -35,11 +44,17 @@ func (s *AppService) captureIndexedDocument(document model.Document, content str
 		tables = structuredTablesToModel(parsed)
 		document.IndexedTablesCount = len(tables)
 	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 
 	if s == nil || s.indexedContentStore == nil || s.indexedContentStore.root == "" {
 		return document, nil
 	}
 	if err := s.indexedContentStore.Put(document, content, tables); err != nil {
+		return model.Document{}, err
+	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
 		return model.Document{}, err
 	}
 	return document, nil
@@ -85,8 +100,19 @@ func (s *AppService) resolveStructuredTables(document model.Document) ([]util.St
 }
 
 func (s *AppService) deleteIndexedDocument(knowledgeBaseID, documentID string) error {
+	return s.deleteIndexedDocumentWithContext(context.Background(), knowledgeBaseID, documentID)
+}
+
+func (s *AppService) deleteIndexedDocumentWithContext(ctx context.Context, knowledgeBaseID, documentID string) error {
 	if s == nil || s.indexedContentStore == nil {
 		return nil
 	}
-	return s.indexedContentStore.Delete(knowledgeBaseID, documentID)
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
+	if err := s.indexedContentStore.Delete(knowledgeBaseID, documentID); err != nil {
+		return err
+	}
+	return s.ensureIndexOperationLease(ctx)
 }

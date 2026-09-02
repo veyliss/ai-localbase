@@ -150,6 +150,11 @@ type mcpJobLease struct {
 
 type mcpJobLeaseContextKey struct{}
 
+type mcpJobExecution struct {
+	JobID string
+	Lease mcpJobLease
+}
+
 type mcpStagingLease struct {
 	Owner      string
 	Attempt    int
@@ -2413,12 +2418,24 @@ func (s *AppService) claimRecoverableMCPJobs() {
 	if s.mcpJobsShutdown {
 		return
 	}
-	recovered, err := s.mcpJobStore.ClaimRecoverable(s.mcpWorkerID, mcpJobLeaseDuration, time.Now().UTC())
+	if s.mcpJobRecoverySlots == nil {
+		s.mcpJobRecoverySlots = make(chan struct{}, mcpJobRecoveryConcurrency)
+	}
+	availableSlots := cap(s.mcpJobRecoverySlots) - len(s.mcpJobRecoverySlots)
+	if availableSlots <= 0 {
+		return
+	}
+	recovered, err := s.mcpJobStore.ClaimRecoverableLimited(s.mcpWorkerID, mcpJobLeaseDuration, time.Now().UTC(), availableSlots)
 	if err != nil {
 		log.Printf("failed to claim recoverable MCP jobs: %v", err)
 		return
 	}
 	for _, record := range recovered {
+		select {
+		case s.mcpJobRecoverySlots <- struct{}{}:
+		default:
+			return
+		}
 		s.startRecoveredMCPJob(record)
 	}
 }
@@ -2458,10 +2475,21 @@ func (s *AppService) startRecoveredMCPJob(record mcpJobStoreRecord) {
 	owner := mcpJobOwnerFromRecord(record.Job)
 	go func() {
 		defer s.mcpJobWG.Done()
+		defer s.releaseMCPJobRecoverySlot()
 		s.runMCPJobWorker(record.Job.ID, ctx, func(workerCtx context.Context) {
 			s.runRecoveredMCPJob(workerCtx, record.Job, record.Descriptor, owner)
 		})
 	}()
+}
+
+func (s *AppService) releaseMCPJobRecoverySlot() {
+	if s == nil || s.mcpJobRecoverySlots == nil {
+		return
+	}
+	select {
+	case <-s.mcpJobRecoverySlots:
+	default:
+	}
 }
 
 func mcpJobOwnerFromRecord(job model.MCPJob) AuthPrincipal {
@@ -2549,7 +2577,7 @@ func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func
 		// The token is captured once. A later recovery attempt may replace the
 		// jobID entry in mcpJobLeases, but it must never change this worker's
 		// authorization to write state or touch a staged source.
-		workerCtx = context.WithValue(workerCtx, mcpJobLeaseContextKey{}, lease)
+		workerCtx = context.WithValue(workerCtx, mcpJobLeaseContextKey{}, mcpJobExecution{JobID: jobID, Lease: lease})
 	}
 	workerCtx, cancel := context.WithCancel(workerCtx)
 	defer cancel()
@@ -2592,11 +2620,28 @@ func (s *AppService) isMCPJobsShuttingDown() bool {
 }
 
 func mcpJobLeaseFromContext(ctx context.Context) (mcpJobLease, bool) {
-	if ctx == nil {
+	execution, ok := mcpJobExecutionFromContext(ctx)
+	if !ok {
 		return mcpJobLease{}, false
 	}
-	lease, ok := ctx.Value(mcpJobLeaseContextKey{}).(mcpJobLease)
-	return lease, ok && validMCPJobLease(lease)
+	return execution.Lease, true
+}
+
+func mcpJobExecutionFromContext(ctx context.Context) (mcpJobExecution, bool) {
+	if ctx == nil {
+		return mcpJobExecution{}, false
+	}
+	switch value := ctx.Value(mcpJobLeaseContextKey{}).(type) {
+	case mcpJobExecution:
+		value.JobID = strings.TrimSpace(value.JobID)
+		return value, value.JobID != "" && validMCPJobLease(value.Lease)
+	case mcpJobLease:
+		// Keep compatibility with older in-package callers that stored only the
+		// lease token. New workers always include the job ID as well.
+		return mcpJobExecution{Lease: value}, validMCPJobLease(value)
+	default:
+		return mcpJobExecution{}, false
+	}
 }
 
 func validMCPJobLease(lease mcpJobLease) bool {
@@ -2637,6 +2682,21 @@ func (s *AppService) ensureMCPJobLease(jobID string, lease mcpJobLease) error {
 		return ErrMCPJobLeaseLost
 	}
 	return nil
+}
+
+func (s *AppService) ensureIndexOperationLease(ctx context.Context) error {
+	ctx = normalizeServiceContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	execution, ok := mcpJobExecutionFromContext(ctx)
+	if !ok || execution.JobID == "" {
+		return nil
+	}
+	if err := s.ensureMCPJobLease(execution.JobID, execution.Lease); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (s *AppService) claimMCPStagedUpload(ctx context.Context, uploadID string, owner AuthPrincipal, leaseOwner string, leaseDuration time.Duration) (model.StagedUpload, error) {
@@ -4139,6 +4199,14 @@ func (s *AppService) ResolveKnowledgeBaseID(candidate string) (string, error) {
 }
 
 func (s *AppService) AddDocument(knowledgeBaseID string, document model.Document) (model.Document, error) {
+	return s.addDocumentWithContext(context.Background(), knowledgeBaseID, document)
+}
+
+func (s *AppService) addDocumentWithContext(ctx context.Context, knowledgeBaseID string, document model.Document) (model.Document, error) {
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 	document = enrichDocumentGovernance(document)
 	s.state.Mu.Lock()
 	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
@@ -4150,8 +4218,15 @@ func (s *AppService) AddDocument(knowledgeBaseID string, document model.Document
 		s.state.Mu.Unlock()
 		return model.Document{}, &DuplicateDocumentError{Existing: existing}
 	}
+	originalDocuments := append([]model.Document(nil), kb.Documents...)
 	kb.Documents = append([]model.Document{document}, kb.Documents...)
 	s.state.KnowledgeBases[knowledgeBaseID] = kb
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		kb.Documents = originalDocuments
+		s.state.KnowledgeBases[knowledgeBaseID] = kb
+		s.state.Mu.Unlock()
+		return model.Document{}, err
+	}
 	s.state.Mu.Unlock()
 	if err := s.saveState(); err != nil {
 		s.state.Mu.Lock()
@@ -4171,12 +4246,21 @@ func (s *AppService) AddDocument(knowledgeBaseID string, document model.Document
 }
 
 func (s *AppService) updateDocument(knowledgeBaseID string, nextDocument model.Document) error {
+	return s.updateDocumentWithContext(context.Background(), knowledgeBaseID, nextDocument)
+}
+
+func (s *AppService) updateDocumentWithContext(ctx context.Context, knowledgeBaseID string, nextDocument model.Document) error {
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	s.state.Mu.Lock()
 	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
 	if !ok {
 		s.state.Mu.Unlock()
 		return fmt.Errorf("knowledge base not found")
 	}
+	originalDocuments := append([]model.Document(nil), kb.Documents...)
 	updated := false
 	for index, document := range kb.Documents {
 		if document.ID == nextDocument.ID {
@@ -4190,6 +4274,12 @@ func (s *AppService) updateDocument(knowledgeBaseID string, nextDocument model.D
 		return fmt.Errorf("document not found")
 	}
 	s.state.KnowledgeBases[knowledgeBaseID] = kb
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		kb.Documents = originalDocuments
+		s.state.KnowledgeBases[knowledgeBaseID] = kb
+		s.state.Mu.Unlock()
+		return err
+	}
 	s.state.Mu.Unlock()
 	return s.saveState()
 }
@@ -4413,6 +4503,9 @@ func (s *AppService) ensureKnowledgeBaseCollectionWithContext(ctx context.Contex
 	if s.qdrant == nil || !s.qdrant.IsEnabled() {
 		return nil
 	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 5*time.Second)
 	defer cancel()
@@ -4420,8 +4513,7 @@ func (s *AppService) ensureKnowledgeBaseCollectionWithContext(ctx context.Contex
 	if err := s.qdrant.EnsureCollection(ctx, knowledgeBaseID); err != nil {
 		return fmt.Errorf("ensure qdrant collection for knowledge base %s: %w", knowledgeBaseID, err)
 	}
-
-	return nil
+	return s.ensureIndexOperationLease(ctx)
 }
 
 func (s *AppService) deleteKnowledgeBaseCollection(knowledgeBaseID string) error {
@@ -4941,6 +5033,10 @@ func (s *AppService) upsertDocumentChunksWithContext(ctx context.Context, knowle
 	if s.qdrant == nil || !s.qdrant.IsEnabled() || len(chunks) == 0 {
 		return nil
 	}
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	points := make([]QdrantPoint, 0, len(chunks))
 	for index, chunk := range chunks {
 		vector := make([]float64, s.qdrantVectorSize())
@@ -4971,10 +5067,13 @@ func (s *AppService) upsertDocumentChunksWithContext(ctx context.Context, knowle
 
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 10*time.Minute)
 	defer cancel()
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	if err := s.qdrant.UpsertPoints(ctx, knowledgeBaseID, points); err != nil {
 		return fmt.Errorf("upsert qdrant points: %w", err)
 	}
-	return nil
+	return s.ensureIndexOperationLease(ctx)
 }
 
 func (s *AppService) replaceDocumentChunks(knowledgeBaseID, documentID string, chunks []DocumentChunk, vectors [][]float64) error {
@@ -4985,6 +5084,10 @@ func (s *AppService) replaceDocumentChunksWithContext(ctx context.Context, knowl
 	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() {
 		return nil
 	}
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 
 	if err := s.ensureKnowledgeBaseCollectionWithContext(ctx, knowledgeBaseID); err != nil {
 		return err
@@ -4992,15 +5095,24 @@ func (s *AppService) replaceDocumentChunksWithContext(ctx context.Context, knowl
 
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 10*time.Minute)
 	defer cancel()
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	previousPoints, err := s.qdrant.ScrollPointPayloadsByFilter(ctx, knowledgeBaseID, documentFilter(documentID))
 	if err != nil {
 		return fmt.Errorf("inspect existing qdrant points for document %s: %w", documentID, err)
+	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
 	}
 
 	if len(chunks) > 0 {
 		if err := s.upsertDocumentChunksWithContext(ctx, knowledgeBaseID, chunks, vectors); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
 	}
 
 	currentIDs := make(map[string]struct{}, len(chunks))
@@ -5014,10 +5126,13 @@ func (s *AppService) replaceDocumentChunksWithContext(ctx context.Context, knowl
 			staleIDs = append(staleIDs, point.ID)
 		}
 	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	if err := s.qdrant.DeletePointsByIDs(ctx, knowledgeBaseID, staleIDs); err != nil {
 		return fmt.Errorf("delete stale qdrant points for document %s: %w", documentID, err)
 	}
-	return nil
+	return s.ensureIndexOperationLease(ctx)
 }
 
 func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, queryVector []float64) ([]RetrievedChunk, error) {
@@ -5402,12 +5517,19 @@ func (s *AppService) deleteDocumentChunksWithContext(ctx context.Context, knowle
 	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() {
 		return nil
 	}
+	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 2*time.Minute)
 	defer cancel()
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return err
+	}
 	if err := s.qdrant.DeletePointsByFilter(ctx, knowledgeBaseID, documentFilter(documentID)); err != nil {
 		return fmt.Errorf("delete qdrant points for document %s: %w", documentID, err)
 	}
-	return nil
+	return s.ensureIndexOperationLease(ctx)
 }
 
 func documentFilter(documentID string) map[string]any {

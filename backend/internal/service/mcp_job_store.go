@@ -868,6 +868,9 @@ func normalizeMCPJobDescriptor(descriptor mcpJobDescriptor, fallbackType string)
 	descriptor.UploadID = strings.TrimSpace(descriptor.UploadID)
 	descriptor.Checksum = strings.ToLower(strings.TrimSpace(descriptor.Checksum))
 	descriptor.UploadIDs = cloneStrings(descriptor.UploadIDs)
+	if descriptor.Type == "batch-index" {
+		descriptor.Concurrency = normalizeMCPBatchConcurrency(descriptor.Concurrency)
+	}
 	return descriptor
 }
 

@@ -42,6 +42,16 @@ type BatchIndexResponse struct {
 	Job        *model.MCPJob `json:"job,omitempty"`
 }
 
+func normalizeBatchConcurrency(value int) int {
+	if value <= 0 {
+		return 3
+	}
+	if value > 10 {
+		return 10
+	}
+	return value
+}
+
 // BatchIndexDocuments 批量索引文档
 func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 	knowledgeBaseID := c.Param("id")

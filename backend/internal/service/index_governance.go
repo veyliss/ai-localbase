@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -272,6 +273,22 @@ func (s *AppService) recordIndexRun(
 	status string,
 	err error,
 ) string {
+	return s.recordIndexRunWithContext(context.Background(), knowledgeBaseID, document, trigger, startedAt, status, err)
+}
+
+func (s *AppService) recordIndexRunWithContext(
+	ctx context.Context,
+	knowledgeBaseID string,
+	document model.Document,
+	trigger string,
+	startedAt time.Time,
+	status string,
+	err error,
+) string {
+	ctx = normalizeServiceContext(ctx)
+	if leaseErr := s.ensureIndexOperationLease(ctx); leaseErr != nil {
+		return ""
+	}
 	document = enrichDocumentGovernance(document)
 	if s == nil || s.state == nil {
 		return ""
@@ -296,6 +313,7 @@ func (s *AppService) recordIndexRun(
 	s.state.Mu.Lock()
 	kb, ok := s.state.KnowledgeBases[record.KnowledgeBaseID]
 	if ok {
+		previous := cloneKnowledgeBases(map[string]model.KnowledgeBase{record.KnowledgeBaseID: kb})[record.KnowledgeBaseID]
 		kb.UpdatedAt = completedAt.Format(time.RFC3339)
 		if kb.CurrentIndexVersion == 0 {
 			kb.CurrentIndexVersion = currentIndexVersion
@@ -322,6 +340,11 @@ func (s *AppService) recordIndexRun(
 			}
 		}
 		s.state.KnowledgeBases[record.KnowledgeBaseID] = kb
+		if leaseErr := s.ensureIndexOperationLease(ctx); leaseErr != nil {
+			s.state.KnowledgeBases[record.KnowledgeBaseID] = previous
+			s.state.Mu.Unlock()
+			return ""
+		}
 	}
 	s.state.Mu.Unlock()
 

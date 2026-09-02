@@ -19,6 +19,9 @@ func (s *AppService) IndexDocument(document model.Document) (model.Document, err
 
 func (s *AppService) IndexDocumentWithContext(ctx context.Context, document model.Document) (indexed model.Document, err error) {
 	ctx = normalizeServiceContext(ctx)
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 	document = enrichDocumentGovernance(document)
 	startedAt := time.Now()
 	if document.Version <= 0 {
@@ -29,7 +32,7 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		if err == nil {
 			status = "succeeded"
 		}
-		if runID := s.recordIndexRun(document.KnowledgeBaseID, indexedOrDocument(indexed, document), "upload", startedAt, status, err); runID != "" && indexed.ID != "" {
+		if runID := s.recordIndexRunWithContext(ctx, document.KnowledgeBaseID, indexedOrDocument(indexed, document), "upload", startedAt, status, err); runID != "" && indexed.ID != "" {
 			indexed.IndexRunID = runID
 		}
 	}()
@@ -51,13 +54,16 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	if err != nil {
 		return model.Document{}, fmt.Errorf("extract uploaded document text: %w", err)
 	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 
 	chunks := s.rag.BuildDocumentChunks(document, content)
 	if len(chunks) == 0 {
 		if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, nil, nil); err != nil {
 			return model.Document{}, err
 		}
-		document, err = s.captureIndexedDocument(document, content)
+		document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
 		if err != nil {
 			return model.Document{}, err
 		}
@@ -68,9 +74,9 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		document.IndexError = ""
 		document.IndexErrorCode = ""
 		document.IndexVersion = currentIndexVersion
-		uploaded, err := s.AddDocument(document.KnowledgeBaseID, document)
+		uploaded, err := s.addDocumentWithContext(ctx, document.KnowledgeBaseID, document)
 		if err != nil {
-			_ = s.deleteIndexedDocument(document.KnowledgeBaseID, document.ID)
+			_ = s.deleteIndexedDocumentWithContext(ctx, document.KnowledgeBaseID, document.ID)
 			return model.Document{}, err
 		}
 		return uploaded, nil
@@ -80,14 +86,17 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	if err != nil {
 		return model.Document{}, err
 	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 
 	if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, chunks, vectors); err != nil {
 		return model.Document{}, err
 	}
-	document, err = s.captureIndexedDocument(document, content)
+	document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
 	if err != nil {
 		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
-		_ = s.deleteIndexedDocument(document.KnowledgeBaseID, document.ID)
+		_ = s.deleteIndexedDocumentWithContext(ctx, document.KnowledgeBaseID, document.ID)
 		return model.Document{}, err
 	}
 
@@ -98,10 +107,10 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	document.IndexError = ""
 	document.IndexErrorCode = ""
 	document.IndexVersion = currentIndexVersion
-	uploaded, err := s.AddDocument(document.KnowledgeBaseID, document)
+	uploaded, err := s.addDocumentWithContext(ctx, document.KnowledgeBaseID, document)
 	if err != nil {
 		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
-		_ = s.deleteIndexedDocument(document.KnowledgeBaseID, document.ID)
+		_ = s.deleteIndexedDocumentWithContext(ctx, document.KnowledgeBaseID, document.ID)
 		return model.Document{}, err
 	}
 	return uploaded, nil
@@ -118,6 +127,9 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 	if s == nil {
 		return model.Document{}, fmt.Errorf("app service is nil")
 	}
+	if err := s.ensureIndexOperationLease(ctx); err != nil {
+		return model.Document{}, err
+	}
 
 	document, err := s.findDocument(knowledgeBaseID, documentID)
 	if err != nil {
@@ -130,7 +142,7 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 		if err == nil {
 			status = "succeeded"
 		}
-		if runID := s.recordIndexRun(knowledgeBaseID, indexedOrDocument(indexed, document), "reindex", startedAt, status, err); runID != "" && indexed.ID != "" {
+		if runID := s.recordIndexRunWithContext(ctx, knowledgeBaseID, indexedOrDocument(indexed, document), "reindex", startedAt, status, err); runID != "" && indexed.ID != "" {
 			indexed.IndexRunID = runID
 		}
 	}()
@@ -139,7 +151,7 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 		document.IndexErrorCode = classifyIndexError(err)
 		document.IndexError = publicIndexError(document.IndexErrorCode)
 		document.IndexedAt = util.NowRFC3339()
-		_ = s.updateDocument(knowledgeBaseID, document)
+		_ = s.updateDocumentWithContext(ctx, knowledgeBaseID, document)
 		return model.Document{}, err
 	}
 	reservation, err := s.reserveDocumentIndex(ctx, document)
@@ -162,10 +174,10 @@ func (s *AppService) ReindexDocumentWithContext(ctx context.Context, knowledgeBa
 		document.IndexErrorCode = classifyIndexError(err)
 		document.IndexError = publicIndexError(document.IndexErrorCode)
 		document.IndexedAt = util.NowRFC3339()
-		_ = s.updateDocument(knowledgeBaseID, document)
+		_ = s.updateDocumentWithContext(ctx, knowledgeBaseID, document)
 		return model.Document{}, err
 	}
-	if err := s.updateDocument(knowledgeBaseID, indexed); err != nil {
+	if err := s.updateDocumentWithContext(ctx, knowledgeBaseID, indexed); err != nil {
 		return model.Document{}, err
 	}
 	return indexed, nil
@@ -239,7 +251,7 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 		if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, nil, nil); err != nil {
 			return model.Document{}, err
 		}
-		document, err = s.captureIndexedDocument(document, content)
+		document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
 		if err != nil {
 			return model.Document{}, err
 		}
@@ -266,9 +278,9 @@ func reindexDocumentWithConfig(ctx context.Context, s *AppService, cfg model.App
 	if err := s.replaceDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID, chunks, vectors); err != nil {
 		return model.Document{}, err
 	}
-	document, err = s.captureIndexedDocument(document, content)
+	document, err = s.captureIndexedDocumentWithContext(ctx, document, content)
 	if err != nil {
-		_ = s.deleteDocumentChunks(document.KnowledgeBaseID, document.ID)
+		_ = s.deleteDocumentChunksWithContext(ctx, document.KnowledgeBaseID, document.ID)
 		return model.Document{}, err
 	}
 

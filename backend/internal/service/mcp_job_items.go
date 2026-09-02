@@ -81,6 +81,9 @@ func (s *MCPJobStore) CreateItems(jobID string, items []mcpJobItem) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit mcp job items: %w", err)
 	}
+	if err := s.protectFilesAfterWrite("create mcp job items"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -114,21 +117,8 @@ func (s *MCPJobStore) ensureItems(jobID string, items []mcpJobItem, expectedLeas
 	rollback := func() {
 		_ = tx.Rollback()
 	}
-	if owner := strings.TrimSpace(expectedLeaseOwner); owner != "" {
-		var exists int
-		if err := tx.QueryRow(`SELECT EXISTS(
-			SELECT 1 FROM mcp_jobs
-			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
-			AND lease_expires_at > ?
-		)`, jobID, owner, expectedAttempt, s.nowUTC().Format(time.RFC3339Nano)).Scan(&exists); err != nil {
-			rollback()
-			return false, fmt.Errorf("check mcp job lease for items: %w", err)
-		}
-		if exists == 0 {
-			rollback()
-			return false, nil
-		}
-	}
+	owner := strings.TrimSpace(expectedLeaseOwner)
+	nowValue := s.nowUTC().Format(time.RFC3339Nano)
 	for _, item := range items {
 		item.JobID = jobID
 		item.UploadID = strings.TrimSpace(item.UploadID)
@@ -142,22 +132,58 @@ func (s *MCPJobStore) ensureItems(jobID string, items []mcpJobItem, expectedLeas
 		}
 		item.Status = normalizeMCPJobItemStatus(item.Status)
 		if item.UpdatedAt == "" {
-			item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			item.UpdatedAt = nowValue
 		}
-		if _, err := tx.Exec(`INSERT INTO mcp_job_items (
-				job_id, upload_id, file_name, checksum, status, document_id, error,
-				error_code, retryable, size, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(job_id, upload_id) DO NOTHING`,
+		args := []any{
 			item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
 			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.Size, item.UpdatedAt,
-		); err != nil {
+		}
+		query := `INSERT INTO mcp_job_items (
+			job_id, upload_id, file_name, checksum, status, document_id, error,
+			error_code, retryable, size, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(job_id, upload_id) DO NOTHING`
+		if owner != "" {
+			query = `INSERT OR IGNORE INTO mcp_job_items (
+				job_id, upload_id, file_name, checksum, status, document_id, error,
+				error_code, retryable, size, updated_at
+			)
+			SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			WHERE EXISTS (
+				SELECT 1 FROM mcp_jobs
+				WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+				AND lease_expires_at > ?
+			)`
+			args = append(args, item.JobID, owner, expectedAttempt, nowValue)
+		}
+		if _, err := tx.Exec(query, args...); err != nil {
 			rollback()
 			return false, fmt.Errorf("ensure mcp job item %s: %w", item.UploadID, err)
 		}
 	}
+	if owner != "" {
+		result, err := tx.Exec(`UPDATE mcp_jobs SET updated_at = updated_at
+			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+			AND lease_expires_at > ?`, jobID, owner, expectedAttempt, nowValue)
+		if err != nil {
+			rollback()
+			return false, fmt.Errorf("verify mcp job lease after ensuring items: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			rollback()
+			return false, fmt.Errorf("inspect mcp job lease after ensuring items: %w", err)
+		}
+		if affected != 1 {
+			rollback()
+			return false, nil
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit ensured mcp job items: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("ensure mcp job items"); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -230,22 +256,42 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 	rollback := func() {
 		_ = tx.Rollback()
 	}
-	if owner := strings.TrimSpace(expectedLeaseOwner); owner != "" {
-		var exists int
-		if err := tx.QueryRow(`SELECT EXISTS(
+	owner := strings.TrimSpace(expectedLeaseOwner)
+	nowValue := s.nowUTC().Format(time.RFC3339Nano)
+	if owner != "" {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO mcp_job_items (
+			job_id, upload_id, file_name, checksum, status, document_id, error,
+			error_code, retryable, size, updated_at
+		)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE EXISTS (
 			SELECT 1 FROM mcp_jobs
 			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
 			AND lease_expires_at > ?
-		)`, item.JobID, owner, expectedAttempt, s.nowUTC().Format(time.RFC3339Nano)).Scan(&exists); err != nil {
+		)`,
+			item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
+			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.Size, item.UpdatedAt,
+			item.JobID, owner, expectedAttempt, nowValue,
+		); err != nil {
 			rollback()
-			return false, fmt.Errorf("check mcp job lease for item: %w", err)
+			return false, fmt.Errorf("insert mcp job item checkpoint: %w", err)
 		}
-		if exists == 0 {
+		if _, err := tx.Exec(`UPDATE mcp_job_items SET
+			file_name = ?, checksum = ?, size = ?, status = ?, document_id = ?, error = ?,
+			error_code = ?, retryable = ?, updated_at = ?
+			WHERE job_id = ? AND upload_id = ? AND EXISTS (
+				SELECT 1 FROM mcp_jobs
+				WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+				AND lease_expires_at > ?
+			)`,
+			normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Size, item.Status,
+			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
+			item.JobID, item.UploadID, item.JobID, owner, expectedAttempt, nowValue,
+		); err != nil {
 			rollback()
-			return false, nil
+			return false, fmt.Errorf("update mcp job item checkpoint: %w", err)
 		}
-	}
-	if _, err := tx.Exec(`INSERT INTO mcp_job_items (
+	} else if _, err := tx.Exec(`INSERT INTO mcp_job_items (
 		job_id, upload_id, file_name, checksum, status, document_id, error,
 		error_code, retryable, size, updated_at
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -265,8 +311,29 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 		rollback()
 		return false, fmt.Errorf("update mcp job item: %w", err)
 	}
+	if owner != "" {
+		result, err := tx.Exec(`UPDATE mcp_jobs SET updated_at = updated_at
+			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+			AND lease_expires_at > ?`, item.JobID, owner, expectedAttempt, nowValue)
+		if err != nil {
+			rollback()
+			return false, fmt.Errorf("verify mcp job lease after item checkpoint: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			rollback()
+			return false, fmt.Errorf("inspect mcp job lease after item checkpoint: %w", err)
+		}
+		if affected != 1 {
+			rollback()
+			return false, nil
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit mcp job item update: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("update mcp job item"); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -277,6 +344,9 @@ func (s *MCPJobStore) DeleteItemsForJob(jobID string) error {
 	}
 	if _, err := s.db.Exec(`DELETE FROM mcp_job_items WHERE job_id = ?`, strings.TrimSpace(jobID)); err != nil {
 		return fmt.Errorf("delete mcp job items: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("delete mcp job items"); err != nil {
+		return err
 	}
 	return nil
 }

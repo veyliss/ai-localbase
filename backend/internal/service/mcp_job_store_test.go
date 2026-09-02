@@ -152,6 +152,51 @@ func TestMCPJobStorePersistsBatchInputMetadataAndProtectsFile(t *testing.T) {
 	}
 }
 
+func TestMCPJobStoreProtectsDatabaseAndSQLiteSidecarsAfterWrite(t *testing.T) {
+	root := t.TempDir()
+	path := root + "/mcp-jobs.db"
+	store, err := NewMCPJobStore(path)
+	if err != nil {
+		t.Fatalf("create mcp job store: %v", err)
+	}
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("relax mcp job store mode: %v", err)
+	}
+	if err := store.Create(testMCPJobRecord("job-protected-write", time.Now().UTC())); err != nil {
+		t.Fatalf("create job after relaxing mode: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat protected mcp job store: %v", err)
+	}
+	if got := info.Mode().Perm(); got != mcpJobStorePrivateMode {
+		t.Fatalf("expected write to restore database mode %04o, got %04o", mcpJobStorePrivateMode, got)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close mcp job store before sidecar check: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecarPath := path + suffix
+		if err := os.WriteFile(sidecarPath, []byte("test sidecar"), 0o644); err != nil {
+			t.Fatalf("create sqlite sidecar %s: %v", suffix, err)
+		}
+	}
+	if err := store.protectFilesAfterWrite("sidecar regression test"); err != nil {
+		t.Fatalf("protect sqlite sidecars: %v", err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if err != nil {
+			t.Fatalf("stat protected sqlite file %s: %v", suffix, err)
+		}
+		if got := info.Mode().Perm(); got != mcpJobStorePrivateMode {
+			t.Fatalf("expected sqlite file %s mode %04o, got %04o", suffix, mcpJobStorePrivateMode, got)
+		}
+	}
+}
+
 func TestMCPBatchInputSizeLimit(t *testing.T) {
 	if err := ValidateMCPBatchInputBytes(mcpBatchMaxInputBytes); err != nil {
 		t.Fatalf("expected maximum batch input size to be accepted: %v", err)
@@ -359,6 +404,112 @@ func TestMCPJobStoreRecoverableClaimAllowsOnlyOneWorker(t *testing.T) {
 	}
 	if loaded.Job.Attempt != 1 || loaded.Job.RecoveryState != "recovering" {
 		t.Fatalf("expected recovery metadata, got %+v", loaded.Job)
+	}
+}
+
+func TestMCPJobStoreRecoverySlotsEnforceGlobalLimit(t *testing.T) {
+	root := t.TempDir()
+	path := root + "/mcp-jobs.db"
+	storeA, err := NewMCPJobStore(path)
+	if err != nil {
+		t.Fatalf("create first mcp job store: %v", err)
+	}
+	defer func() { _ = storeA.Close() }()
+	storeB, err := NewMCPJobStore(path)
+	if err != nil {
+		t.Fatalf("open second mcp job store: %v", err)
+	}
+	defer func() { _ = storeB.Close() }()
+
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	for index := 0; index < mcpJobRecoveryConcurrency+2; index++ {
+		record := testMCPJobRecord(fmt.Sprintf("job-recovery-slot-%d", index), now.Add(time.Duration(index)*time.Second))
+		if err := storeA.Create(record); err != nil {
+			t.Fatalf("create recoverable job %d: %v", index, err)
+		}
+	}
+
+	first, err := storeA.ClaimRecoverableLimited("worker-a", time.Minute, now, 100)
+	if err != nil {
+		t.Fatalf("claim first recovery batch: %v", err)
+	}
+	if len(first) != mcpJobRecoveryConcurrency {
+		t.Fatalf("expected first worker to claim %d jobs, got %d", mcpJobRecoveryConcurrency, len(first))
+	}
+	second, err := storeB.ClaimRecoverableLimited("worker-b", time.Minute, now, 100)
+	if err != nil {
+		t.Fatalf("claim second recovery batch while full: %v", err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("expected global recovery slot limit to block second worker, got %d jobs", len(second))
+	}
+
+	if err := storeA.ReleaseRecoverySlot(first[0].Job.ID, "worker-a", first[0].Job.Attempt); err != nil {
+		t.Fatalf("release recovery slot: %v", err)
+	}
+	second, err = storeB.ClaimRecoverableLimited("worker-b", time.Minute, now, 100)
+	if err != nil {
+		t.Fatalf("claim recovery slot after release: %v", err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("expected one slot to become available, got %d jobs", len(second))
+	}
+
+	if renewed, err := storeA.RenewLease(first[1].Job.ID, "worker-a", first[1].Job.Attempt, time.Minute, now.Add(10*time.Second)); err != nil || !renewed {
+		t.Fatalf("renew recovered job lease: renewed=%t err=%v", renewed, err)
+	}
+	var slotLease string
+	if err := storeA.db.QueryRow(`SELECT lease_expires_at FROM mcp_job_recovery_slots WHERE job_id = ?`, first[1].Job.ID).Scan(&slotLease); err != nil {
+		t.Fatalf("read renewed recovery slot: %v", err)
+	}
+	if slotLease != now.Add(70*time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("expected recovery slot lease to follow job heartbeat, got %q", slotLease)
+	}
+}
+
+func TestMCPJobStoreLinkRetryIsAtomic(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	parent := testMCPJobRecord("job-retry-parent", now)
+	parent.Job.Status = "failed"
+	parent.Job.RetryCount = 0
+	parent.Job.Retryable = true
+	child := testMCPJobRecord("job-retry-child", now.Add(time.Second))
+	child.Job.Status = "queued"
+	child.Job.RetryCount = 0
+	if err := store.Create(parent); err != nil {
+		t.Fatalf("create retry parent: %v", err)
+	}
+	if err := store.Create(child); err != nil {
+		t.Fatalf("create retry child: %v", err)
+	}
+
+	linkedParent, linkedChild, err := store.LinkRetry(parent.Job.ID, child.Job.ID, 1, parent.Job.OwnerUserID, parent.Job.OwnerAPIKeyID)
+	if err != nil {
+		t.Fatalf("link retry jobs: %v", err)
+	}
+	if linkedParent.Job.Retryable {
+		t.Fatal("expected retry parent to be consumed")
+	}
+	if linkedChild.Job.ParentJobID != parent.Job.ID || linkedChild.Job.RetryCount != 1 || linkedChild.Job.OwnerUserID != parent.Job.OwnerUserID {
+		t.Fatalf("expected child relation and owner to be linked atomically, got %+v", linkedChild.Job)
+	}
+
+	rollbackParent := testMCPJobRecord("job-retry-rollback-parent", now.Add(2*time.Second))
+	rollbackParent.Job.Status = "failed"
+	rollbackParent.Job.Retryable = true
+	if err := store.Create(rollbackParent); err != nil {
+		t.Fatalf("create rollback parent: %v", err)
+	}
+	if _, _, err := store.LinkRetry(rollbackParent.Job.ID, "missing-child", 1, "user-a", ""); err == nil {
+		t.Fatal("expected missing child to roll back retry parent update")
+	}
+	loaded, found, err := store.Get(rollbackParent.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load rollback parent: found=%t err=%v", found, err)
+	}
+	if !loaded.Job.Retryable {
+		t.Fatal("expected failed retry relation to leave parent retryable")
 	}
 }
 

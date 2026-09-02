@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	mcpJobStoreSchemaVersion = 2
+	mcpJobStoreSchemaVersion = 3
 	mcpJobStoreDefaultKeep   = 50
 	mcpJobLeaseDuration      = 30 * time.Second
 	mcpJobHeartbeatInterval  = 10 * time.Second
 	mcpJobDescriptorVersion  = 1
 	mcpJobResultMaxBytes     = 128 * 1024
+	mcpJobStorePrivateMode   = 0o600
 )
 
 var ErrMCPJobResultTooLarge = errors.New("mcp job result exceeds persistence limit")
@@ -87,9 +88,9 @@ func NewMCPJobStore(path string) (*MCPJobStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	if err := os.Chmod(trimmedPath, 0o600); err != nil {
+	if err := store.protectFiles(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("protect mcp job store file: %w", err)
+		return nil, err
 	}
 	return store, nil
 }
@@ -106,6 +107,42 @@ func (s *MCPJobStore) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+// protectFiles covers the database and SQLite's WAL/SHM sidecars. SQLite can
+// create the sidecars after the database itself has been chmod'ed, so the
+// check is repeated after mutating operations as well as during startup.
+func (s *MCPJobStore) protectFiles() error {
+	if s == nil {
+		return fmt.Errorf("mcp job store is nil")
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		filePath := s.path + suffix
+		info, err := os.Stat(filePath)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect mcp job store file %s: %w", suffix, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("mcp job store file %s is not a regular file", suffix)
+		}
+		if info.Mode().Perm() == mcpJobStorePrivateMode {
+			continue
+		}
+		if err := os.Chmod(filePath, mcpJobStorePrivateMode); err != nil {
+			return fmt.Errorf("protect mcp job store file %s: %w", suffix, err)
+		}
+	}
+	return nil
+}
+
+func (s *MCPJobStore) protectFilesAfterWrite(operation string) error {
+	if err := s.protectFiles(); err != nil {
+		return fmt.Errorf("protect mcp job store files after %s: %w", operation, err)
+	}
+	return nil
 }
 
 func (s *MCPJobStore) nowUTC() time.Time {
@@ -173,6 +210,14 @@ func (s *MCPJobStore) init() error {
 			PRIMARY KEY (job_id, upload_id)
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_mcp_job_items_job ON mcp_job_items(job_id, updated_at);`,
+		`CREATE TABLE IF NOT EXISTS mcp_job_recovery_slots (
+			slot_id INTEGER PRIMARY KEY,
+			worker_id TEXT NOT NULL DEFAULT '',
+			job_id TEXT NOT NULL DEFAULT '',
+			attempt INTEGER NOT NULL DEFAULT 0,
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL DEFAULT ''
+		);`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -182,9 +227,22 @@ func (s *MCPJobStore) init() error {
 	if err := s.ensureColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureRecoverySlots(); err != nil {
+		return err
+	}
 	if version < mcpJobStoreSchemaVersion {
 		if _, err := s.db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, mcpJobStoreSchemaVersion)); err != nil {
 			return fmt.Errorf("write mcp job store schema version: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *MCPJobStore) ensureRecoverySlots() error {
+	for slotID := 0; slotID < mcpJobRecoveryConcurrency; slotID++ {
+		if _, err := s.db.Exec(`INSERT INTO mcp_job_recovery_slots (slot_id)
+			VALUES (?) ON CONFLICT(slot_id) DO NOTHING`, slotID); err != nil {
+			return fmt.Errorf("initialize mcp job recovery slot %d: %w", slotID, err)
 		}
 	}
 	return nil
@@ -282,6 +340,9 @@ func (s *MCPJobStore) Create(record mcpJobStoreRecord) error {
 	if err != nil {
 		return fmt.Errorf("create mcp job: %w", err)
 	}
+	if err := s.protectFilesAfterWrite("create mcp job"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -313,6 +374,11 @@ func (s *MCPJobStore) Update(record mcpJobStoreRecord, expectedLeaseOwner string
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("inspect mcp job update: %w", err)
+	}
+	if affected == 1 {
+		if err := s.protectFilesAfterWrite("update mcp job"); err != nil {
+			return false, err
+		}
 	}
 	return affected == 1, nil
 }
@@ -348,6 +414,11 @@ func (s *MCPJobStore) UpdateState(record mcpJobStoreRecord, expectedLeaseOwner s
 	if err != nil {
 		return false, fmt.Errorf("inspect mcp job state update: %w", err)
 	}
+	if affected == 1 {
+		if err := s.protectFilesAfterWrite("update mcp job state"); err != nil {
+			return false, err
+		}
+	}
 	return affected == 1, nil
 }
 
@@ -369,69 +440,137 @@ func (s *MCPJobStore) Claim(jobID, workerID string, leaseDuration time.Duration,
 }
 
 func (s *MCPJobStore) ClaimRecoverable(workerID string, leaseDuration time.Duration, now time.Time) ([]mcpJobStoreRecord, error) {
-	return s.ClaimRecoverableLimited(workerID, leaseDuration, now, 0)
+	return s.ClaimRecoverableLimited(workerID, leaseDuration, now, mcpJobRecoveryConcurrency)
 }
 
-// ClaimRecoverableLimited claims at most limit jobs. A non-positive limit keeps
-// the legacy behavior and claims every currently recoverable job.
+// ClaimRecoverableLimited claims at most limit jobs. Each claim also owns one
+// durable recovery slot, so the limit is enforced across processes sharing the
+// same SQLite Job Store.
 func (s *MCPJobStore) ClaimRecoverableLimited(workerID string, leaseDuration time.Duration, now time.Time, limit int) ([]mcpJobStoreRecord, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("mcp job store is nil")
 	}
-	nowValue := now.UTC().Format(time.RFC3339Nano)
-	query := `SELECT id FROM mcp_jobs
+	if limit <= 0 || limit > mcpJobRecoveryConcurrency {
+		limit = mcpJobRecoveryConcurrency
+	}
+	recovered := make([]mcpJobStoreRecord, 0, limit)
+	for len(recovered) < limit {
+		record, claimed, err := s.claimRecoverableOne(workerID, leaseDuration, now)
+		if err != nil {
+			return nil, err
+		}
+		if !claimed {
+			break
+		}
+		recovered = append(recovered, record)
+	}
+	return recovered, nil
+}
+
+func (s *MCPJobStore) claimRecoverableOne(workerID string, leaseDuration time.Duration, now time.Time) (mcpJobStoreRecord, bool, error) {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return mcpJobStoreRecord{}, false, fmt.Errorf("mcp worker id is required")
+	}
+	if leaseDuration <= 0 {
+		leaseDuration = mcpJobLeaseDuration
+	}
+	now = now.UTC()
+	nowValue := now.Format(time.RFC3339Nano)
+	leaseValue := now.Add(leaseDuration).Format(time.RFC3339Nano)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return mcpJobStoreRecord{}, false, fmt.Errorf("begin recover mcp job: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+
+	var slotID int
+	if err := tx.QueryRow(`SELECT slot_id FROM mcp_job_recovery_slots
+		WHERE worker_id = '' OR lease_expires_at = '' OR lease_expires_at <= ?
+		ORDER BY slot_id ASC LIMIT 1`, nowValue).Scan(&slotID); err != nil {
+		if err == sql.ErrNoRows {
+			rollback()
+			return mcpJobStoreRecord{}, false, nil
+		}
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("find mcp job recovery slot: %w", err)
+	}
+	result, err := tx.Exec(`UPDATE mcp_job_recovery_slots SET
+		worker_id = ?, job_id = '', attempt = 0, lease_expires_at = ?, updated_at = ?
+		WHERE slot_id = ? AND (worker_id = '' OR lease_expires_at = '' OR lease_expires_at <= ?)`,
+		workerID, leaseValue, nowValue, slotID, nowValue)
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("claim mcp job recovery slot: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("inspect mcp job recovery slot: %w", err)
+	} else if affected != 1 {
+		rollback()
+		return mcpJobStoreRecord{}, false, nil
+	}
+
+	var jobID string
+	if err := tx.QueryRow(`SELECT id FROM mcp_jobs
 		WHERE resumable = 1 AND (
 			(status = 'queued' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
 			OR (status = 'running' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
 		)
-		ORDER BY updated_at ASC`
-	queryArgs := []any{nowValue, nowValue}
-	if limit > 0 {
-		query += ` LIMIT ?`
-		queryArgs = append(queryArgs, limit)
-	}
-	rows, err := s.db.Query(query, queryArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("list recoverable mcp jobs: %w", err)
-	}
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan recoverable mcp job: %w", err)
+		ORDER BY updated_at ASC, id ASC LIMIT 1`, nowValue, nowValue).Scan(&jobID); err != nil {
+		if err == sql.ErrNoRows {
+			if _, clearErr := tx.Exec(`UPDATE mcp_job_recovery_slots SET worker_id = '', job_id = '', attempt = 0, lease_expires_at = '', updated_at = ? WHERE slot_id = ?`, nowValue, slotID); clearErr != nil {
+				rollback()
+				return mcpJobStoreRecord{}, false, fmt.Errorf("release empty mcp job recovery slot: %w", clearErr)
+			}
+			if commitErr := tx.Commit(); commitErr != nil {
+				return mcpJobStoreRecord{}, false, fmt.Errorf("commit empty mcp job recovery slot: %w", commitErr)
+			}
+			return mcpJobStoreRecord{}, false, nil
 		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, fmt.Errorf("iterate recoverable mcp jobs: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("close recoverable mcp jobs: %w", err)
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("find recoverable mcp job: %w", err)
 	}
 
-	recovered := make([]mcpJobStoreRecord, 0, len(ids))
-	for _, id := range ids {
-		record, claimed, err := s.claimWhere(
-			`id = ? AND resumable = 1 AND (
-				(status = 'queued' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
-				OR (status = 'running' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
-			)`,
-			[]any{id, nowValue, nowValue},
-			workerID,
-			leaseDuration,
-			now,
-			true,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if claimed {
-			recovered = append(recovered, record)
-		}
+	result, err = tx.Exec(`UPDATE mcp_jobs SET
+		status = 'queued', recovery_state = 'recovering', attempt = attempt + 1,
+		lease_owner = ?, lease_expires_at = ?, last_heartbeat_at = ?,
+		updated_at = ?, next_action = 'worker scheduled after restart'
+		WHERE id = ? AND resumable = 1 AND (
+			(status = 'queued' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
+			OR (status = 'running' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
+		)`, workerID, leaseValue, nowValue, nowValue, jobID, nowValue, nowValue)
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("claim recoverable mcp job: %w", err)
 	}
-	return recovered, nil
+	if affected, err := result.RowsAffected(); err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("inspect recoverable mcp job claim: %w", err)
+	} else if affected != 1 {
+		rollback()
+		return mcpJobStoreRecord{}, false, nil
+	}
+
+	record, err := scanMCPJobRow(tx.QueryRow(mcpJobSelectSQL+` WHERE id = ?`, jobID))
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("load recovered mcp job: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE mcp_job_recovery_slots SET job_id = ?, attempt = ?, lease_expires_at = ?, updated_at = ? WHERE slot_id = ? AND worker_id = ?`,
+		jobID, record.Job.Attempt, leaseValue, nowValue, slotID, workerID); err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, false, fmt.Errorf("bind mcp job recovery slot: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return mcpJobStoreRecord{}, false, fmt.Errorf("commit recovered mcp job: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("recover mcp job"); err != nil {
+		return mcpJobStoreRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 func (s *MCPJobStore) Delete(jobID string) error {
@@ -446,12 +585,21 @@ func (s *MCPJobStore) Delete(jobID string) error {
 		_ = tx.Rollback()
 		return fmt.Errorf("delete mcp job items: %w", err)
 	}
+	if _, err := tx.Exec(`UPDATE mcp_job_recovery_slots SET
+		worker_id = '', job_id = '', attempt = 0, lease_expires_at = '', updated_at = ?
+		WHERE job_id = ?`, s.nowUTC().Format(time.RFC3339Nano), strings.TrimSpace(jobID)); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("release mcp job recovery slots: %w", err)
+	}
 	if _, err := tx.Exec(`DELETE FROM mcp_jobs WHERE id = ?`, strings.TrimSpace(jobID)); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("delete mcp job: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete mcp job: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("delete mcp job"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -464,23 +612,148 @@ func (s *MCPJobStore) RenewLease(jobID, workerID string, attempt int, leaseDurat
 		leaseDuration = mcpJobLeaseDuration
 	}
 	now = now.UTC()
-	result, err := s.db.Exec(`UPDATE mcp_jobs SET
+	leaseValue := now.Add(leaseDuration).Format(time.RFC3339Nano)
+	nowValue := now.Format(time.RFC3339Nano)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin renew mcp job lease: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	result, err := tx.Exec(`UPDATE mcp_jobs SET
 		lease_expires_at = ?, last_heartbeat_at = ?, updated_at = ?
 		WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
 		AND lease_expires_at > ?`,
-		now.Add(leaseDuration).Format(time.RFC3339Nano),
-		now.Format(time.RFC3339Nano),
-		now.Format(time.RFC3339Nano),
-		strings.TrimSpace(jobID), strings.TrimSpace(workerID), attempt, now.Format(time.RFC3339Nano),
+		leaseValue, nowValue, nowValue,
+		strings.TrimSpace(jobID), strings.TrimSpace(workerID), attempt, nowValue,
 	)
 	if err != nil {
+		rollback()
 		return false, fmt.Errorf("renew mcp job lease: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
+		rollback()
 		return false, fmt.Errorf("inspect mcp job lease renewal: %w", err)
 	}
-	return affected == 1, nil
+	if affected != 1 {
+		rollback()
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE mcp_job_recovery_slots SET
+		lease_expires_at = ?, updated_at = ?
+		WHERE job_id = ? AND worker_id = ? AND attempt = ?`,
+		leaseValue, nowValue, strings.TrimSpace(jobID), strings.TrimSpace(workerID), attempt); err != nil {
+		rollback()
+		return false, fmt.Errorf("renew mcp job recovery slot: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit mcp job lease renewal: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("renew mcp job lease"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReleaseRecoverySlot makes a recovered worker's durable concurrency slot
+// reusable. The owner and attempt guard prevent an old worker from releasing a
+// slot that a later recovery attempt has already claimed.
+func (s *MCPJobStore) ReleaseRecoverySlot(jobID, workerID string, attempt int) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("mcp job store is nil")
+	}
+	if strings.TrimSpace(jobID) == "" || strings.TrimSpace(workerID) == "" || attempt <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE mcp_job_recovery_slots SET
+		worker_id = '', job_id = '', attempt = 0, lease_expires_at = '', updated_at = ?
+		WHERE job_id = ? AND worker_id = ? AND attempt = ?`,
+		s.nowUTC().Format(time.RFC3339Nano), strings.TrimSpace(jobID), strings.TrimSpace(workerID), attempt)
+	if err != nil {
+		return fmt.Errorf("release mcp job recovery slot: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("release mcp job recovery slot"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LinkRetry updates both sides of a retry relation in one SQLite transaction.
+// The parent CAS is the concurrency guard: only one child can consume a
+// retryable failed parent, while the child relation and ownership are updated
+// atomically with that decision.
+func (s *MCPJobStore) LinkRetry(parentJobID, childJobID string, retryCount int, ownerUserID, ownerAPIKeyID string) (mcpJobStoreRecord, mcpJobStoreRecord, error) {
+	if s == nil || s.db == nil {
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("mcp job store is nil")
+	}
+	parentJobID = strings.TrimSpace(parentJobID)
+	childJobID = strings.TrimSpace(childJobID)
+	if parentJobID == "" || childJobID == "" || retryCount <= 0 {
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("retry job identifiers and count are required")
+	}
+	nowValue := s.nowUTC().Format(time.RFC3339Nano)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("begin link mcp retry: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	result, err := tx.Exec(`UPDATE mcp_jobs SET
+		retryable = 0, updated_at = ?
+		WHERE id = ? AND status = 'failed' AND retryable = 1 AND retry_count < ?`,
+		nowValue, parentJobID, retryCount)
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("claim mcp retry parent: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("inspect mcp retry parent: %w", err)
+	}
+	if affected != 1 {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("mcp retry parent is no longer retryable")
+	}
+	result, err = tx.Exec(`UPDATE mcp_jobs SET
+		retry_count = ?, parent_job_id = ?, owner_user_id = ?, owner_api_key_id = ?,
+		retryable = CASE WHEN status = 'failed' AND ? < ? THEN 1 ELSE retryable END,
+		updated_at = ?
+		WHERE id = ?`,
+		retryCount, parentJobID, strings.TrimSpace(ownerUserID), strings.TrimSpace(ownerAPIKeyID), retryCount, mcpJobMaxRetries, nowValue, childJobID)
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("link mcp retry child: %w", err)
+	}
+	affected, err = result.RowsAffected()
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("inspect mcp retry child: %w", err)
+	}
+	if affected != 1 {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("mcp retry child not found")
+	}
+	parent, err := scanMCPJobRow(tx.QueryRow(mcpJobSelectSQL+` WHERE id = ?`, parentJobID))
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("load linked mcp retry parent: %w", err)
+	}
+	child, err := scanMCPJobRow(tx.QueryRow(mcpJobSelectSQL+` WHERE id = ?`, childJobID))
+	if err != nil {
+		rollback()
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("load linked mcp retry child: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("commit linked mcp retry: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("link mcp retry"); err != nil {
+		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, err
+	}
+	return parent, child, nil
 }
 
 func (s *MCPJobStore) LeaseOwned(jobID, workerID string, attempt int) (bool, error) {
@@ -613,6 +886,9 @@ func (s *MCPJobStore) PruneWithCount(keep int) (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit prune mcp jobs: %w", err)
 	}
+	if err := s.protectFilesAfterWrite("prune mcp jobs"); err != nil {
+		return 0, err
+	}
 	deleted, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("inspect pruned mcp jobs: %w", err)
@@ -642,6 +918,9 @@ func (s *MCPJobStore) CancelItems(jobID, expectedLeaseOwner string, expectedAtte
 	}
 	if _, err := s.db.Exec(query, args...); err != nil {
 		return fmt.Errorf("cancel mcp job items: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("cancel mcp job items"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -692,6 +971,9 @@ func (s *MCPJobStore) Stats() (mcpJobStoreStats, error) {
 	if rollbackErr != nil && rollbackErr != sql.ErrTxDone {
 		return stats, fmt.Errorf("rollback mcp job store write probe: %w", rollbackErr)
 	}
+	if err := s.protectFilesAfterWrite("probe mcp job store writeability"); err != nil {
+		return stats, err
+	}
 	stats.Writable = true
 	return stats, nil
 }
@@ -736,6 +1018,9 @@ func (s *MCPJobStore) claimWhere(where string, args []any, workerID string, leas
 	}
 	if affected != 1 {
 		return mcpJobStoreRecord{}, false, nil
+	}
+	if err := s.protectFilesAfterWrite("claim mcp job"); err != nil {
+		return mcpJobStoreRecord{}, false, err
 	}
 	jobID := ""
 	for _, arg := range args {

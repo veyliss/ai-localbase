@@ -2997,6 +2997,9 @@ func (s *AppService) releaseMCPJobLeaseForLease(jobID string, expectedLease mcpJ
 		}
 		return
 	}
+	if err := s.mcpJobStore.ReleaseRecoverySlot(jobID, expectedLease.Owner, expectedLease.Attempt); err != nil {
+		log.Printf("failed to release MCP job recovery slot %s during shutdown: %v", jobID, err)
+	}
 	s.mcpJobMu.Lock()
 	if current, exists := s.mcpJobs[jobID]; exists && !isMCPJobTerminalStatus(current.Status) {
 		s.mcpJobs[jobID] = job
@@ -3211,6 +3214,31 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 	// but the retry child must remain visible to that job's original owner.
 	retriedJob.OwnerUserID = job.OwnerUserID
 	retriedJob.OwnerAPIKeyID = job.OwnerAPIKeyID
+	if s.mcpJobStore != nil {
+		parentRecord, childRecord, linkErr := s.mcpJobStore.LinkRetry(
+			jobID,
+			retriedJob.ID,
+			nextRetryCount,
+			job.OwnerUserID,
+			job.OwnerAPIKeyID,
+		)
+		if linkErr != nil {
+			cancel := s.mcpJobCancels[retriedJob.ID]
+			s.mcpJobMu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			return model.MCPJob{}, fmt.Errorf("persist retry relationship failed: %w", linkErr)
+		}
+		// The transaction is authoritative. The child may already have started
+		// running while the retry request was linking it, so do not overwrite its
+		// newer state with the value returned by the start call.
+		s.mcpJobs[jobID] = parentRecord.Job
+		s.mcpJobs[retriedJob.ID] = childRecord.Job
+		retriedJob = childRecord.Job
+		s.mcpJobMu.Unlock()
+		return publicMCPJob(retriedJob), nil
+	}
 	if stored, exists := s.mcpJobs[retriedJob.ID]; exists {
 		stored.RetryCount = nextRetryCount
 		stored.ParentJobID = jobID
@@ -3276,8 +3304,9 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
 		job.UpdatedAt = util.NowRFC3339()
 		job.CompletedAt = job.UpdatedAt
+		lease := mcpJobLease{}
 		if s.mcpJobStore != nil {
-			lease := s.mcpJobLeases[jobID]
+			lease = s.mcpJobLeases[jobID]
 			if err := s.mcpJobStore.CancelItems(jobID, lease.Owner, lease.Attempt); err != nil {
 				s.recordMCPJobPersistenceFailure()
 				s.mcpJobMu.Unlock()
@@ -3287,6 +3316,11 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		if !s.persistMCPJobLocked(job, true) {
 			s.mcpJobMu.Unlock()
 			return model.MCPJob{}, fmt.Errorf("persist cancelled MCP job failed")
+		}
+		if s.mcpJobStore != nil && validMCPJobLease(lease) {
+			if err := s.mcpJobStore.ReleaseRecoverySlot(jobID, lease.Owner, lease.Attempt); err != nil {
+				log.Printf("failed to release MCP job recovery slot %s after cancellation: %v", jobID, err)
+			}
 		}
 		s.mcpJobs[jobID] = job
 		delete(s.mcpJobCancels, jobID)
@@ -3669,6 +3703,11 @@ func (s *AppService) completeMCPJobWithLease(jobID string, expectedLease mcpJobL
 	job.CompletedAt = job.UpdatedAt
 	if !s.persistMCPJobLockedWithLease(job, true, expectedLease) {
 		return
+	}
+	if s.mcpJobStore != nil && validMCPJobLease(expectedLease) {
+		if err := s.mcpJobStore.ReleaseRecoverySlot(jobID, expectedLease.Owner, expectedLease.Attempt); err != nil {
+			log.Printf("failed to release MCP job recovery slot %s: %v", jobID, err)
+		}
 	}
 	s.mcpJobs[jobID] = job
 	delete(s.mcpJobCancels, jobID)

@@ -785,7 +785,11 @@ func modelNowRFC3339() string {
 }
 
 func validateUploadFileName(fileName string, cfg model.AppConfig) error {
-	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(fileName)))
+	normalizedName, err := util.NormalizeFilename(fileName)
+	if err != nil {
+		return err
+	}
+	ext := strings.ToLower(filepath.Ext(normalizedName))
 	allowed := map[string]struct{}{
 		".txt": {},
 		".md":  {},
@@ -807,7 +811,11 @@ func validateUploadFileName(fileName string, cfg model.AppConfig) error {
 }
 
 func validateTextUploadFileName(fileName string, cfg model.AppConfig) error {
-	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(fileName)))
+	normalizedName, err := util.NormalizeFilename(fileName)
+	if err != nil {
+		return err
+	}
+	ext := strings.ToLower(filepath.Ext(normalizedName))
 	allowed := map[string]struct{}{
 		".txt": {},
 		".md":  {},

@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"ai-localbase/internal/model"
+	"ai-localbase/internal/util"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,10 +24,13 @@ const (
 	mcpJobLeaseDuration      = 30 * time.Second
 	mcpJobHeartbeatInterval  = 10 * time.Second
 	mcpJobDescriptorVersion  = 1
+	mcpJobResultMaxBytes     = 128 * 1024
 )
 
+var ErrMCPJobResultTooLarge = errors.New("mcp job result exceeds persistence limit")
+
 var (
-	mcpJobStorePathPattern       = regexp.MustCompile(`(?i)(?:/Users/|/app/|/var/|/tmp/|[A-Za-z]:[\\/])[^\s"'<>]+`)
+	mcpJobStorePathPattern       = regexp.MustCompile(`(?i)(?:/(?:Users|home|app|opt|workspace|private|var|tmp)/|[A-Za-z]:[\\/]|\\\\|(?:\.\.?[\\/]){1,2})[^\s"'<>]+`)
 	mcpJobStoreURLPattern        = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
 	mcpJobStoreSecretPattern     = regexp.MustCompile(`(?i)(?:ailb_sk_|mcp_confirm_)[A-Za-z0-9_-]+`)
 	mcpJobStoreCredentialPattern = regexp.MustCompile(`(?i)((?:authorization|cookie|token|api[_-]?key|password|secret))\s*[:=]\s*(?:bearer\s+)?[^\s,;]+`)
@@ -228,13 +233,17 @@ func (s *MCPJobStore) Create(record mcpJobStoreRecord) error {
 		return fmt.Errorf("mcp job id is required")
 	}
 	record.Descriptor = normalizeMCPJobDescriptor(record.Descriptor, record.Job.Type)
-	_, err := s.db.Exec(`INSERT INTO mcp_jobs (
+	values, err := mcpJobStoreValues(record)
+	if err != nil {
+		return fmt.Errorf("prepare mcp job: %w", err)
+	}
+	_, err = s.db.Exec(`INSERT INTO mcp_jobs (
 		id, type, status, progress, summary, result_json, error, error_code,
 		warnings_json, retryable, retry_count, parent_job_id, created_at, updated_at,
 		completed_at, owner_user_id, owner_api_key_id, descriptor_json, resumable,
 		recovery_state, attempt, lease_owner, lease_expires_at, last_heartbeat_at, next_action
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		mcpJobStoreValues(record)...,
+		values...,
 	)
 	if err != nil {
 		return fmt.Errorf("create mcp job: %w", err)
@@ -252,7 +261,10 @@ func (s *MCPJobStore) Update(record mcpJobStoreRecord, expectedLeaseOwner string
 		return false, fmt.Errorf("mcp job id is required")
 	}
 	record.Descriptor = normalizeMCPJobDescriptor(record.Descriptor, record.Job.Type)
-	values := mcpJobStoreValues(record)
+	values, err := mcpJobStoreValues(record)
+	if err != nil {
+		return false, fmt.Errorf("prepare mcp job: %w", err)
+	}
 	values = append(values[1:], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt)
 	result, err := s.db.Exec(`UPDATE mcp_jobs SET
 		type = ?, status = ?, progress = ?, summary = ?, result_json = ?, error = ?, error_code = ?,
@@ -266,6 +278,39 @@ func (s *MCPJobStore) Update(record mcpJobStoreRecord, expectedLeaseOwner string
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("inspect mcp job update: %w", err)
+	}
+	return affected == 1, nil
+}
+
+// UpdateState persists a worker state transition without rewriting the lease
+// expiry. Heartbeats own lease timing; state updates must not put an older
+// expiry back into SQLite after a heartbeat has extended it.
+func (s *MCPJobStore) UpdateState(record mcpJobStoreRecord, expectedLeaseOwner string, expectedAttempt int) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("mcp job store is nil")
+	}
+	if strings.TrimSpace(record.Job.ID) == "" {
+		return false, fmt.Errorf("mcp job id is required")
+	}
+	record.Descriptor = normalizeMCPJobDescriptor(record.Descriptor, record.Job.Type)
+	values, err := mcpJobStoreValues(record)
+	if err != nil {
+		return false, fmt.Errorf("prepare mcp job: %w", err)
+	}
+	stateValues := append([]any{}, values[1:21]...)
+	stateValues = append(stateValues, values[23], values[24], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt)
+	result, err := s.db.Exec(`UPDATE mcp_jobs SET
+		type = ?, status = ?, progress = ?, summary = ?, result_json = ?, error = ?, error_code = ?,
+		warnings_json = ?, retryable = ?, retry_count = ?, parent_job_id = ?, created_at = ?, updated_at = ?,
+		completed_at = ?, owner_user_id = ?, owner_api_key_id = ?, descriptor_json = ?, resumable = ?,
+		recovery_state = ?, attempt = ?, last_heartbeat_at = ?, next_action = ?
+		WHERE id = ? AND lease_owner = ? AND attempt = ?`, stateValues...)
+	if err != nil {
+		return false, fmt.Errorf("update mcp job state: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("inspect mcp job state update: %w", err)
 	}
 	return affected == 1, nil
 }
@@ -386,6 +431,26 @@ func (s *MCPJobStore) RenewLease(jobID, workerID string, attempt int, leaseDurat
 		return false, fmt.Errorf("inspect mcp job lease renewal: %w", err)
 	}
 	return affected == 1, nil
+}
+
+func (s *MCPJobStore) LeaseOwned(jobID, workerID string, attempt int) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("mcp job store is nil")
+	}
+	jobID = strings.TrimSpace(jobID)
+	workerID = strings.TrimSpace(workerID)
+	if jobID == "" || workerID == "" || attempt <= 0 {
+		return false, nil
+	}
+	var exists int
+	err := s.db.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM mcp_jobs
+		WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+	)`, jobID, workerID, attempt).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check mcp job lease: %w", err)
+	}
+	return exists != 0, nil
 }
 
 func (s *MCPJobStore) List(limit int) ([]mcpJobStoreRecord, error) {
@@ -633,6 +698,9 @@ func (s *MCPJobStore) claimWhere(where string, args []any, workerID string, leas
 	if err != nil {
 		return mcpJobStoreRecord{}, false, err
 	}
+	if !found || record.LeaseOwner != workerID {
+		return mcpJobStoreRecord{}, false, nil
+	}
 	return record, found, nil
 }
 
@@ -718,22 +786,27 @@ func scanMCPJobRow(row mcpJobRowScanner) (mcpJobStoreRecord, error) {
 	}, nil
 }
 
-func mcpJobStoreValues(record mcpJobStoreRecord) []any {
-	job := prepareMCPJobForPersistence(record.Job)
-	resultJSON := "{}"
-	if len(job.Result) > 0 {
-		if encoded, err := json.Marshal(job.Result); err == nil && len(encoded) <= 128*1024 {
-			resultJSON = string(encoded)
-		}
+func mcpJobStoreValues(record mcpJobStoreRecord) ([]any, error) {
+	job, err := prepareMCPJobForPersistence(record.Job)
+	if err != nil {
+		return nil, err
+	}
+	resultJSON, err := encodeMCPJobResult(job.Result)
+	if err != nil {
+		return nil, err
 	}
 	warningsJSON := "[]"
 	if len(job.Warnings) > 0 {
 		if encoded, err := json.Marshal(job.Warnings); err == nil {
 			warningsJSON = string(encoded)
+		} else {
+			return nil, fmt.Errorf("encode mcp job warnings: %w", err)
 		}
 	}
 	descriptorJSON := "{}"
-	if encoded, err := json.Marshal(normalizeMCPJobDescriptor(record.Descriptor, job.Type)); err == nil {
+	if encoded, err := json.Marshal(normalizeMCPJobDescriptor(record.Descriptor, job.Type)); err != nil {
+		return nil, fmt.Errorf("encode mcp job descriptor: %w", err)
+	} else {
 		descriptorJSON = string(encoded)
 	}
 	return []any{
@@ -741,7 +814,7 @@ func mcpJobStoreValues(record mcpJobStoreRecord) []any {
 		warningsJSON, boolToInt(job.Retryable), job.RetryCount, job.ParentJobID, job.CreatedAt, job.UpdatedAt, job.CompletedAt,
 		job.OwnerUserID, job.OwnerAPIKeyID, descriptorJSON, boolToInt(job.Resumable), job.RecoveryState, job.Attempt,
 		record.LeaseOwner, record.LeaseExpiresAt, job.LastHeartbeatAt, job.NextAction,
-	}
+	}, nil
 }
 
 func normalizeMCPJobDescriptor(descriptor mcpJobDescriptor, fallbackType string) mcpJobDescriptor {
@@ -754,7 +827,13 @@ func normalizeMCPJobDescriptor(descriptor mcpJobDescriptor, fallbackType string)
 	descriptor.Type = normalizeMCPJobType(descriptor.Type)
 	descriptor.KnowledgeBaseID = strings.TrimSpace(descriptor.KnowledgeBaseID)
 	descriptor.DocumentID = strings.TrimSpace(descriptor.DocumentID)
-	descriptor.FileName = strings.TrimSpace(descriptor.FileName)
+	if strings.TrimSpace(descriptor.FileName) != "" {
+		if normalized, err := util.NormalizeFilename(descriptor.FileName); err == nil {
+			descriptor.FileName = normalized
+		} else {
+			descriptor.FileName = util.SanitizeFilename(descriptor.FileName)
+		}
+	}
 	descriptor.UploadID = strings.TrimSpace(descriptor.UploadID)
 	descriptor.Checksum = strings.ToLower(strings.TrimSpace(descriptor.Checksum))
 	descriptor.UploadIDs = cloneStrings(descriptor.UploadIDs)
@@ -773,30 +852,53 @@ func normalizeMCPJobType(value string) string {
 	}
 }
 
-func prepareMCPJobForPersistence(job model.MCPJob) model.MCPJob {
+func prepareMCPJobForPersistence(job model.MCPJob) (model.MCPJob, error) {
 	job.Summary = redactMCPJobMessage(job.Summary)
 	job.Error = redactMCPJobMessage(job.Error)
 	job.Warnings = append([]string(nil), job.Warnings...)
 	for index := range job.Warnings {
 		job.Warnings[index] = redactMCPJobMessage(job.Warnings[index])
 	}
-	job.Result = sanitizeMCPJobResult(job.Result)
-	return job
+	sanitizedResult, err := sanitizeMCPJobResultStrict(job.Result)
+	if err != nil {
+		return model.MCPJob{}, fmt.Errorf("sanitize mcp job result: %w", err)
+	}
+	job.Result = sanitizedResult
+	return job, nil
 }
 
 func sanitizeMCPJobResult(values map[string]any) map[string]any {
+	sanitized, _ := sanitizeMCPJobResultStrict(values)
+	return sanitized
+}
+
+func sanitizeMCPJobResultStrict(values map[string]any) (map[string]any, error) {
 	if values == nil {
-		return nil
+		return nil, nil
 	}
 	encoded, err := json.Marshal(values)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var generic map[string]any
 	if err := json.Unmarshal(encoded, &generic); err != nil {
-		return nil
+		return nil, err
 	}
-	return sanitizeMCPJobResultMap(generic)
+	return sanitizeMCPJobResultMap(generic), nil
+}
+
+func encodeMCPJobResult(values map[string]any) (string, error) {
+	if len(values) == 0 {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "", fmt.Errorf("encode mcp job result: %w", err)
+	}
+	if len(encoded) > mcpJobResultMaxBytes {
+		return "", fmt.Errorf("%w: %d bytes exceeds %d bytes", ErrMCPJobResultTooLarge, len(encoded), mcpJobResultMaxBytes)
+	}
+	return string(encoded), nil
 }
 
 func sanitizeMCPJobResultMap(values map[string]any) map[string]any {

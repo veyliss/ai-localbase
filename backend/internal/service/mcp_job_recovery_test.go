@@ -525,6 +525,70 @@ func TestMCPJobServiceGracefulShutdownReleasesLeaseForNextRestart(t *testing.T) 
 	}
 }
 
+func TestMCPJobServiceGracefulShutdownReleasesTrackedStagingLease(t *testing.T) {
+	root := t.TempDir()
+	config := durableMCPTestConfig(root)
+	store, err := NewMCPJobStore(filepath.Join(root, "mcp-jobs.db"))
+	if err != nil {
+		t.Fatalf("create job store: %v", err)
+	}
+	service := NewAppServiceWithJobStore(nil, NewAppStateStore(config.StateFile), nil, config, store)
+	defer func() {
+		if err := service.ShutdownJobs(context.Background()); err != nil {
+			t.Errorf("shutdown service: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Errorf("close job store: %v", err)
+		}
+	}()
+
+	owner := AuthPrincipal{AuthType: "session", UserID: "user-staging-shutdown"}
+	staged, err := service.StageInlineUploadAs("shutdown-source.txt", []byte("source"), "test", owner)
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+	job := model.MCPJob{
+		ID:          "job-staging-shutdown",
+		Type:        "import",
+		Status:      "queued",
+		Summary:     "等待执行",
+		Resumable:   true,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		OwnerUserID: owner.UserID,
+	}
+	ok, err := service.registerMCPJobWithDescriptor(job, func() {}, nil, mcpJobDescriptor{
+		Version:  mcpJobDescriptorVersion,
+		Type:     "import",
+		UploadID: staged.ID,
+		FileName: staged.FileName,
+	})
+	if err != nil || !ok {
+		t.Fatalf("register job: ok=%t err=%v", ok, err)
+	}
+	service.mcpJobWG.Done()
+
+	leaseOwner := service.mcpStagingLeaseOwner(job.ID)
+	claimed, err := service.staging.ClaimWithLeaseAs(staged.ID, owner, leaseOwner, mcpJobLeaseDuration)
+	if err != nil {
+		t.Fatalf("claim staged upload: %v", err)
+	}
+	service.trackMCPStagingLease(job.ID, staged.ID, leaseOwner, claimed.ProcessingAttempt)
+
+	service.releaseMCPJobLease(job.ID)
+	released, err := service.staging.Get(staged.ID)
+	if err != nil {
+		t.Fatalf("read released staged upload: %v", err)
+	}
+	if released.Status != stagedUploadStatusStaged || released.ProcessingOwner != "" {
+		t.Fatalf("expected staged upload lease to be released, got %+v", released)
+	}
+
+	if _, err := service.staging.ClaimWithLeaseAs(staged.ID, owner, "next-worker", time.Minute); err != nil {
+		t.Fatalf("expected next worker to claim released upload immediately: %v", err)
+	}
+}
+
 func TestMCPJobServiceExplicitCancellationIsNotRecoverable(t *testing.T) {
 	root := t.TempDir()
 	config := durableMCPTestConfig(root)
@@ -795,6 +859,236 @@ func TestMCPBatchRecoveryConvergesAfterConsumedUpload(t *testing.T) {
 	}
 	if _, err := second.staging.Get(staged.ID); err == nil {
 		t.Fatal("expected consumed upload to remain unavailable after batch recovery")
+	}
+}
+
+func TestMCPBatchRecoveryRecreatesMissingCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	config := durableMCPTestConfig(root)
+	store, err := NewMCPJobStore(filepath.Join(root, "mcp-jobs.db"))
+	if err != nil {
+		t.Fatalf("create job store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close job store: %v", err)
+		}
+	}()
+
+	service := NewAppService(nil, NewAppStateStore(config.StateFile), nil, config)
+	service.mcpJobStore = store
+	owner := AuthPrincipal{AuthType: "session", UserID: "missing-checkpoint-owner"}
+	kbID, err := service.ResolveKnowledgeBaseID("")
+	if err != nil {
+		t.Fatalf("resolve knowledge base: %v", err)
+	}
+	staged, err := service.StageInlineUploadAs("missing-checkpoint.txt", []byte("\n"), "test", owner)
+	if err != nil {
+		t.Fatalf("stage batch upload: %v", err)
+	}
+
+	jobID := "job-missing-checkpoint"
+	now := time.Now().UTC()
+	job := model.MCPJob{
+		ID:          jobID,
+		Type:        "batch-index",
+		Status:      "queued",
+		Summary:     "等待恢复",
+		Retryable:   true,
+		Resumable:   true,
+		CreatedAt:   now.Format(time.RFC3339Nano),
+		UpdatedAt:   now.Format(time.RFC3339Nano),
+		OwnerUserID: owner.UserID,
+	}
+	descriptor := mcpJobDescriptor{
+		Version:         mcpJobDescriptorVersion,
+		Type:            "batch-index",
+		KnowledgeBaseID: kbID,
+		UploadIDs:       []string{staged.ID},
+		Concurrency:     1,
+	}
+	if err := store.Create(mcpJobStoreRecord{Job: job, Descriptor: descriptor}); err != nil {
+		t.Fatalf("create parent job without checkpoint: %v", err)
+	}
+	claimed, ok, err := store.Claim(jobID, "checkpoint-worker", time.Minute, now)
+	if err != nil || !ok {
+		t.Fatalf("claim parent job: ok=%t err=%v", ok, err)
+	}
+	lease := mcpJobLease{Owner: claimed.LeaseOwner, Attempt: claimed.Job.Attempt, ExpiresAt: claimed.LeaseExpiresAt}
+	service.mcpJobMu.Lock()
+	service.mcpJobs[jobID] = claimed.Job
+	service.mcpJobDescriptors[jobID] = claimed.Descriptor
+	service.mcpJobLeases[jobID] = lease
+	service.mcpJobMu.Unlock()
+
+	service.runBatchIndexJobWithLease(context.Background(), jobID, kbID, []string{staged.ID}, 1, owner, lease)
+
+	record, found, err := store.Get(jobID)
+	if err != nil || !found {
+		t.Fatalf("load recovered parent job: found=%t err=%v", found, err)
+	}
+	if record.Job.Status != "succeeded" {
+		t.Fatalf("expected missing-checkpoint recovery to complete, got %+v", record.Job)
+	}
+	items, err := store.ListItems(jobID)
+	if err != nil {
+		t.Fatalf("list recreated checkpoint: %v", err)
+	}
+	if len(items) != 1 || items[0].Status != mcpJobItemSucceeded || items[0].DocumentID == "" {
+		t.Fatalf("expected recreated checkpoint to be successful, got %+v", items)
+	}
+}
+
+func TestMCPBatchCheckpointRecoveryIsFencedAfterWorkerTakeover(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	now := time.Now().UTC()
+	jobID := "job-checkpoint-takeover"
+	record := testMCPJobRecord(jobID, now)
+	record.Job.Type = "batch-index"
+	record.Descriptor = mcpJobDescriptor{Version: mcpJobDescriptorVersion, Type: "batch-index", UploadIDs: []string{"upload-checkpoint"}}
+	if err := store.Create(record); err != nil {
+		t.Fatalf("create parent job: %v", err)
+	}
+	claimedA, ok, err := store.Claim(jobID, "worker-a", time.Nanosecond, now)
+	if err != nil || !ok {
+		t.Fatalf("claim worker-a: ok=%t err=%v", ok, err)
+	}
+	claimedB, ok, err := store.Claim(jobID, "worker-b", time.Minute, now.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim worker-b after expiry: ok=%t err=%v", ok, err)
+	}
+	leaseA := mcpJobLease{Owner: claimedA.LeaseOwner, Attempt: claimedA.Job.Attempt, ExpiresAt: claimedA.LeaseExpiresAt}
+	leaseB := mcpJobLease{Owner: claimedB.LeaseOwner, Attempt: claimedB.Job.Attempt, ExpiresAt: claimedB.LeaseExpiresAt}
+	item := mcpJobItem{JobID: jobID, UploadID: "upload-checkpoint", Status: mcpJobItemPending, Retryable: true, UpdatedAt: now.Format(time.RFC3339Nano)}
+	if err := store.CreateItems(jobID, []mcpJobItem{item}); err != nil {
+		t.Fatalf("create checkpoint: %v", err)
+	}
+
+	if ensured, err := store.EnsureItemsForLease(jobID, []mcpJobItem{{UploadID: "upload-a", Status: mcpJobItemPending, Retryable: true}}, leaseA.Owner, leaseA.Attempt); err != nil {
+		t.Fatalf("ensure stale checkpoint: %v", err)
+	} else if ensured {
+		t.Fatal("expected stale worker checkpoint creation to be rejected")
+	}
+	if ensured, err := store.EnsureItemsForLease(jobID, []mcpJobItem{{UploadID: "upload-b", Status: mcpJobItemPending, Retryable: true}}, leaseB.Owner, leaseB.Attempt); err != nil || !ensured {
+		t.Fatalf("expected current worker checkpoint creation, ensured=%t err=%v", ensured, err)
+	}
+	items, err := store.ListItems(jobID)
+	if err != nil {
+		t.Fatalf("list fenced checkpoints: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected original and current-worker checkpoints only, got %+v", items)
+	}
+}
+
+func TestMCPWorkerTakeoverRejectsAllStaleOperations(t *testing.T) {
+	root := t.TempDir()
+	config := durableMCPTestConfig(root)
+	store, err := NewMCPJobStore(filepath.Join(root, "mcp-jobs.db"))
+	if err != nil {
+		t.Fatalf("create job store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close job store: %v", err)
+		}
+	}()
+
+	service := NewAppService(nil, NewAppStateStore(config.StateFile), nil, config)
+	service.mcpJobStore = store
+	service.mcpWorkerID = "worker-b"
+	jobID := "job-worker-takeover"
+	now := time.Now().UTC()
+	record := testMCPJobRecord(jobID, now)
+	record.Job.Status = "running"
+	record.Descriptor = mcpJobDescriptor{Version: mcpJobDescriptorVersion, Type: "batch-index", UploadIDs: []string{"upload-takeover"}}
+	if err := store.Create(record); err != nil {
+		t.Fatalf("create takeover job: %v", err)
+	}
+	claimedA, ok, err := store.Claim(jobID, "worker-a", time.Nanosecond, now)
+	if err != nil || !ok {
+		t.Fatalf("claim worker-a: ok=%t err=%v", ok, err)
+	}
+	claimedB, ok, err := store.Claim(jobID, "worker-b", time.Minute, now.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claim worker-b: ok=%t err=%v", ok, err)
+	}
+	leaseA := mcpJobLease{Owner: claimedA.LeaseOwner, Attempt: claimedA.Job.Attempt, ExpiresAt: claimedA.LeaseExpiresAt}
+	leaseB := mcpJobLease{Owner: claimedB.LeaseOwner, Attempt: claimedB.Job.Attempt, ExpiresAt: claimedB.LeaseExpiresAt}
+	item := mcpJobItem{JobID: jobID, UploadID: "upload-takeover", Status: mcpJobItemPending, Retryable: true, UpdatedAt: now.Format(time.RFC3339Nano)}
+	if err := store.CreateItems(jobID, []mcpJobItem{item}); err != nil {
+		t.Fatalf("create takeover item: %v", err)
+	}
+	staged, err := service.StageInlineUploadAs("takeover.txt", []byte("takeover"), "test", AuthPrincipal{})
+	if err != nil {
+		t.Fatalf("stage takeover upload: %v", err)
+	}
+	stagingOwnerA := service.mcpStagingLeaseOwnerForLease(jobID, leaseA)
+	claimedStagedA, err := service.staging.ClaimWithLeaseAs(staged.ID, AuthPrincipal{}, stagingOwnerA, time.Minute)
+	if err != nil {
+		t.Fatalf("claim staging lease for worker-a: %v", err)
+	}
+	service.staging.mu.Lock()
+	stagingItem := service.staging.items[staged.ID]
+	stagingItem.ProcessingLeaseUntil = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339Nano)
+	service.staging.items[staged.ID] = stagingItem
+	if err := service.staging.saveManifestLocked(); err != nil {
+		service.staging.mu.Unlock()
+		t.Fatalf("persist expired staging lease: %v", err)
+	}
+	service.staging.mu.Unlock()
+	stagingOwnerB := service.mcpStagingLeaseOwnerForLease(jobID, leaseB)
+	claimedStagedB, err := service.staging.ClaimWithLeaseAs(staged.ID, AuthPrincipal{}, stagingOwnerB, time.Minute)
+	if err != nil {
+		t.Fatalf("claim staging lease for worker-b: %v", err)
+	}
+	service.trackMCPStagingLeaseForJob(jobID, staged.ID, stagingOwnerA, claimedStagedA.ProcessingAttempt, leaseA.Attempt)
+	service.trackMCPStagingLeaseForJob(jobID, staged.ID, stagingOwnerB, claimedStagedB.ProcessingAttempt, leaseB.Attempt)
+	service.mcpJobMu.Lock()
+	service.mcpJobs[jobID] = claimedB.Job
+	service.mcpJobLeases[jobID] = leaseB
+	service.mcpJobMu.Unlock()
+
+	service.updateMCPJobWithLease(jobID, leaseA, func(job *model.MCPJob) {
+		job.Summary = "旧 Worker 的写入"
+	})
+	if service.persistMCPBatchItemWithLease(item, leaseA) {
+		t.Fatal("expected stale item update to be rejected")
+	}
+	if service.renewMCPJobLeaseForLease(jobID, leaseA) {
+		t.Fatal("expected stale job heartbeat to be rejected")
+	}
+	if service.renewMCPJobStagingLeasesForLease(jobID, leaseA) {
+		t.Fatal("expected stale staging heartbeat to be rejected")
+	}
+	service.releaseMCPJobStagingLeasesForLease(jobID, leaseA)
+	if err := service.staging.ReleaseWithLeaseAttempt(staged.ID, stagingOwnerA, claimedStagedA.ProcessingAttempt); err == nil {
+		t.Fatal("expected stale staging release to be rejected")
+	}
+	if err := service.staging.MarkConsumedWithLeaseAttempt(staged.ID, stagingOwnerA, claimedStagedA.ProcessingAttempt); err == nil {
+		t.Fatal("expected stale staging consume to be rejected")
+	}
+
+	loaded, found, err := store.Get(jobID)
+	if err != nil || !found {
+		t.Fatalf("load takeover job: found=%t err=%v", found, err)
+	}
+	if loaded.Job.Summary == "旧 Worker 的写入" || loaded.LeaseOwner != leaseB.Owner || loaded.Job.Attempt != leaseB.Attempt {
+		t.Fatalf("expected current worker job state to remain intact, got %+v", loaded)
+	}
+	loadedItem, found, err := store.GetItem(jobID, item.UploadID)
+	if err != nil || !found {
+		t.Fatalf("load takeover item: found=%t err=%v", found, err)
+	}
+	if loadedItem.Status != mcpJobItemPending {
+		t.Fatalf("expected current worker item state to remain pending, got %+v", loadedItem)
+	}
+	loadedStaged, err := service.staging.get(staged.ID, true)
+	if err != nil {
+		t.Fatalf("load current staging lease: %v", err)
+	}
+	if loadedStaged.ProcessingOwner != stagingOwnerB || loadedStaged.ProcessingAttempt != claimedStagedB.ProcessingAttempt || loadedStaged.Status != stagedUploadStatusProcessing {
+		t.Fatalf("expected current staging lease to remain intact, got %+v", loadedStaged)
 	}
 }
 

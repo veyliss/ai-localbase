@@ -629,7 +629,12 @@ POST 请求必须使用 `Content-Type: application/json`。客户端可以使用
 
 ### Job 工作流工具
 
-Job 工具用于避免长任务占用一次 JSON-RPC 调用。当前实现使用内存状态，不引入新数据库；服务重启后历史 Job 会清空。
+Job 工具用于避免长任务占用一次 JSON-RPC 调用。生产启动时会将 Job 状态持久化到 SQLite，文件由 `MCP_JOB_STORE_FILE` 配置，默认是 `data/mcp-jobs.db`；Docker 部署默认位于 `/app/data/mcp-jobs.db`，必须放在持久化数据卷内。
+
+- 终态 Job 历史在服务重启后仍可查询，所有者和分页游标保持有效。
+- 服务优雅关闭或运行租约过期后，仍可恢复的 `queued` / `running` Job 会由新 Worker 接管；用户主动取消的 Job 不会自动恢复。
+- Job 只持久化任务描述和脱敏后的结果元数据，不持久化内联原文、文件路径、凭据或完整样本。结果超过 128 KB 或无法序列化时，任务会进入 `failed`，错误码为 `result_persistence_failed`，不会静默写入空结果。
+- 当前 Job Store 按单实例设计；多个后端副本不能共享同一个 SQLite 写入文件。
 
 统一 Job 返回结构：
 

@@ -29,6 +29,13 @@ func TestEnrichDocumentGovernanceAddsSourceVersionAndChecksum(t *testing.T) {
 	}
 }
 
+func TestEnrichDocumentGovernanceNormalizesDocumentName(t *testing.T) {
+	document := enrichDocumentGovernance(model.Document{Name: `/Users/alice/uploads/guide.md`})
+	if document.Name != "guide.md" {
+		t.Fatalf("expected document name to be reduced to a basename, got %q", document.Name)
+	}
+}
+
 func TestVerifyDocumentSourceDetectsChangedContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notes.txt")
 	if err := os.WriteFile(path, []byte("第一版"), 0o600); err != nil {

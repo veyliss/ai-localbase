@@ -49,11 +49,14 @@ const (
 	conversationScopeVersion      = 1
 	defaultKnowledgeTemperature   = 0.1
 	maxKnowledgeTemperature       = 0.5
+	mcpJobStagingLeaseDuration    = 15 * time.Second
+	mcpJobStagingLeaseWaitTimeout = 2 * mcpJobLeaseDuration
 )
 
 var (
 	ErrConversationScopeMismatch      = errors.New("conversation scope mismatch")
 	ErrConversationScopeUpgradeNeeded = errors.New("legacy conversation scope is not trusted")
+	ErrMCPJobLeaseLost                = errors.New("mcp job lease is no longer owned by this worker")
 )
 
 func normalizeServiceContext(ctx context.Context) context.Context {
@@ -88,6 +91,7 @@ type AppService struct {
 	mcpJobRetrying        map[string]bool
 	mcpJobDescriptors     map[string]mcpJobDescriptor
 	mcpJobLeases          map[string]mcpJobLease
+	mcpJobStagingLeases   map[string]map[string]mcpStagingLease
 	mcpJobStore           *MCPJobStore
 	mcpWorkerID           string
 	mcpJobLifecycleMu     sync.Mutex
@@ -118,6 +122,14 @@ type mcpJobLease struct {
 	Owner     string
 	Attempt   int
 	ExpiresAt string
+}
+
+type mcpJobLeaseContextKey struct{}
+
+type mcpStagingLease struct {
+	Owner      string
+	Attempt    int
+	JobAttempt int
 }
 
 // MCPJobStoreHealth is deliberately limited to operational counters. It does
@@ -237,6 +249,7 @@ func NewAppServiceWithJobStore(qdrant *QdrantService, store *AppStateStore, chat
 		mcpJobRetrying:      map[string]bool{},
 		mcpJobDescriptors:   map[string]mcpJobDescriptor{},
 		mcpJobLeases:        map[string]mcpJobLease{},
+		mcpJobStagingLeases: map[string]map[string]mcpStagingLease{},
 		mcpJobStore:         jobStore,
 		mcpWorkerID:         util.NextID("mcp-worker"),
 		mcpJobRecoveryStop:  make(chan struct{}),
@@ -563,6 +576,19 @@ func (s *AppService) GetMCPJobStoreHealth() MCPJobStoreHealth {
 	return health
 }
 
+// UploadStagingManifestLoadError reports whether durable staged uploads were
+// restored successfully. Callers should expose only the readiness state, not
+// the underlying path or parser error.
+func (s *AppService) UploadStagingManifestLoadError() error {
+	if s == nil {
+		return fmt.Errorf("app service is nil")
+	}
+	if s.staging == nil {
+		return fmt.Errorf("upload staging service is not configured")
+	}
+	return s.staging.ManifestHealth()
+}
+
 func (s *AppService) recordMCPJobPersistenceFailure() {
 	if s == nil {
 		return
@@ -686,6 +712,18 @@ func (s *AppService) RegisterStagedUploadAs(ctx context.Context, uploadID, knowl
 }
 
 func (s *AppService) registerStagedUploadAs(ctx context.Context, uploadID, knowledgeBaseID, fileName string, owner AuthPrincipal, leaseOwner, expectedChecksum string) (model.Document, error) {
+	return s.registerStagedUploadAsForJob(ctx, uploadID, knowledgeBaseID, fileName, owner, "", leaseOwner, expectedChecksum)
+}
+
+func (s *AppService) registerStagedUploadAsForJob(ctx context.Context, uploadID, knowledgeBaseID, fileName string, owner AuthPrincipal, jobID, leaseOwner, expectedChecksum string) (model.Document, error) {
+	lease, enforceLease := mcpJobLeaseFromContext(ctx)
+	if !enforceLease && strings.TrimSpace(jobID) != "" {
+		lease, enforceLease = s.currentMCPJobLease(jobID)
+	}
+	return s.registerStagedUploadAsForJobWithLease(ctx, uploadID, knowledgeBaseID, fileName, owner, jobID, leaseOwner, expectedChecksum, lease, enforceLease)
+}
+
+func (s *AppService) registerStagedUploadAsForJobWithLease(ctx context.Context, uploadID, knowledgeBaseID, fileName string, owner AuthPrincipal, jobID, leaseOwner, expectedChecksum string, lease mcpJobLease, enforceLease bool) (model.Document, error) {
 	if s == nil || s.staging == nil {
 		return model.Document{}, fmt.Errorf("upload staging service is not configured")
 	}
@@ -697,37 +735,71 @@ func (s *AppService) registerStagedUploadAs(ctx context.Context, uploadID, knowl
 	if err != nil {
 		return model.Document{}, err
 	}
-	staged, err := s.staging.ClaimWithLeaseAs(uploadID, owner, leaseOwner, defaultStagedProcessingLease)
+	if enforceLease {
+		if err := s.ensureMCPJobLease(jobID, lease); err != nil {
+			return model.Document{}, err
+		}
+		if strings.TrimSpace(leaseOwner) == "" {
+			leaseOwner = s.mcpStagingLeaseOwnerForLease(jobID, lease)
+		}
+	}
+	leaseDuration := defaultStagedProcessingLease
+	if strings.TrimSpace(jobID) != "" {
+		// A staged source should become reclaimable before the parent job's lease.
+		// The retry loop below also handles uploads claimed just before a crash.
+		leaseDuration = mcpJobStagingLeaseDuration
+	}
+	staged, err := s.claimMCPStagedUpload(ctx, uploadID, owner, leaseOwner, leaseDuration)
 	if err != nil {
 		return model.Document{}, err
 	}
+	stagingAttempt := staged.ProcessingAttempt
+	if strings.TrimSpace(jobID) != "" {
+		s.trackMCPStagingLeaseForJob(jobID, staged.ID, leaseOwner, stagingAttempt, lease.Attempt)
+		defer s.forgetMCPStagingLeaseForJob(jobID, staged.ID, leaseOwner, stagingAttempt, lease.Attempt)
+	}
+	if enforceLease {
+		if err := s.ensureMCPJobLease(jobID, lease); err != nil {
+			_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
+			return model.Document{}, err
+		}
+	}
 	if expected := strings.ToLower(strings.TrimSpace(expectedChecksum)); expected != "" && !strings.EqualFold(strings.TrimSpace(staged.SHA256), expected) {
-		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
 		return model.Document{}, fmt.Errorf("staged upload checksum metadata mismatch")
 	}
 	if err := ctx.Err(); err != nil {
-		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
 		return model.Document{}, err
 	}
 	if existing, found, findErr := s.findDocumentByChecksum(resolvedKnowledgeBaseID, staged.SHA256); findErr != nil {
-		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
 		return model.Document{}, findErr
 	} else if found && isIndexedDocumentStatus(existing.Status) {
-		if err := s.staging.MarkConsumedWithLease(staged.ID, leaseOwner); err != nil {
+		if err := s.staging.MarkConsumedWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt); err != nil {
 			log.Printf("failed to mark already indexed staged upload consumed: %v", err)
-		} else if err := s.staging.Delete(uploadID); err != nil {
-			log.Printf("failed to remove already indexed staged upload: %v", err)
+		} else {
+			s.forgetMCPStagingLeaseForJob(jobID, staged.ID, leaseOwner, stagingAttempt, lease.Attempt)
+			if err := s.staging.Delete(uploadID); err != nil {
+				log.Printf("failed to remove already indexed staged upload: %v", err)
+			}
 		}
 		return existing, nil
 	}
-	permanentPath, err := s.staging.CopyToWithLease(staged.ID, s.serverConfig.UploadDir, leaseOwner)
+	permanentPath, err := s.staging.CopyToWithLeaseAttempt(staged.ID, s.serverConfig.UploadDir, leaseOwner, stagingAttempt)
 	if err != nil {
-		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
 		return model.Document{}, err
 	}
-	documentName := strings.TrimSpace(fileName)
-	if documentName == "" {
-		documentName = staged.FileName
+	documentName := staged.FileName
+	if strings.TrimSpace(fileName) != "" {
+		var normalizeErr error
+		documentName, normalizeErr = util.NormalizeFilename(fileName)
+		if normalizeErr != nil {
+			_ = os.Remove(permanentPath)
+			_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
+			return model.Document{}, normalizeErr
+		}
 	}
 	document := model.Document{
 		ID:              util.NextID("doc"),
@@ -745,29 +817,47 @@ func (s *AppService) registerStagedUploadAs(ctx context.Context, uploadID, knowl
 	}
 	if err := ctx.Err(); err != nil {
 		_ = os.Remove(permanentPath)
-		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
 		return model.Document{}, err
+	}
+	if enforceLease {
+		if err := s.ensureMCPJobLease(jobID, lease); err != nil {
+			_ = os.Remove(permanentPath)
+			_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
+			return model.Document{}, err
+		}
 	}
 	uploaded, err := s.IndexDocumentWithContext(ctx, document)
 	if err != nil {
 		var duplicateErr *DuplicateDocumentError
 		if errors.As(err, &duplicateErr) && isIndexedDocumentStatus(duplicateErr.Existing.Status) && batchDocumentMatchesChecksum(duplicateErr.Existing, staged.SHA256) {
-			if markErr := s.staging.MarkConsumedWithLease(uploadID, leaseOwner); markErr != nil {
+			if markErr := s.staging.MarkConsumedWithLeaseAttempt(uploadID, leaseOwner, stagingAttempt); markErr != nil {
 				log.Printf("failed to mark duplicate staged upload consumed: %v", markErr)
-			} else if deleteErr := s.staging.Delete(uploadID); deleteErr != nil {
-				log.Printf("failed to remove duplicate staged upload: %v", deleteErr)
+			} else {
+				s.forgetMCPStagingLeaseForJob(jobID, staged.ID, leaseOwner, stagingAttempt, lease.Attempt)
+				if deleteErr := s.staging.Delete(uploadID); deleteErr != nil {
+					log.Printf("failed to remove duplicate staged upload: %v", deleteErr)
+				}
 			}
 			_ = os.Remove(permanentPath)
 			return duplicateErr.Existing, nil
 		}
 		_ = os.Remove(permanentPath)
-		_ = s.staging.ReleaseWithLease(staged.ID, leaseOwner)
+		_ = s.staging.ReleaseWithLeaseAttempt(staged.ID, leaseOwner, stagingAttempt)
 		return model.Document{}, err
 	}
-	if err := s.staging.MarkConsumedWithLease(uploadID, leaseOwner); err != nil {
+	if enforceLease {
+		if err := s.ensureMCPJobLease(jobID, lease); err != nil {
+			return model.Document{}, err
+		}
+	}
+	if err := s.staging.MarkConsumedWithLeaseAttempt(uploadID, leaseOwner, stagingAttempt); err != nil {
 		log.Printf("failed to mark staged upload consumed: %v", err)
-	} else if err := s.staging.Delete(uploadID); err != nil {
-		log.Printf("failed to remove consumed staged upload: %v", err)
+	} else {
+		s.forgetMCPStagingLeaseForJob(jobID, staged.ID, leaseOwner, stagingAttempt, lease.Attempt)
+		if err := s.staging.Delete(uploadID); err != nil {
+			log.Printf("failed to remove consumed staged upload: %v", err)
+		}
 	}
 	return uploaded, nil
 }
@@ -1240,7 +1330,7 @@ func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 			s.runBatchIndexJob(workerCtx, job.ID, knowledgeBaseID, ids, concurrency, owner)
 		})
 	}()
-	return job, nil
+	return publicMCPJob(job), nil
 }
 
 func (s *AppService) prepareMCPBatchItems(knowledgeBaseID string, uploadIDs []string, owner AuthPrincipal) ([]mcpJobItem, error) {
@@ -1294,19 +1384,23 @@ func (s *AppService) retryableMCPBatchUploadIDs(jobID string, fallback []string)
 }
 
 func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseID string, uploadIDs []string, concurrency int, owner AuthPrincipal) {
+	s.runBatchIndexJobWithLease(ctx, jobID, knowledgeBaseID, uploadIDs, concurrency, owner, s.mcpJobLeaseForWorker(ctx, jobID))
+}
+
+func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowledgeBaseID string, uploadIDs []string, concurrency int, owner AuthPrincipal, lease mcpJobLease) {
 	if len(uploadIDs) == 0 {
-		s.completeMCPJob(jobID, "failed", 100, "批量索引任务失败。", nil, "uploadIds cannot be empty")
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "批量索引任务失败。", nil, "uploadIds cannot be empty")
 		return
 	}
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 5
 		job.Summary = fmt.Sprintf("正在索引 %d 个文档。", len(uploadIDs))
 	})
 
-	itemByUploadID, err := s.loadMCPBatchItems(jobID, uploadIDs)
+	itemByUploadID, err := s.loadMCPBatchItemsForWorker(jobID, uploadIDs, owner, lease)
 	if err != nil {
-		s.completeMCPJob(jobID, "failed", 100, "批量索引任务失败。", nil, err.Error())
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "批量索引任务失败。", nil, err.Error())
 		return
 	}
 
@@ -1332,7 +1426,7 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 			item.ErrorCode = ""
 			item.Retryable = true
 			itemByUploadID[uploadID] = item
-			s.persistMCPBatchItem(item)
+			s.persistMCPBatchItemWithLease(item, lease)
 		}
 		if item.Status == mcpJobItemFailed && !item.Retryable {
 			resultsByUploadID[uploadID] = mcpBatchFailureResult(uploadID, item)
@@ -1346,7 +1440,7 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 		}
 		pendingUploadIDs = append(pendingUploadIDs, uploadID)
 	}
-	s.updateMCPBatchProgress(jobID, completed, len(uploadIDs))
+	s.updateMCPBatchProgressWithLease(jobID, completed, len(uploadIDs), lease)
 
 	type result struct {
 		uploadID string
@@ -1366,12 +1460,12 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 			case <-ctx.Done():
 				item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
 				if item.Status == mcpJobItemCancelled {
-					s.persistMCPBatchItem(item)
+					s.persistMCPBatchItemWithLease(item, lease)
 				}
 				results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
-				if !s.markMCPBatchItemRunning(item) {
+				if !s.markMCPBatchItemRunningWithLease(item, lease) {
 					item.Status = mcpJobItemFailed
 					item.ErrorCode = "job_lease_lost"
 					item.Error = "任务租约已变更，当前 Worker 未获得写入权限。"
@@ -1379,7 +1473,8 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
 					return
 				}
-				document, err := s.registerStagedUploadAs(ctx, id, knowledgeBaseID, "", owner, jobID, item.Checksum)
+				leaseOwner := s.mcpStagingLeaseOwnerForLease(jobID, lease)
+				document, err := s.registerStagedUploadAsForJob(ctx, id, knowledgeBaseID, "", owner, jobID, leaseOwner, item.Checksum)
 				if err != nil {
 					var duplicateErr *DuplicateDocumentError
 					if errors.As(err, &duplicateErr) {
@@ -1389,7 +1484,7 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 							item.Error = ""
 							item.ErrorCode = ""
 							item.Retryable = false
-							s.persistMCPBatchItem(item)
+							s.persistMCPBatchItemWithLease(item, lease)
 							results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, duplicate), ok: true}
 							return
 						}
@@ -1405,14 +1500,14 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 						item.Error = ""
 						item.ErrorCode = ""
 						item.Retryable = false
-						s.persistMCPBatchItem(item)
+						s.persistMCPBatchItemWithLease(item, lease)
 						results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, completedDocument), ok: true}
 						return
 					}
 					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 						item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
 						if item.Status == mcpJobItemCancelled {
-							s.persistMCPBatchItem(item)
+							s.persistMCPBatchItemWithLease(item, lease)
 						}
 						results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
 						return
@@ -1420,7 +1515,7 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 					item.Status = mcpJobItemFailed
 					item.ErrorCode, item.Error = PublicIndexFailure(err)
 					item.Retryable = mcpBatchItemRetryable(item.ErrorCode)
-					s.persistMCPBatchItem(item)
+					s.persistMCPBatchItemWithLease(item, lease)
 					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
 					return
 				}
@@ -1430,7 +1525,7 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 				item.Error = ""
 				item.ErrorCode = ""
 				item.Retryable = false
-				s.persistMCPBatchItem(item)
+				s.persistMCPBatchItemWithLease(item, lease)
 				results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, document), ok: true}
 			}
 		}(uploadID)
@@ -1446,7 +1541,7 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 			successful++
 		}
 		completed++
-		s.updateMCPBatchProgress(jobID, completed, len(uploadIDs))
+		s.updateMCPBatchProgressWithLease(jobID, completed, len(uploadIDs), lease)
 	}
 
 	items := make([]map[string]any, 0, len(uploadIDs))
@@ -1466,17 +1561,21 @@ func (s *AppService) runBatchIndexJob(ctx context.Context, jobID, knowledgeBaseI
 		"total": len(uploadIDs), "successful": successful, "failed": failed, "results": items,
 	}
 	if ctx.Err() != nil {
-		s.completeMCPJob(jobID, "cancelled", 0, "批量索引任务已取消。", resultData, "")
+		s.completeMCPJobWithLease(jobID, lease, "cancelled", 0, "批量索引任务已取消。", resultData, "")
 		return
 	}
 	status := "succeeded"
 	if failed > 0 {
 		status = "failed"
 	}
-	s.completeMCPJob(jobID, status, 100, fmt.Sprintf("批量索引完成，成功 %d 个，失败 %d 个。", successful, failed), resultData, "")
+	s.completeMCPJobWithLease(jobID, lease, status, 100, fmt.Sprintf("批量索引完成，成功 %d 个，失败 %d 个。", successful, failed), resultData, "")
 }
 
 func (s *AppService) loadMCPBatchItems(jobID string, uploadIDs []string) (map[string]mcpJobItem, error) {
+	return s.loadMCPBatchItemsForWorker(jobID, uploadIDs, AuthPrincipal{}, s.mcpJobLeaseForWorker(context.Background(), jobID))
+}
+
+func (s *AppService) loadMCPBatchItemsForWorker(jobID string, uploadIDs []string, owner AuthPrincipal, lease mcpJobLease) (map[string]mcpJobItem, error) {
 	items := make(map[string]mcpJobItem, len(uploadIDs))
 	if s == nil || s.mcpJobStore == nil {
 		for _, uploadID := range uploadIDs {
@@ -1491,29 +1590,63 @@ func (s *AppService) loadMCPBatchItems(jobID string, uploadIDs []string) (map[st
 	for _, item := range persisted {
 		items[item.UploadID] = item
 	}
+	missing := make([]mcpJobItem, 0)
 	for _, uploadID := range uploadIDs {
 		if _, exists := items[uploadID]; !exists {
-			items[uploadID] = mcpJobItem{JobID: jobID, UploadID: uploadID, Status: mcpJobItemPending, Retryable: true}
+			item := mcpJobItem{JobID: jobID, UploadID: uploadID, Status: mcpJobItemPending, Retryable: true, UpdatedAt: util.NowRFC3339()}
+			if s.staging != nil {
+				if staged, stageErr := s.staging.GetAs(uploadID, owner); stageErr == nil {
+					item.FileName = staged.FileName
+					item.Checksum = staged.SHA256
+				} else {
+					item.Status = mcpJobItemFailed
+					item.ErrorCode, item.Error = PublicIndexFailure(stageErr)
+					item.Retryable = mcpBatchItemRetryable(item.ErrorCode)
+				}
+			}
+			items[uploadID] = item
+			missing = append(missing, item)
+		}
+	}
+	if len(missing) > 0 && s.mcpJobStore != nil {
+		var ensured bool
+		if validMCPJobLease(lease) {
+			ensured, err = s.mcpJobStore.EnsureItemsForLease(jobID, missing, lease.Owner, lease.Attempt)
+		} else {
+			err = s.mcpJobStore.EnsureItems(jobID, missing)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !ensured {
+			return nil, ErrMCPJobLeaseLost
 		}
 	}
 	return items, nil
 }
 
 func (s *AppService) markMCPBatchItemRunning(item mcpJobItem) bool {
+	lease, _ := s.currentMCPJobLease(item.JobID)
+	return s.markMCPBatchItemRunningWithLease(item, lease)
+}
+
+func (s *AppService) markMCPBatchItemRunningWithLease(item mcpJobItem, lease mcpJobLease) bool {
 	item.Status = mcpJobItemRunning
 	item.Error = ""
 	item.ErrorCode = ""
 	item.Retryable = true
-	return s.persistMCPBatchItem(item)
+	return s.persistMCPBatchItemWithLease(item, lease)
 }
 
 func (s *AppService) persistMCPBatchItem(item mcpJobItem) bool {
+	lease, _ := s.currentMCPJobLease(item.JobID)
+	return s.persistMCPBatchItemWithLease(item, lease)
+}
+
+func (s *AppService) persistMCPBatchItemWithLease(item mcpJobItem, lease mcpJobLease) bool {
 	if s == nil || s.mcpJobStore == nil {
 		return true
 	}
-	s.mcpJobMu.Lock()
-	lease := s.mcpJobLeases[item.JobID]
-	s.mcpJobMu.Unlock()
 	updated, err := s.mcpJobStore.UpdateItem(item, lease.Owner, lease.Attempt)
 	if err != nil {
 		log.Printf("failed to persist MCP job item %s/%s: %v", item.JobID, item.UploadID, err)
@@ -1528,6 +1661,11 @@ func (s *AppService) persistMCPBatchItem(item mcpJobItem) bool {
 }
 
 func (s *AppService) updateMCPBatchProgress(jobID string, completed, total int) {
+	lease, _ := s.currentMCPJobLease(jobID)
+	s.updateMCPBatchProgressWithLease(jobID, completed, total, lease)
+}
+
+func (s *AppService) updateMCPBatchProgressWithLease(jobID string, completed, total int, lease mcpJobLease) {
 	if total <= 0 {
 		return
 	}
@@ -1538,7 +1676,7 @@ func (s *AppService) updateMCPBatchProgress(jobID string, completed, total int) 
 		completed = total
 	}
 	progress := 10 + completed*85/total
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Progress = progress
 		job.Summary = fmt.Sprintf("已完成 %d/%d 个文档。", completed, total)
 	})
@@ -1805,12 +1943,16 @@ func (s *AppService) StartMCPImportJobAs(req model.MCPStartImportJobRequest, own
 		return model.MCPJob{}, fmt.Errorf("unsupported MCP job type: %s", req.JobType)
 	}
 	knowledgeBaseID := strings.TrimSpace(req.KnowledgeBaseID)
-	fileName := strings.TrimSpace(req.FileName)
 	if knowledgeBaseID == "" {
 		return model.MCPJob{}, fmt.Errorf("knowledgeBaseId is required")
 	}
-	if fileName == "" {
+	rawFileName := strings.TrimSpace(req.FileName)
+	if rawFileName == "" {
 		return model.MCPJob{}, fmt.Errorf("fileName is required")
+	}
+	fileName, err := util.NormalizeFilename(rawFileName)
+	if err != nil {
+		return model.MCPJob{}, err
 	}
 	if int64(len(req.Content)) > mcpImportJobContentLimit {
 		return model.MCPJob{}, fmt.Errorf("inline import content too large: current=%s, max=%s; please POST file stream to /api/uploads first, then call register_staged_upload", util.FormatFileSize(int64(len(req.Content))), util.FormatFileSize(mcpImportJobContentLimit))
@@ -1897,7 +2039,7 @@ func (s *AppService) StartMCPImportJobAs(req model.MCPStartImportJobRequest, own
 		})
 	}()
 
-	return job, nil
+	return publicMCPJob(job), nil
 }
 
 func (s *AppService) startMCPReindexJob(req model.MCPStartImportJobRequest, owner AuthPrincipal) (model.MCPJob, error) {
@@ -1954,29 +2096,33 @@ func (s *AppService) startMCPReindexJob(req model.MCPStartImportJobRequest, owne
 			s.runMCPReindexJob(workerCtx, job.ID, knowledgeBaseID, documentID)
 		})
 	}()
-	return job, nil
+	return publicMCPJob(job), nil
 }
 
 func (s *AppService) runMCPReindexJob(ctx context.Context, jobID, knowledgeBaseID, documentID string) {
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.runMCPReindexJobWithLease(ctx, jobID, knowledgeBaseID, documentID, s.mcpJobLeaseForWorker(ctx, jobID))
+}
+
+func (s *AppService) runMCPReindexJobWithLease(ctx context.Context, jobID, knowledgeBaseID, documentID string, lease mcpJobLease) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 10
 		job.Summary = fmt.Sprintf("正在重建文档 %s 的索引。", documentID)
 	})
 	if err := ctx.Err(); err != nil {
-		s.completeMCPJob(jobID, "cancelled", 0, "重建索引任务已取消。", nil, "")
+		s.completeMCPJobWithLease(jobID, lease, "cancelled", 0, "重建索引任务已取消。", nil, "")
 		return
 	}
 	document, err := s.ReindexDocumentWithContext(ctx, knowledgeBaseID, documentID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-			s.completeMCPJob(jobID, "cancelled", 10, "重建索引任务已取消。", nil, "")
+			s.completeMCPJobWithLease(jobID, lease, "cancelled", 10, "重建索引任务已取消。", nil, "")
 			return
 		}
-		s.completeMCPJob(jobID, "failed", 100, "重建索引任务失败。", nil, err.Error())
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "重建索引任务失败。", nil, err.Error())
 		return
 	}
-	s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("文档《%s》索引重建完成。", document.Name), map[string]any{
+	s.completeMCPJobWithLease(jobID, lease, "succeeded", 100, fmt.Sprintf("文档《%s》索引重建完成。", document.Name), map[string]any{
 		"document":        document,
 		"knowledgeBaseId": knowledgeBaseID,
 	}, "")
@@ -2026,11 +2172,15 @@ func (s *AppService) startMCPEvalDatasetJob(req model.MCPStartImportJobRequest, 
 			s.runMCPEvalDatasetJob(workerCtx, job.ID, evalRequest)
 		})
 	}()
-	return job, nil
+	return publicMCPJob(job), nil
 }
 
 func (s *AppService) runMCPEvalDatasetJob(ctx context.Context, jobID string, req model.GenerateEvalDatasetRequest) {
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.runMCPEvalDatasetJobWithLease(ctx, jobID, req, s.mcpJobLeaseForWorker(ctx, jobID))
+}
+
+func (s *AppService) runMCPEvalDatasetJobWithLease(ctx context.Context, jobID string, req model.GenerateEvalDatasetRequest, lease mcpJobLease) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 10
 		job.Summary = "正在生成评估数据集。"
@@ -2038,16 +2188,16 @@ func (s *AppService) runMCPEvalDatasetJob(ctx context.Context, jobID string, req
 	response, err := s.GenerateEvalDatasetWithContext(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-			s.completeMCPJob(jobID, "cancelled", 10, "评估数据集任务已取消。", nil, "")
+			s.completeMCPJobWithLease(jobID, lease, "cancelled", 10, "评估数据集任务已取消。", nil, "")
 			return
 		}
-		s.completeMCPJob(jobID, "failed", 100, "评估数据集任务失败。", nil, err.Error())
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "评估数据集任务失败。", nil, err.Error())
 		return
 	}
 	// The generated dataset is available through the dedicated evaluation API.
 	// A long-running Job only stores operational metadata so samples and source
 	// text are not copied into the durable job result.
-	s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("评估数据集生成完成，共 %d 条样本。", response.Count), map[string]any{
+	s.completeMCPJobWithLease(jobID, lease, "succeeded", 100, fmt.Sprintf("评估数据集生成完成，共 %d 条样本。", response.Count), map[string]any{
 		"datasetId":       response.DatasetID,
 		"knowledgeBaseId": response.KnowledgeBaseID,
 		"documentId":      response.DocumentID,
@@ -2286,6 +2436,7 @@ func mcpJobOwnerFromRecord(job model.MCPJob) AuthPrincipal {
 
 func (s *AppService) runRecoveredMCPJob(ctx context.Context, job model.MCPJob, descriptor mcpJobDescriptor, owner AuthPrincipal) {
 	descriptor = normalizeMCPJobDescriptor(descriptor, job.Type)
+	lease := s.mcpJobLeaseForWorker(ctx, job.ID)
 	switch descriptor.Type {
 	case "import":
 		s.runMCPImportJob(ctx, job.ID, descriptor, owner)
@@ -2296,7 +2447,7 @@ func (s *AppService) runRecoveredMCPJob(ctx context.Context, job model.MCPJob, d
 	case "eval-dataset":
 		s.runMCPEvalDatasetJob(ctx, job.ID, jobRequestFromMCPDescriptor(descriptor))
 	default:
-		s.completeMCPJob(job.ID, "failed", 100, "任务恢复失败。", nil, "unsupported persisted job type")
+		s.completeMCPJobWithLease(job.ID, lease, "failed", 100, "任务恢复失败。", nil, "unsupported persisted job type")
 	}
 }
 
@@ -2343,7 +2494,15 @@ func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func
 	if s == nil || run == nil {
 		return
 	}
-	workerCtx, cancel := context.WithCancel(ctx)
+	workerCtx := normalizeServiceContext(ctx)
+	lease, hasLease := s.currentMCPJobLease(jobID)
+	if hasLease {
+		// The token is captured once. A later recovery attempt may replace the
+		// jobID entry in mcpJobLeases, but it must never change this worker's
+		// authorization to write state or touch a staged source.
+		workerCtx = context.WithValue(workerCtx, mcpJobLeaseContextKey{}, lease)
+	}
+	workerCtx, cancel := context.WithCancel(workerCtx)
 	defer cancel()
 	heartbeatDone := make(chan struct{})
 	go func() {
@@ -2353,7 +2512,7 @@ func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func
 		for {
 			select {
 			case <-ticker.C:
-				if !s.renewMCPJobLease(jobID) {
+				if hasLease && (!s.renewMCPJobLeaseForLease(jobID, lease) || !s.renewMCPJobStagingLeasesForLease(jobID, lease)) {
 					cancel()
 					return
 				}
@@ -2366,7 +2525,11 @@ func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func
 	cancel()
 	<-heartbeatDone
 	if s.isMCPJobsShuttingDown() {
-		s.releaseMCPJobLease(jobID)
+		if hasLease {
+			s.releaseMCPJobLeaseForLease(jobID, lease)
+		} else {
+			s.releaseMCPJobLease(jobID)
+		}
 	}
 }
 
@@ -2379,11 +2542,90 @@ func (s *AppService) isMCPJobsShuttingDown() bool {
 	return s.mcpJobsShutdown
 }
 
-func (s *AppService) renewMCPJobLease(jobID string) bool {
+func mcpJobLeaseFromContext(ctx context.Context) (mcpJobLease, bool) {
+	if ctx == nil {
+		return mcpJobLease{}, false
+	}
+	lease, ok := ctx.Value(mcpJobLeaseContextKey{}).(mcpJobLease)
+	return lease, ok && validMCPJobLease(lease)
+}
+
+func validMCPJobLease(lease mcpJobLease) bool {
+	return strings.TrimSpace(lease.Owner) != "" && lease.Attempt > 0
+}
+
+func mcpJobLeaseMatches(left, right mcpJobLease) bool {
+	return strings.TrimSpace(left.Owner) == strings.TrimSpace(right.Owner) && left.Attempt == right.Attempt
+}
+
+func (s *AppService) currentMCPJobLease(jobID string) (mcpJobLease, bool) {
+	if s == nil {
+		return mcpJobLease{}, false
+	}
 	s.mcpJobMu.Lock()
-	lease, ok := s.mcpJobLeases[jobID]
-	s.mcpJobMu.Unlock()
-	if !ok || s.mcpJobStore == nil {
+	defer s.mcpJobMu.Unlock()
+	lease, ok := s.mcpJobLeases[strings.TrimSpace(jobID)]
+	return lease, ok
+}
+
+func (s *AppService) mcpJobLeaseForWorker(ctx context.Context, jobID string) mcpJobLease {
+	if lease, ok := mcpJobLeaseFromContext(ctx); ok {
+		return lease
+	}
+	lease, _ := s.currentMCPJobLease(jobID)
+	return lease
+}
+
+func (s *AppService) ensureMCPJobLease(jobID string, lease mcpJobLease) error {
+	if s == nil || s.mcpJobStore == nil || !validMCPJobLease(lease) {
+		return nil
+	}
+	owned, err := s.mcpJobStore.LeaseOwned(jobID, lease.Owner, lease.Attempt)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return ErrMCPJobLeaseLost
+	}
+	return nil
+}
+
+func (s *AppService) claimMCPStagedUpload(ctx context.Context, uploadID string, owner AuthPrincipal, leaseOwner string, leaseDuration time.Duration) (model.StagedUpload, error) {
+	ctx = normalizeServiceContext(ctx)
+	deadline := time.NewTimer(mcpJobStagingLeaseWaitTimeout)
+	defer deadline.Stop()
+	for {
+		staged, err := s.staging.ClaimWithLeaseAs(uploadID, owner, leaseOwner, leaseDuration)
+		if err == nil || !errors.Is(err, ErrUploadStagingBusy) {
+			return staged, err
+		}
+		wait := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !wait.Stop() {
+				<-wait.C
+			}
+			return model.StagedUpload{}, ctx.Err()
+		case <-deadline.C:
+			if !wait.Stop() {
+				<-wait.C
+			}
+			return model.StagedUpload{}, err
+		case <-wait.C:
+		}
+	}
+}
+
+func (s *AppService) renewMCPJobLease(jobID string) bool {
+	lease, ok := s.currentMCPJobLease(jobID)
+	if !ok {
+		return true
+	}
+	return s.renewMCPJobLeaseForLease(jobID, lease)
+}
+
+func (s *AppService) renewMCPJobLeaseForLease(jobID string, lease mcpJobLease) bool {
+	if s == nil || s.mcpJobStore == nil || !validMCPJobLease(lease) {
 		return true
 	}
 	renewed, err := s.mcpJobStore.RenewLease(jobID, lease.Owner, lease.Attempt, mcpJobLeaseDuration, time.Now().UTC())
@@ -2393,9 +2635,16 @@ func (s *AppService) renewMCPJobLease(jobID string) bool {
 	}
 	if renewed {
 		s.mcpJobMu.Lock()
-		lease.ExpiresAt = time.Now().UTC().Add(mcpJobLeaseDuration).Format(time.RFC3339Nano)
-		s.mcpJobLeases[jobID] = lease
-		if job, exists := s.mcpJobs[jobID]; exists {
+		if current, exists := s.mcpJobLeases[jobID]; exists && mcpJobLeaseMatches(current, lease) {
+			current.ExpiresAt = time.Now().UTC().Add(mcpJobLeaseDuration).Format(time.RFC3339Nano)
+			s.mcpJobLeases[jobID] = current
+		}
+		if current, exists := s.mcpJobLeases[jobID]; exists && mcpJobLeaseMatches(current, lease) {
+			job, jobExists := s.mcpJobs[jobID]
+			if !jobExists {
+				s.mcpJobMu.Unlock()
+				return renewed
+			}
 			job.LastHeartbeatAt = util.NowRFC3339()
 			s.mcpJobs[jobID] = job
 		}
@@ -2405,15 +2654,34 @@ func (s *AppService) renewMCPJobLease(jobID string) bool {
 }
 
 func (s *AppService) releaseMCPJobLease(jobID string) {
-	if s == nil || s.mcpJobStore == nil {
+	lease, ok := s.currentMCPJobLease(jobID)
+	if !ok {
+		return
+	}
+	s.releaseMCPJobLeaseForLease(jobID, lease)
+}
+
+func (s *AppService) releaseMCPJobLeaseForLease(jobID string, expectedLease mcpJobLease) {
+	if s == nil {
 		return
 	}
 	s.mcpJobMu.Lock()
 	lease, ok := s.mcpJobLeases[jobID]
+	if ok && validMCPJobLease(expectedLease) && !mcpJobLeaseMatches(lease, expectedLease) {
+		s.mcpJobMu.Unlock()
+		return
+	}
 	job, jobOK := s.mcpJobs[jobID]
 	descriptor := s.mcpJobDescriptors[jobID]
 	s.mcpJobMu.Unlock()
 	if !ok || !jobOK {
+		return
+	}
+	// A graceful shutdown gives the next worker an immediately reusable job
+	// lease. Release the matching staged-upload leases as well, otherwise the
+	// job can be recoverable while its source remains fenced for 30 seconds.
+	s.releaseMCPJobStagingLeasesForLease(jobID, expectedLease)
+	if s.mcpJobStore == nil {
 		return
 	}
 	if !isMCPJobTerminalStatus(job.Status) {
@@ -2440,6 +2708,7 @@ func (s *AppService) releaseMCPJobLease(jobID string) {
 	}
 	delete(s.mcpJobLeases, jobID)
 	delete(s.mcpJobCancels, jobID)
+	delete(s.mcpJobStagingLeases, jobID)
 	s.mcpJobMu.Unlock()
 }
 
@@ -2459,7 +2728,11 @@ func (s *AppService) releaseMCPJobLeases() {
 }
 
 func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, descriptor mcpJobDescriptor, owner AuthPrincipal) {
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.runMCPImportJobWithLease(ctx, jobID, descriptor, owner, s.mcpJobLeaseForWorker(ctx, jobID))
+}
+
+func (s *AppService) runMCPImportJobWithLease(ctx context.Context, jobID string, descriptor mcpJobDescriptor, owner AuthPrincipal, lease mcpJobLease) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 10
 		job.Summary = fmt.Sprintf("正在导入《%s》。", descriptor.FileName)
@@ -2467,42 +2740,43 @@ func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, descript
 
 	select {
 	case <-ctx.Done():
-		s.completeMCPJob(jobID, "cancelled", 0, "导入任务已取消。", nil, "")
+		s.completeMCPJobWithLease(jobID, lease, "cancelled", 0, "导入任务已取消。", nil, "")
 		return
 	case <-time.After(50 * time.Millisecond):
 	}
 
 	if strings.TrimSpace(descriptor.UploadID) == "" {
-		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, "content is required")
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "导入任务失败。", nil, "content is required")
 		return
 	}
 	if err := validateMCPJobTextFileName(descriptor.FileName, s.GetConfig()); err != nil {
-		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, err.Error())
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "导入任务失败。", nil, err.Error())
 		return
 	}
 
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Progress = 45
 		job.Summary = "正在校验暂存文件。"
 	})
 	select {
 	case <-ctx.Done():
-		s.completeMCPJob(jobID, "cancelled", 50, "导入任务已取消。", nil, "")
+		s.completeMCPJobWithLease(jobID, lease, "cancelled", 50, "导入任务已取消。", nil, "")
 		return
 	default:
 	}
 
-	s.updateMCPJob(jobID, func(job *model.MCPJob) {
+	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Progress = 70
 		job.Summary = "正在注册并索引文档。"
 	})
 	select {
 	case <-ctx.Done():
-		s.completeMCPJob(jobID, "cancelled", 70, "导入任务已取消。", nil, "")
+		s.completeMCPJobWithLease(jobID, lease, "cancelled", 70, "导入任务已取消。", nil, "")
 		return
 	default:
 	}
-	uploaded, err := s.registerStagedUploadAs(ctx, descriptor.UploadID, descriptor.KnowledgeBaseID, descriptor.FileName, owner, jobID, descriptor.Checksum)
+	leaseOwner := s.mcpStagingLeaseOwnerForLease(jobID, lease)
+	uploaded, err := s.registerStagedUploadAsForJob(ctx, descriptor.UploadID, descriptor.KnowledgeBaseID, descriptor.FileName, owner, jobID, leaseOwner, descriptor.Checksum)
 	if err != nil {
 		// A graceful shutdown can land after indexing has committed the document
 		// but before the job reaches its terminal state. In that window the
@@ -2510,7 +2784,7 @@ func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, descript
 		// document instead of replaying a now-missing upload.
 		if checksum := strings.TrimSpace(descriptor.Checksum); checksum != "" {
 			if existing, found, findErr := s.findDocumentByChecksum(descriptor.KnowledgeBaseID, checksum); findErr == nil && found && isIndexedDocumentStatus(existing.Status) {
-				s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("文档《%s》导入完成。", existing.Name), map[string]any{
+				s.completeMCPJobWithLease(jobID, lease, "succeeded", 100, fmt.Sprintf("文档《%s》导入完成。", existing.Name), map[string]any{
 					"uploaded":        existing,
 					"knowledgeBaseId": existing.KnowledgeBaseID,
 					"stagedUploadId":  descriptor.UploadID,
@@ -2518,16 +2792,16 @@ func (s *AppService) runMCPImportJob(ctx context.Context, jobID string, descript
 				return
 			}
 		}
-		s.completeMCPJob(jobID, "failed", 100, "导入任务失败。", nil, err.Error())
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "导入任务失败。", nil, err.Error())
 		return
 	}
 	select {
 	case <-ctx.Done():
-		s.completeMCPJob(jobID, "cancelled", 100, "导入任务已取消。", nil, "")
+		s.completeMCPJobWithLease(jobID, lease, "cancelled", 100, "导入任务已取消。", nil, "")
 		return
 	default:
 	}
-	s.completeMCPJob(jobID, "succeeded", 100, fmt.Sprintf("文档《%s》导入完成。", uploaded.Name), map[string]any{
+	s.completeMCPJobWithLease(jobID, lease, "succeeded", 100, fmt.Sprintf("文档《%s》导入完成。", uploaded.Name), map[string]any{
 		"uploaded":        uploaded,
 		"knowledgeBaseId": uploaded.KnowledgeBaseID,
 		"stagedUploadId":  descriptor.UploadID,
@@ -2711,6 +2985,7 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		s.mcpJobs[jobID] = job
 		delete(s.mcpJobCancels, jobID)
 		delete(s.mcpJobLeases, jobID)
+		delete(s.mcpJobStagingLeases, jobID)
 	}
 	s.mcpJobMu.Unlock()
 	if cancel != nil {
@@ -2759,11 +3034,25 @@ func mcpJobOwnerMatches(job model.MCPJob, owner AuthPrincipal) bool {
 }
 
 func (s *AppService) updateMCPJob(jobID string, update func(*model.MCPJob)) {
+	lease, _ := s.currentMCPJobLease(jobID)
+	s.updateMCPJobWithLease(jobID, lease, update)
+}
+
+func (s *AppService) updateMCPJobWithLease(jobID string, expectedLease mcpJobLease, update func(*model.MCPJob)) {
+	if update == nil {
+		return
+	}
 	s.mcpJobMu.Lock()
 	defer s.mcpJobMu.Unlock()
 	job, ok := s.mcpJobs[jobID]
 	if !ok {
 		return
+	}
+	if validMCPJobLease(expectedLease) {
+		current, exists := s.mcpJobLeases[jobID]
+		if !exists || !mcpJobLeaseMatches(current, expectedLease) {
+			return
+		}
 	}
 	if isMCPJobTerminalStatus(job.Status) {
 		return
@@ -2776,7 +3065,7 @@ func (s *AppService) updateMCPJob(jobID string, update func(*model.MCPJob)) {
 		job.NextAction = ""
 	}
 	job.UpdatedAt = util.NowRFC3339()
-	if !s.persistMCPJobLocked(job, false) {
+	if !s.persistMCPJobLockedWithLease(job, false, expectedLease) {
 		return
 	}
 	s.mcpJobs[jobID] = job
@@ -2804,9 +3093,218 @@ func (s *AppService) ensureMCPJobMapsLocked() {
 	if s.mcpJobLeases == nil {
 		s.mcpJobLeases = map[string]mcpJobLease{}
 	}
+	if s.mcpJobStagingLeases == nil {
+		s.mcpJobStagingLeases = map[string]map[string]mcpStagingLease{}
+	}
+}
+
+func (s *AppService) trackMCPStagingLease(jobID, uploadID, owner string, attempt int) {
+	s.trackMCPStagingLeaseForJob(jobID, uploadID, owner, attempt, 0)
+}
+
+func (s *AppService) trackMCPStagingLeaseForJob(jobID, uploadID, owner string, stagingAttempt, jobAttempt int) {
+	jobID = strings.TrimSpace(jobID)
+	uploadID = strings.TrimSpace(uploadID)
+	owner = strings.TrimSpace(owner)
+	if s == nil || jobID == "" || uploadID == "" || owner == "" || stagingAttempt <= 0 {
+		return
+	}
+	s.mcpJobMu.Lock()
+	defer s.mcpJobMu.Unlock()
+	s.ensureMCPJobMapsLocked()
+	if s.mcpJobStagingLeases[jobID] == nil {
+		s.mcpJobStagingLeases[jobID] = map[string]mcpStagingLease{}
+	}
+	s.mcpJobStagingLeases[jobID][uploadID] = mcpStagingLease{Owner: owner, Attempt: stagingAttempt, JobAttempt: jobAttempt}
+}
+
+func (s *AppService) forgetMCPStagingLease(jobID, uploadID, owner string, attempt int) {
+	s.forgetMCPStagingLeaseForJob(jobID, uploadID, owner, attempt, 0)
+}
+
+func (s *AppService) forgetMCPStagingLeaseForJob(jobID, uploadID, owner string, stagingAttempt, jobAttempt int) {
+	if s == nil {
+		return
+	}
+	s.mcpJobMu.Lock()
+	defer s.mcpJobMu.Unlock()
+	leases := s.mcpJobStagingLeases[jobID]
+	current, ok := leases[uploadID]
+	if !ok || current.Owner != strings.TrimSpace(owner) || current.Attempt != stagingAttempt || (jobAttempt > 0 && current.JobAttempt != jobAttempt) {
+		return
+	}
+	delete(leases, uploadID)
+	if len(leases) == 0 {
+		delete(s.mcpJobStagingLeases, jobID)
+	}
+}
+
+func (s *AppService) mcpStagingLeaseOwner(jobID string) string {
+	if s == nil {
+		return ""
+	}
+	s.mcpJobMu.Lock()
+	jobID = strings.TrimSpace(jobID)
+	lease := s.mcpJobLeases[jobID]
+	attempt := lease.Attempt
+	if attempt <= 0 {
+		if job, ok := s.mcpJobs[jobID]; ok {
+			attempt = job.Attempt
+		}
+	}
+	s.mcpJobMu.Unlock()
+	lease.Attempt = attempt
+	return s.mcpStagingLeaseOwnerForLease(jobID, lease)
+}
+
+func (s *AppService) mcpStagingLeaseOwnerForLease(jobID string, lease mcpJobLease) string {
+	if s == nil {
+		return ""
+	}
+	jobID = strings.TrimSpace(jobID)
+	workerID := strings.TrimSpace(lease.Owner)
+	if workerID == "" {
+		s.mcpJobMu.Lock()
+		workerID = strings.TrimSpace(s.mcpWorkerID)
+		s.mcpJobMu.Unlock()
+	}
+	if workerID == "" {
+		workerID = "unknown-worker"
+	}
+	return fmt.Sprintf("mcp-job:%s:%s:%d", workerID, jobID, lease.Attempt)
+}
+
+func (s *AppService) mcpStagingLeaseStillTracked(jobID, uploadID string, expected mcpStagingLease) bool {
+	return s.mcpStagingLeaseStillTrackedForLease(jobID, uploadID, expected)
+}
+
+func (s *AppService) mcpStagingLeaseStillTrackedForLease(jobID, uploadID string, expected mcpStagingLease) bool {
+	if s == nil {
+		return false
+	}
+	s.mcpJobMu.Lock()
+	defer s.mcpJobMu.Unlock()
+	current, ok := s.mcpJobStagingLeases[strings.TrimSpace(jobID)][strings.TrimSpace(uploadID)]
+	return ok && current == expected
+}
+
+func isMCPStagingLeaseCompletionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch strings.TrimSpace(err.Error()) {
+	case "staged upload not found", "staged upload is not being processed", "staged upload is not available":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *AppService) renewMCPJobStagingLeases(jobID string) bool {
+	if s == nil {
+		return true
+	}
+	lease, ok := s.currentMCPJobLease(jobID)
+	if ok {
+		return s.renewMCPJobStagingLeasesForLease(jobID, lease)
+	}
+	return s.renewMCPJobStagingLeasesForLease(jobID, mcpJobLease{})
+}
+
+func (s *AppService) renewMCPJobStagingLeasesForLease(jobID string, expectedLease mcpJobLease) bool {
+	if s == nil || s.staging == nil {
+		return true
+	}
+	if validMCPJobLease(expectedLease) {
+		if err := s.ensureMCPJobLease(jobID, expectedLease); err != nil {
+			return false
+		}
+	}
+	expectedStagingOwner := ""
+	if validMCPJobLease(expectedLease) {
+		expectedStagingOwner = s.mcpStagingLeaseOwnerForLease(jobID, expectedLease)
+	}
+	leaseDuration := mcpJobStagingLeaseDuration
+	if !validMCPJobLease(expectedLease) {
+		// Keep the legacy helper's behavior for non-job callers and older tests;
+		// real MCP workers always pass a valid parent lease and use the shorter
+		// staging lease above.
+		leaseDuration = mcpJobLeaseDuration
+	}
+	s.mcpJobMu.Lock()
+	job, jobExists := s.mcpJobs[jobID]
+	tracked := make(map[string]mcpStagingLease, len(s.mcpJobStagingLeases[jobID]))
+	for uploadID, lease := range s.mcpJobStagingLeases[jobID] {
+		if validMCPJobLease(expectedLease) && (lease.JobAttempt != 0 && lease.JobAttempt != expectedLease.Attempt || lease.Owner != expectedStagingOwner) {
+			continue
+		}
+		tracked[uploadID] = lease
+	}
+	s.mcpJobMu.Unlock()
+	if jobExists && isMCPJobTerminalStatus(job.Status) {
+		return true
+	}
+	for uploadID, lease := range tracked {
+		if err := s.staging.RenewProcessingLease(uploadID, lease.Owner, lease.Attempt, leaseDuration); err != nil {
+			if isMCPStagingLeaseCompletionError(err) {
+				continue
+			}
+			// The worker may have completed and forgotten this lease after the
+			// heartbeat snapshot was taken. Do not turn that expected race into a
+			// cancellation; a still-tracked lease error remains a real fencing or
+			// storage failure and must stop the worker.
+			if !s.mcpStagingLeaseStillTrackedForLease(jobID, uploadID, lease) {
+				continue
+			}
+			log.Printf("failed to renew staged upload lease %s for MCP job %s: %v", uploadID, jobID, err)
+			return false
+		}
+	}
+	return true
+}
+
+func (s *AppService) releaseMCPJobStagingLeases(jobID string) {
+	if s == nil {
+		return
+	}
+	lease, ok := s.currentMCPJobLease(jobID)
+	if ok {
+		s.releaseMCPJobStagingLeasesForLease(jobID, lease)
+		return
+	}
+	s.releaseMCPJobStagingLeasesForLease(jobID, mcpJobLease{})
+}
+
+func (s *AppService) releaseMCPJobStagingLeasesForLease(jobID string, expectedLease mcpJobLease) {
+	if s == nil || s.staging == nil {
+		return
+	}
+	expectedStagingOwner := ""
+	if validMCPJobLease(expectedLease) {
+		expectedStagingOwner = s.mcpStagingLeaseOwnerForLease(jobID, expectedLease)
+	}
+	s.mcpJobMu.Lock()
+	tracked := make(map[string]mcpStagingLease, len(s.mcpJobStagingLeases[jobID]))
+	for uploadID, lease := range s.mcpJobStagingLeases[jobID] {
+		if validMCPJobLease(expectedLease) && (lease.JobAttempt != 0 && lease.JobAttempt != expectedLease.Attempt || lease.Owner != expectedStagingOwner) {
+			continue
+		}
+		tracked[uploadID] = lease
+	}
+	s.mcpJobMu.Unlock()
+	for uploadID, lease := range tracked {
+		if err := s.staging.ReleaseWithLeaseAttempt(uploadID, lease.Owner, lease.Attempt); err != nil && !isMCPStagingLeaseCompletionError(err) {
+			log.Printf("failed to release staged upload lease %s for MCP job %s: %v", uploadID, jobID, err)
+		}
+	}
 }
 
 func (s *AppService) completeMCPJob(jobID, status string, progress int, summary string, result map[string]any, errorMessage string) {
+	lease, _ := s.currentMCPJobLease(jobID)
+	s.completeMCPJobWithLease(jobID, lease, status, progress, summary, result, errorMessage)
+}
+
+func (s *AppService) completeMCPJobWithLease(jobID string, expectedLease mcpJobLease, status string, progress int, summary string, result map[string]any, errorMessage string) {
 	if status == "cancelled" && s.isMCPJobsShuttingDown() {
 		return
 	}
@@ -2816,16 +3314,43 @@ func (s *AppService) completeMCPJob(jobID, status string, progress int, summary 
 	if !ok {
 		return
 	}
+	if validMCPJobLease(expectedLease) {
+		current, exists := s.mcpJobLeases[jobID]
+		if !exists || !mcpJobLeaseMatches(current, expectedLease) {
+			return
+		}
+	}
 	if isMCPJobTerminalStatus(job.Status) {
 		return
 	}
+	var resultPersistenceErr error
+	if s.mcpJobStore != nil {
+		job.Result, resultPersistenceErr = sanitizeMCPJobResultStrict(result)
+		if resultPersistenceErr == nil {
+			_, resultPersistenceErr = encodeMCPJobResult(job.Result)
+		}
+		if resultPersistenceErr != nil {
+			log.Printf("MCP job %s result cannot be persisted: %v", jobID, resultPersistenceErr)
+			status = "failed"
+			progress = 100
+			summary = "任务结果无法持久化。"
+			errorMessage = "job result could not be persisted"
+			job.Result = nil
+			job.Resumable = false
+		}
+	} else {
+		job.Result = sanitizeMCPJobResult(result)
+	}
 	job.Status = status
 	job.Progress = progress
-	job.Summary = summary
-	job.Result = sanitizeMCPJobResult(result)
+	job.Summary = redactMCPJobMessage(summary)
 	job.Error = PublicMCPJobError(errors.New(errorMessage))
 	job.ErrorCode = classifyMCPJobErrorCode(status, errorMessage)
 	job.Retryable = status == "failed" && job.Resumable && job.RetryCount < mcpJobMaxRetries
+	if resultPersistenceErr != nil {
+		job.ErrorCode = "result_persistence_failed"
+		job.Retryable = false
+	}
 	if status == "cancelled" {
 		job.Resumable = false
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
@@ -2836,15 +3361,17 @@ func (s *AppService) completeMCPJob(jobID, status string, progress int, summary 
 	job.NextAction = ""
 	job.UpdatedAt = util.NowRFC3339()
 	job.CompletedAt = job.UpdatedAt
-	if !s.persistMCPJobLocked(job, true) {
+	if !s.persistMCPJobLockedWithLease(job, true, expectedLease) {
 		return
 	}
 	s.mcpJobs[jobID] = job
 	delete(s.mcpJobCancels, jobID)
 	delete(s.mcpJobLeases, jobID)
+	delete(s.mcpJobStagingLeases, jobID)
 }
 
 func publicMCPJob(job model.MCPJob) model.MCPJob {
+	job.Summary = redactMCPJobMessage(job.Summary)
 	job.Error = PublicMCPJobError(errors.New(job.Error))
 	job.Warnings = append([]string(nil), job.Warnings...)
 	for index := range job.Warnings {
@@ -2913,12 +3440,29 @@ func classifyMCPJobErrorCode(status, errorMessage string) string {
 }
 
 func (s *AppService) persistMCPJobLocked(job model.MCPJob, clearLease bool) bool {
+	if s == nil {
+		return false
+	}
+	lease := s.mcpJobLeases[job.ID]
+	return s.persistMCPJobLockedWithLease(job, clearLease, lease)
+}
+
+func (s *AppService) persistMCPJobLockedWithLease(job model.MCPJob, clearLease bool, expectedLease mcpJobLease) bool {
 	if s == nil || s.mcpJobStore == nil {
 		return true
 	}
 	lease := s.mcpJobLeases[job.ID]
 	expectedOwner := lease.Owner
 	expectedAttempt := lease.Attempt
+	if validMCPJobLease(expectedLease) {
+		current, exists := s.mcpJobLeases[job.ID]
+		if !exists || !mcpJobLeaseMatches(current, expectedLease) {
+			return false
+		}
+		lease = expectedLease
+		expectedOwner = expectedLease.Owner
+		expectedAttempt = expectedLease.Attempt
+	}
 	if expectedAttempt == 0 {
 		expectedAttempt = job.Attempt
 	}
@@ -2932,7 +3476,13 @@ func (s *AppService) persistMCPJobLocked(job model.MCPJob, clearLease bool) bool
 		record.LeaseOwner = ""
 		record.LeaseExpiresAt = ""
 	}
-	updated, err := s.mcpJobStore.Update(record, expectedOwner, expectedAttempt)
+	var updated bool
+	var err error
+	if clearLease {
+		updated, err = s.mcpJobStore.Update(record, expectedOwner, expectedAttempt)
+	} else {
+		updated, err = s.mcpJobStore.UpdateState(record, expectedOwner, expectedAttempt)
+	}
 	if err != nil {
 		log.Printf("failed to persist MCP job %s: %v", job.ID, err)
 		s.recordMCPJobPersistenceFailure()
@@ -3026,7 +3576,11 @@ func cloneMCPJob(job model.MCPJob) model.MCPJob {
 }
 
 func validateMCPJobTextFileName(fileName string, cfg model.AppConfig) error {
-	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(fileName)))
+	normalizedName, err := util.NormalizeFilename(fileName)
+	if err != nil {
+		return err
+	}
+	ext := strings.ToLower(filepath.Ext(normalizedName))
 	allowed := map[string]struct{}{
 		".txt": {},
 		".md":  {},

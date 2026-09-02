@@ -38,6 +38,105 @@ func TestMCPJobTerminalStatusIsNotOverwritten(t *testing.T) {
 	}
 }
 
+func TestCompleteMCPJobPersistsExplicitFailureForOversizedResult(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	now := time.Now().UTC()
+	record := testMCPJobRecord("job-result-fallback", now)
+	if err := store.Create(record); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	claimed, ok, err := store.Claim(record.Job.ID, "worker-result", time.Minute, now)
+	if err != nil || !ok {
+		t.Fatalf("claim job: ok=%t err=%v", ok, err)
+	}
+
+	service := &AppService{
+		mcpJobs: map[string]model.MCPJob{record.Job.ID: claimed.Job},
+		mcpJobDescriptors: map[string]mcpJobDescriptor{
+			record.Job.ID: claimed.Descriptor,
+		},
+		mcpJobLeases: map[string]mcpJobLease{
+			record.Job.ID: {Owner: claimed.LeaseOwner, Attempt: claimed.Job.Attempt, ExpiresAt: claimed.LeaseExpiresAt},
+		},
+		mcpJobCancels:       map[string]context.CancelFunc{},
+		mcpJobStagingLeases: map[string]map[string]mcpStagingLease{},
+		mcpJobStore:         store,
+	}
+	service.completeMCPJob(record.Job.ID, "succeeded", 100, "任务完成。", map[string]any{
+		"results": oversizedMCPJobResult()["results"],
+	}, "")
+
+	loaded, found, err := store.Get(record.Job.ID)
+	if err != nil {
+		t.Fatalf("load completed job: %v", err)
+	}
+	if !found {
+		t.Fatal("expected completed job to remain persisted")
+	}
+	if loaded.Job.Status != "failed" || loaded.Job.ErrorCode != "result_persistence_failed" {
+		t.Fatalf("expected explicit result persistence failure, got %+v", loaded.Job)
+	}
+	if loaded.Job.Result != nil {
+		t.Fatalf("expected oversized result not to be persisted, got %#v", loaded.Job.Result)
+	}
+}
+
+func TestMCPJobRenewsTrackedStagingLease(t *testing.T) {
+	service := NewAppService(nil, nil, nil, model.ServerConfig{StagingDir: t.TempDir()})
+	staged, err := service.staging.StageBytes("heartbeat.md", []byte("heartbeat content"), "test")
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+	claimed, err := service.staging.ClaimWithLeaseAs(staged.ID, AuthPrincipal{}, "job-token", mcpJobLeaseDuration)
+	if err != nil {
+		t.Fatalf("claim upload: %v", err)
+	}
+	before, err := time.Parse(time.RFC3339Nano, claimed.ProcessingLeaseUntil)
+	if err != nil {
+		t.Fatalf("parse initial lease: %v", err)
+	}
+	service.mcpJobs["job-heartbeat"] = model.MCPJob{ID: "job-heartbeat", Status: "running"}
+	service.trackMCPStagingLease("job-heartbeat", claimed.ID, "job-token", claimed.ProcessingAttempt)
+
+	if !service.renewMCPJobStagingLeases("job-heartbeat") {
+		t.Fatal("expected tracked staging lease renewal to succeed")
+	}
+	renewed, err := service.staging.get(claimed.ID, true)
+	if err != nil {
+		t.Fatalf("get renewed upload: %v", err)
+	}
+	after, err := time.Parse(time.RFC3339Nano, renewed.ProcessingLeaseUntil)
+	if err != nil {
+		t.Fatalf("parse renewed lease: %v", err)
+	}
+	if !after.After(before) {
+		t.Fatalf("expected renewed lease to move forward: before=%s after=%s", before, after)
+	}
+	if after.Before(time.Now().UTC()) {
+		t.Fatalf("expected renewed lease to remain active: %s", after)
+	}
+	service.forgetMCPStagingLease("job-heartbeat", claimed.ID, "job-token", claimed.ProcessingAttempt)
+	if !service.renewMCPJobStagingLeases("job-heartbeat") {
+		t.Fatal("expected a lease forgotten after completion to be ignored")
+	}
+
+	consumed, err := service.staging.StageBytes("consumed.md", []byte("consumed content"), "test")
+	if err != nil {
+		t.Fatalf("stage consumed upload: %v", err)
+	}
+	consumedClaim, err := service.staging.ClaimWithLeaseAs(consumed.ID, AuthPrincipal{}, "job-token", mcpJobLeaseDuration)
+	if err != nil {
+		t.Fatalf("claim consumed upload: %v", err)
+	}
+	if err := service.staging.MarkConsumedWithLeaseAttempt(consumed.ID, "job-token", consumedClaim.ProcessingAttempt); err != nil {
+		t.Fatalf("consume upload: %v", err)
+	}
+	service.trackMCPStagingLease("job-heartbeat", consumed.ID, "job-token", consumedClaim.ProcessingAttempt)
+	if !service.renewMCPJobStagingLeases("job-heartbeat") {
+		t.Fatal("expected an already consumed lease to be ignored")
+	}
+}
+
 func TestCancelMCPJobAddsBestEffortWarning(t *testing.T) {
 	service := &AppService{
 		mcpJobs: map[string]model.MCPJob{

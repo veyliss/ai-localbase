@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,5 +119,34 @@ func TestReadinessReturnsUnavailableWhenQdrantIsDown(t *testing.T) {
 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected readiness status 503, got %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestReadinessReturnsUnavailableWhenStagingManifestIsCorrupt(t *testing.T) {
+	stagingDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stagingDir, "manifest.json"), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("write corrupt staging manifest: %v", err)
+	}
+	appService := service.NewAppService(nil, nil, nil, model.ServerConfig{StagingDir: stagingDir})
+	handler := NewConfigHandler(appService, nil)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	handler.Readiness(context)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected readiness status 503, got %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response ReadinessResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	if response.Checks["upload_staging"].Status != "error" {
+		t.Fatalf("expected staging readiness check to fail, got %#v", response.Checks["upload_staging"])
+	}
+	if strings.Contains(response.Checks["upload_staging"].ErrorMessage, stagingDir) {
+		t.Fatalf("readiness error must not expose staging path: %#v", response.Checks["upload_staging"])
 	}
 }

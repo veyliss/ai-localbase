@@ -246,6 +246,59 @@ func TestUploadStagingExpiredProcessingLeaseCanBeRecoveredAfterRestart(t *testin
 	}
 }
 
+func TestUploadStagingRenewsLeaseAndFencesStaleAttempt(t *testing.T) {
+	rootDir := t.TempDir()
+	destinationDir := t.TempDir()
+	owner := AuthPrincipal{AuthType: "session", UserID: "lease-owner"}
+	staging := NewUploadStagingService(rootDir, time.Hour)
+	staged, err := staging.StageBytesAs("lease.md", []byte("lease content"), "test", owner)
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+
+	first, err := staging.ClaimWithLeaseAs(staged.ID, owner, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("claim first attempt: %v", err)
+	}
+	if err := staging.RenewProcessingLease(first.ID, "worker-a", first.ProcessingAttempt, time.Minute); err != nil {
+		t.Fatalf("renew first attempt: %v", err)
+	}
+	if err := staging.RenewProcessingLease(first.ID, "worker-a", first.ProcessingAttempt+1, time.Minute); err == nil {
+		t.Fatal("expected renewal with a stale attempt to be rejected")
+	}
+
+	staging.mu.Lock()
+	expired := staging.items[first.ID]
+	expired.ProcessingLeaseUntil = time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)
+	staging.items[first.ID] = expired
+	staging.mu.Unlock()
+
+	second, err := staging.ClaimWithLeaseAs(first.ID, owner, "worker-b", time.Minute)
+	if err != nil {
+		t.Fatalf("claim recovered attempt: %v", err)
+	}
+	if second.ProcessingAttempt != first.ProcessingAttempt+1 {
+		t.Fatalf("expected attempt %d, got %d", first.ProcessingAttempt+1, second.ProcessingAttempt)
+	}
+	if err := staging.ReleaseWithLeaseAttempt(first.ID, "worker-a", first.ProcessingAttempt); err == nil {
+		t.Fatal("expected stale release to be rejected")
+	}
+	if err := staging.MarkConsumedWithLeaseAttempt(first.ID, "worker-a", first.ProcessingAttempt); err == nil {
+		t.Fatal("expected stale consume to be rejected")
+	}
+	if _, err := staging.CopyToWithLeaseAttempt(first.ID, destinationDir, "worker-a", first.ProcessingAttempt); err == nil {
+		t.Fatal("expected stale copy to be rejected")
+	}
+
+	current, err := staging.get(first.ID, true)
+	if err != nil {
+		t.Fatalf("get current attempt: %v", err)
+	}
+	if current.Status != stagedUploadStatusProcessing || current.ProcessingOwner != "worker-b" {
+		t.Fatalf("expected current attempt to remain active, got %+v", current)
+	}
+}
+
 func TestUploadStagingCopyToRejectsModifiedFileByChecksum(t *testing.T) {
 	rootDir := t.TempDir()
 	destinationDir := t.TempDir()

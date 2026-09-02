@@ -937,7 +937,12 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 		return
 	}
 
-	storedName := fmt.Sprintf("%d_%s", util.NowUnixNano(), util.SanitizeFilename(file.Filename))
+	fileName, err := util.NormalizeFilename(file.Filename)
+	if err != nil {
+		writeUploadValidationError(c, err)
+		return
+	}
+	storedName := fmt.Sprintf("%d_%s", util.NowUnixNano(), util.SanitizeFilename(fileName))
 	destination := filepath.Join(h.serverConfig.UploadDir, storedName)
 	if err := c.SaveUploadedFile(file, destination); err != nil {
 		writeError(c, http.StatusInternalServerError, "failed to save uploaded file")
@@ -947,7 +952,7 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 	document := model.Document{
 		ID:              util.NextID("doc"),
 		KnowledgeBaseID: knowledgeBaseID,
-		Name:            file.Filename,
+		Name:            fileName,
 		Size:            file.Size,
 		SizeLabel:       util.FormatFileSize(file.Size),
 		UploadedAt:      util.NowRFC3339(),
@@ -1026,6 +1031,9 @@ func (h *AppHandler) uploadFileFromRequest(c *gin.Context) (*multipart.FileHeade
 }
 
 func validateUploadFile(file *multipart.FileHeader, cfg model.AppConfig, maxUploadBytes int64) error {
+	if file == nil {
+		return fmt.Errorf("missing file field 'file'")
+	}
 	if maxUploadBytes > 0 && file.Size > maxUploadBytes {
 		return &uploadSizeError{
 			Size:     file.Size,
@@ -1033,7 +1041,11 @@ func validateUploadFile(file *multipart.FileHeader, cfg model.AppConfig, maxUplo
 		}
 	}
 
-	ext := strings.ToLower(filepath.Ext(file.Filename))
+	fileName, err := util.NormalizeFilename(file.Filename)
+	if err != nil {
+		return err
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
 	allowed := map[string]struct{}{
 		".txt": {},
 		".md":  {},

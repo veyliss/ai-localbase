@@ -34,6 +34,7 @@ const (
 )
 
 var ErrUploadStagingQuotaExceeded = errors.New("upload staging quota exceeded")
+var ErrUploadStagingBusy = errors.New("staged upload is being processed by another worker")
 
 type UploadStagingLimits struct {
 	MaxFilesPerPrincipal int
@@ -47,11 +48,12 @@ type stagingQuotaReservation struct {
 }
 
 type UploadStagingService struct {
-	rootDir      string
-	manifestPath string
-	ttl          time.Duration
-	limits       UploadStagingLimits
-	manifestErr  error
+	rootDir            string
+	manifestPath       string
+	ttl                time.Duration
+	limits             UploadStagingLimits
+	manifestErr        error
+	manifestLoadFailed bool
 
 	mu           sync.RWMutex
 	items        map[string]model.StagedUpload
@@ -107,6 +109,7 @@ func NewUploadStagingServiceWithLimits(rootDir string, ttl time.Duration, limits
 		reservations: map[string]stagingQuotaReservation{},
 	}
 	service.manifestErr = service.loadManifest()
+	service.manifestLoadFailed = service.manifestErr != nil
 	return service
 }
 
@@ -116,7 +119,42 @@ func (s *UploadStagingService) ManifestLoadError() error {
 	if s == nil {
 		return nil
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.manifestErr
+}
+
+// ManifestHealth checks both the initial manifest load and the ability to
+// write the staging directory. Runtime write failures remain visible to
+// readiness checks until the probe succeeds again.
+func (s *UploadStagingService) ManifestHealth() error {
+	if s == nil {
+		return fmt.Errorf("upload staging service is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.manifestLoadFailed {
+		return s.manifestErr
+	}
+	if err := s.probeManifestWriteLocked(); err != nil {
+		s.manifestErr = err
+		return err
+	}
+	s.manifestErr = nil
+	return nil
+}
+
+func (s *UploadStagingService) ensureManifestHealthy() error {
+	if s == nil {
+		return fmt.Errorf("upload staging service is nil")
+	}
+	s.mu.RLock()
+	manifestErr := s.manifestErr
+	s.mu.RUnlock()
+	if manifestErr != nil {
+		return fmt.Errorf("upload staging manifest is unavailable")
+	}
+	return nil
 }
 
 func (s *UploadStagingService) StageMultipartFile(file *multipart.FileHeader, source string) (model.StagedUpload, error) {
@@ -212,6 +250,9 @@ func (s *UploadStagingService) ClaimWithLeaseAs(uploadID string, owner AuthPrinc
 	if s == nil {
 		return model.StagedUpload{}, fmt.Errorf("staged upload service is nil")
 	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return model.StagedUpload{}, err
+	}
 	trimmedID := strings.TrimSpace(uploadID)
 	if trimmedID == "" {
 		return model.StagedUpload{}, fmt.Errorf("upload id is required")
@@ -240,7 +281,7 @@ func (s *UploadStagingService) ClaimWithLeaseAs(uploadID string, owner AuthPrinc
 	if item.Status == stagedUploadStatusProcessing {
 		currentOwner := strings.TrimSpace(item.ProcessingOwner)
 		if currentOwner != leaseOwner && stagedUploadLeaseActive(item, now) {
-			return model.StagedUpload{}, fmt.Errorf("staged upload is being processed by another worker")
+			return model.StagedUpload{}, ErrUploadStagingBusy
 		}
 		if currentOwner == leaseOwner {
 			item.ProcessingLeaseUntil = now.Add(leaseDuration).Format(time.RFC3339Nano)
@@ -268,13 +309,75 @@ func (s *UploadStagingService) ClaimWithLeaseAs(uploadID string, owner AuthPrinc
 	return item, nil
 }
 
+// RenewProcessingLease extends an active processing lease. The attempt is a
+// fencing token: a worker that lost the upload lease cannot renew a newer
+// attempt, even when it reuses the same upload ID.
+func (s *UploadStagingService) RenewProcessingLease(uploadID, leaseOwner string, expectedAttempt int, leaseDuration time.Duration) error {
+	if s == nil {
+		return fmt.Errorf("upload staging service is nil")
+	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return err
+	}
+	trimmedID := strings.TrimSpace(uploadID)
+	if trimmedID == "" {
+		return fmt.Errorf("upload id is required")
+	}
+	leaseOwner = strings.TrimSpace(leaseOwner)
+	if leaseOwner == "" {
+		return fmt.Errorf("staged upload lease owner is required")
+	}
+	if expectedAttempt <= 0 {
+		return fmt.Errorf("staged upload lease attempt is required")
+	}
+	if leaseDuration <= 0 {
+		leaseDuration = defaultStagedProcessingLease
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[trimmedID]
+	if !ok {
+		return fmt.Errorf("staged upload not found")
+	}
+	if item.Status != stagedUploadStatusProcessing {
+		return fmt.Errorf("staged upload is not being processed")
+	}
+	if err := validateStagedUploadLease(item, leaseOwner, expectedAttempt); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if !stagedUploadLeaseActive(item, now) {
+		return fmt.Errorf("staged upload lease has expired")
+	}
+	previous := item
+	item.ProcessingLeaseUntil = now.Add(leaseDuration).Format(time.RFC3339Nano)
+	item.ExpiresAt = extendStagedUploadExpiry(item.ExpiresAt, now, s.ttl)
+	s.items[trimmedID] = item
+	if err := s.saveManifestLocked(); err != nil {
+		s.items[trimmedID] = previous
+		return fmt.Errorf("persist staged upload lease renewal: %w", err)
+	}
+	return nil
+}
+
 func (s *UploadStagingService) Release(uploadID string) error {
 	return s.ReleaseWithLease(uploadID, "")
 }
 
 func (s *UploadStagingService) ReleaseWithLease(uploadID, leaseOwner string) error {
+	return s.ReleaseWithLeaseAttempt(uploadID, leaseOwner, 0)
+}
+
+// ReleaseWithLeaseAttempt releases a processing lease only when both the
+// worker identity and attempt still match. expectedAttempt may be zero for
+// legacy non-job callers that only have an owner token.
+func (s *UploadStagingService) ReleaseWithLeaseAttempt(uploadID, leaseOwner string, expectedAttempt int) error {
 	if s == nil {
 		return fmt.Errorf("staged upload service is nil")
+	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return err
 	}
 	trimmedID := strings.TrimSpace(uploadID)
 	if trimmedID == "" {
@@ -288,8 +391,8 @@ func (s *UploadStagingService) ReleaseWithLease(uploadID, leaseOwner string) err
 		return fmt.Errorf("staged upload not found")
 	}
 	if item.Status == stagedUploadStatusProcessing {
-		if expected := strings.TrimSpace(leaseOwner); expected != "" && strings.TrimSpace(item.ProcessingOwner) != expected {
-			return fmt.Errorf("staged upload lease is no longer owned by this worker")
+		if err := validateStagedUploadLease(item, leaseOwner, expectedAttempt); err != nil {
+			return err
 		}
 		previous := item
 		item.Status = stagedUploadStatusStaged
@@ -309,8 +412,18 @@ func (s *UploadStagingService) MarkConsumed(uploadID string) error {
 }
 
 func (s *UploadStagingService) MarkConsumedWithLease(uploadID, leaseOwner string) error {
+	return s.MarkConsumedWithLeaseAttempt(uploadID, leaseOwner, 0)
+}
+
+// MarkConsumedWithLeaseAttempt marks an upload consumed only for the current
+// processing attempt. This prevents an old worker from acknowledging a newer
+// retry after its own indexing work has been fenced off.
+func (s *UploadStagingService) MarkConsumedWithLeaseAttempt(uploadID, leaseOwner string, expectedAttempt int) error {
 	if s == nil {
 		return fmt.Errorf("upload staging service is nil")
+	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return err
 	}
 	trimmedID := strings.TrimSpace(uploadID)
 	if trimmedID == "" {
@@ -323,8 +436,11 @@ func (s *UploadStagingService) MarkConsumedWithLease(uploadID, leaseOwner string
 	if !ok {
 		return fmt.Errorf("staged upload not found")
 	}
-	if expected := strings.TrimSpace(leaseOwner); expected != "" && strings.TrimSpace(item.ProcessingOwner) != expected {
-		return fmt.Errorf("staged upload lease is no longer owned by this worker")
+	if expectedAttempt > 0 && item.Status != stagedUploadStatusProcessing {
+		return fmt.Errorf("staged upload is not being processed")
+	}
+	if err := validateStagedUploadLease(item, leaseOwner, expectedAttempt); err != nil {
+		return err
 	}
 	previous := item
 	item.Status = stagedUploadStatusConsumed
@@ -342,6 +458,9 @@ func (s *UploadStagingService) MarkConsumedWithLease(uploadID, leaseOwner string
 func (s *UploadStagingService) Delete(uploadID string) error {
 	if s == nil {
 		return fmt.Errorf("upload staging service is nil")
+	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return err
 	}
 	trimmedID := strings.TrimSpace(uploadID)
 	if trimmedID == "" {
@@ -378,15 +497,24 @@ func (s *UploadStagingService) CopyTo(uploadID, destinationDir string) (string, 
 // SHA-256 while copying. This closes the gap between a durable claim and the
 // filesystem read used for indexing.
 func (s *UploadStagingService) CopyToWithLease(uploadID, destinationDir, leaseOwner string) (string, error) {
+	return s.CopyToWithLeaseAttempt(uploadID, destinationDir, leaseOwner, 0)
+}
+
+// CopyToWithLeaseAttempt copies only from the processing attempt that claimed
+// the upload. The legacy method above remains available for non-job callers.
+func (s *UploadStagingService) CopyToWithLeaseAttempt(uploadID, destinationDir, leaseOwner string, expectedAttempt int) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("upload staging service is nil")
+	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return "", err
 	}
 	staged, err := s.get(uploadID, true)
 	if err != nil {
 		return "", err
 	}
-	if expected := strings.TrimSpace(leaseOwner); expected != "" && strings.TrimSpace(staged.ProcessingOwner) != expected {
-		return "", fmt.Errorf("staged upload lease is no longer owned by this worker")
+	if err := validateStagedUploadLease(staged, leaseOwner, expectedAttempt); err != nil {
+		return "", err
 	}
 	trimmedDestinationDir := strings.TrimSpace(destinationDir)
 	if trimmedDestinationDir == "" {
@@ -445,6 +573,9 @@ func (s *UploadStagingService) CopyToWithLease(uploadID, destinationDir, leaseOw
 func (s *UploadStagingService) CleanupExpired() error {
 	if s == nil {
 		return fmt.Errorf("upload staging service is nil")
+	}
+	if err := s.ensureManifestHealthy(); err != nil {
+		return err
 	}
 
 	type expiredItem struct {
@@ -538,9 +669,12 @@ func (s *UploadStagingService) CleanupExpired() error {
 }
 
 func (s *UploadStagingService) stageFromReader(fileName string, sizeHint int64, reader io.Reader, source string, owner AuthPrincipal) (model.StagedUpload, error) {
-	trimmedName := strings.TrimSpace(fileName)
-	if trimmedName == "" {
-		return model.StagedUpload{}, fmt.Errorf("file name is required")
+	if err := s.ensureManifestHealthy(); err != nil {
+		return model.StagedUpload{}, err
+	}
+	trimmedName, err := util.NormalizeFilename(fileName)
+	if err != nil {
+		return model.StagedUpload{}, err
 	}
 	if err := os.MkdirAll(s.rootDir, 0o755); err != nil {
 		return model.StagedUpload{}, fmt.Errorf("create staging directory: %w", err)
@@ -678,9 +812,16 @@ func (s *UploadStagingService) loadManifest() error {
 			// abandoned so a restart can safely retry them.
 			status = stagedUploadStatusStaged
 		}
+		fileName, fileNameErr := util.NormalizeFilename(persisted.FileName)
+		if fileNameErr != nil {
+			fileName = util.SanitizeFilename(persisted.FileName)
+			if fileName == "" {
+				fileName = "upload"
+			}
+		}
 		s.items[id] = model.StagedUpload{
 			ID:                   id,
-			FileName:             persisted.FileName,
+			FileName:             fileName,
 			Path:                 filepath.Join(s.rootDir, storedName),
 			Size:                 persisted.Size,
 			SizeLabel:            persisted.SizeLabel,
@@ -705,7 +846,12 @@ func (s *UploadStagingService) saveManifestLocked() error {
 		return fmt.Errorf("upload staging service is nil")
 	}
 	if err := os.MkdirAll(s.rootDir, 0o755); err != nil {
-		return fmt.Errorf("create staging directory for manifest: %w", err)
+		return s.recordManifestErrorLocked(fmt.Errorf("create staging directory for manifest: %w", err))
+	}
+	if info, err := os.Stat(s.manifestPath); err == nil && !info.Mode().IsRegular() {
+		return s.recordManifestErrorLocked(fmt.Errorf("staging manifest path is not a regular file"))
+	} else if err != nil && !os.IsNotExist(err) {
+		return s.recordManifestErrorLocked(fmt.Errorf("inspect staging manifest path: %w", err))
 	}
 	ids := make([]string, 0, len(s.items))
 	for id := range s.items {
@@ -746,16 +892,65 @@ func (s *UploadStagingService) saveManifestLocked() error {
 	}
 	content, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode staging manifest: %w", err)
+		return s.recordManifestErrorLocked(fmt.Errorf("encode staging manifest: %w", err))
 	}
 	temporaryPath := s.manifestPath + ".tmp"
 	if err := os.WriteFile(temporaryPath, content, 0o600); err != nil {
-		return fmt.Errorf("write staging manifest: %w", err)
+		return s.recordManifestErrorLocked(fmt.Errorf("write staging manifest: %w", err))
 	}
 	if err := os.Rename(temporaryPath, s.manifestPath); err != nil {
 		_ = os.Remove(temporaryPath)
-		return fmt.Errorf("replace staging manifest: %w", err)
+		return s.recordManifestErrorLocked(fmt.Errorf("replace staging manifest: %w", err))
 	}
+	s.manifestErr = nil
+	return nil
+}
+
+func (s *UploadStagingService) recordManifestErrorLocked(err error) error {
+	if err != nil {
+		s.manifestErr = err
+	}
+	return err
+}
+
+func (s *UploadStagingService) probeManifestWriteLocked() error {
+	if s == nil {
+		return fmt.Errorf("upload staging service is nil")
+	}
+	if info, err := os.Stat(s.manifestPath); err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("staging manifest path is not a regular file")
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("inspect staging manifest path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(s.manifestPath), 0o755); err != nil {
+		return fmt.Errorf("create staging directory for manifest: %w", err)
+	}
+	probe, err := os.CreateTemp(filepath.Dir(s.manifestPath), ".manifest-health-*")
+	if err != nil {
+		return fmt.Errorf("probe staging manifest write: %w", err)
+	}
+	probePath := probe.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(probePath)
+		}
+	}()
+	if _, err := probe.Write([]byte("ok")); err != nil {
+		_ = probe.Close()
+		return fmt.Errorf("probe staging manifest write: %w", err)
+	}
+	if err := probe.Sync(); err != nil {
+		_ = probe.Close()
+		return fmt.Errorf("sync staging manifest probe: %w", err)
+	}
+	if err := probe.Close(); err != nil {
+		return fmt.Errorf("close staging manifest probe: %w", err)
+	}
+	if err := os.Remove(probePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove staging manifest probe: %w", err)
+	}
+	cleanup = false
 	return nil
 }
 
@@ -876,6 +1071,16 @@ func stagedUploadOwnerMatches(item model.StagedUpload, owner AuthPrincipal) bool
 		return false
 	}
 	return strings.TrimSpace(item.OwnerAPIKeyID) == "" && strings.TrimSpace(item.OwnerUserID) == strings.TrimSpace(owner.UserID)
+}
+
+func validateStagedUploadLease(item model.StagedUpload, leaseOwner string, expectedAttempt int) error {
+	if expected := strings.TrimSpace(leaseOwner); expected != "" && strings.TrimSpace(item.ProcessingOwner) != expected {
+		return fmt.Errorf("staged upload lease is no longer owned by this worker")
+	}
+	if expectedAttempt > 0 && item.ProcessingAttempt != expectedAttempt {
+		return fmt.Errorf("staged upload lease attempt is no longer current")
+	}
+	return nil
 }
 
 func hasScope(scopes []string, required string) bool {

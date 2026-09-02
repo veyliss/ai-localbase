@@ -76,6 +76,7 @@ func indexedOrDocument(indexed, document model.Document) model.Document {
 }
 
 func enrichDocumentGovernance(document model.Document) model.Document {
+	document.Name = normalizeDocumentName(document.Name)
 	if strings.TrimSpace(document.Source) == "" {
 		document.Source = "upload"
 	}
@@ -88,6 +89,19 @@ func enrichDocumentGovernance(document model.Document) model.Document {
 		}
 	}
 	return document
+}
+
+func normalizeDocumentName(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	if normalized, err := util.NormalizeFilename(name); err == nil {
+		return normalized
+	}
+	if fallback := util.SanitizeFilename(name); fallback != "" {
+		return fallback
+	}
+	return "document"
 }
 
 func checksumFile(path string) (string, error) {
@@ -202,6 +216,7 @@ func publicIndexRunRecords(records []model.IndexRunRecord) []model.IndexRunRecor
 }
 
 func publicDocument(document model.Document) model.Document {
+	document.Name = normalizeDocumentName(document.Name)
 	code := documentIndexErrorCode(document)
 	document.IndexErrorCode = code
 	document.IndexError = publicIndexError(code)

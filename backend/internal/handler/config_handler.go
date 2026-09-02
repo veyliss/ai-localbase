@@ -279,12 +279,13 @@ func (h *ConfigHandler) Readiness(c *gin.Context) {
 
 	checks["qdrant"] = h.checkQdrantHealth(ctx)
 	checks["storage"] = h.checkStorageHealth()
+	checks["upload_staging"] = h.checkUploadStagingHealth()
 	config := h.appService.GetConfig()
 	checks["chat_model"] = modelConfigurationHealth("chat", config.Chat.BaseURL, config.Chat.Model)
 	checks["embedding_model"] = modelConfigurationHealth("embedding", config.Embedding.BaseURL, config.Embedding.Model)
 
 	qdrantReady := checks["qdrant"].Status == "ok" || checks["qdrant"].Status == "not_configured"
-	ready := qdrantReady && checks["storage"].Status == "ok"
+	ready := qdrantReady && checks["storage"].Status == "ok" && checks["upload_staging"].Status == "ok"
 	status := "not_ready"
 	statusCode := http.StatusServiceUnavailable
 	if ready {
@@ -292,6 +293,20 @@ func (h *ConfigHandler) Readiness(c *gin.Context) {
 		statusCode = http.StatusOK
 	}
 	c.JSON(statusCode, ReadinessResponse{Status: status, Checks: checks})
+}
+
+func (h *ConfigHandler) checkUploadStagingHealth() ComponentHealth {
+	if h == nil || h.appService == nil {
+		return ComponentHealth{Status: "error", ErrorMessage: "upload staging is unavailable"}
+	}
+	if err := h.appService.UploadStagingManifestLoadError(); err != nil {
+		return ComponentHealth{
+			Status:       "error",
+			Message:      "Upload staging manifest cannot be loaded",
+			ErrorMessage: "upload staging manifest is unavailable",
+		}
+	}
+	return ComponentHealth{Status: "ok", Message: "Upload staging is accessible"}
 }
 
 func modelConfigurationHealth(kind, baseURL, modelName string) ComponentHealth {

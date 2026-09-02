@@ -3,14 +3,17 @@ package util
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 )
 
 var idCounter atomic.Uint64
+
+var ErrUnsafeFilename = errors.New("unsafe file name")
 
 func NextID(prefix string) string {
 	var randomBytes [12]byte
@@ -55,7 +58,7 @@ func ExtractContentPreview(path string) string {
 }
 
 func SanitizeFilename(name string) string {
-	name = filepath.Base(name)
+	name = safeFilenameBase(name)
 	name = strings.ReplaceAll(name, " ", "_")
 	return strings.Map(func(r rune) rune {
 		switch {
@@ -71,4 +74,51 @@ func SanitizeFilename(name string) string {
 			return '_'
 		}
 	}, name)
+}
+
+// NormalizeFilename keeps the user-visible name to one safe basename. Relative
+// directory components are tolerated for compatibility with multipart clients,
+// but absolute paths, traversal components, and control characters are rejected.
+func NormalizeFilename(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", fmt.Errorf("file name is required")
+	}
+	for _, character := range trimmed {
+		if unicode.IsControl(character) {
+			return "", fmt.Errorf("%w: control characters are not allowed", ErrUnsafeFilename)
+		}
+	}
+
+	portable := strings.ReplaceAll(trimmed, `\`, "/")
+	if strings.HasPrefix(portable, "/") || isWindowsAbsolutePath(portable) {
+		return "", fmt.Errorf("%w: absolute paths are not allowed", ErrUnsafeFilename)
+	}
+	parts := strings.Split(portable, "/")
+	for _, part := range parts {
+		if part == "." || part == ".." {
+			return "", fmt.Errorf("%w: path traversal is not allowed", ErrUnsafeFilename)
+		}
+	}
+	base := strings.TrimSpace(parts[len(parts)-1])
+	if base == "" || base == "." || base == ".." {
+		return "", fmt.Errorf("%w: file name is empty", ErrUnsafeFilename)
+	}
+	return base, nil
+}
+
+func safeFilenameBase(name string) string {
+	portable := strings.ReplaceAll(strings.TrimSpace(name), `\`, "/")
+	if index := strings.LastIndex(portable, "/"); index >= 0 {
+		portable = portable[index+1:]
+	}
+	return portable
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	if len(path) < 3 {
+		return false
+	}
+	letter := path[0]
+	return ((letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z')) && path[1] == ':' && path[2] == '/'
 }

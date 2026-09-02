@@ -177,7 +177,7 @@ func persistedDocumentFromModel(document model.Document) persistedDocument {
 	return persistedDocument{
 		ID:                      document.ID,
 		KnowledgeBaseID:         document.KnowledgeBaseID,
-		Name:                    document.Name,
+		Name:                    normalizeDocumentName(document.Name),
 		Size:                    document.Size,
 		SizeLabel:               document.SizeLabel,
 		UploadedAt:              document.UploadedAt,
@@ -203,7 +203,7 @@ func documentToModel(document persistedDocument) model.Document {
 	return model.Document{
 		ID:                      document.ID,
 		KnowledgeBaseID:         document.KnowledgeBaseID,
-		Name:                    document.Name,
+		Name:                    normalizeDocumentName(document.Name),
 		Size:                    document.Size,
 		SizeLabel:               document.SizeLabel,
 		UploadedAt:              document.UploadedAt,

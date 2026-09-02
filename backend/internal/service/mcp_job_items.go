@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ai-localbase/internal/util"
 )
 
 const (
@@ -61,10 +63,10 @@ func (s *MCPJobStore) CreateItems(jobID string, items []mcpJobItem) error {
 			item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		if _, err := tx.Exec(`INSERT INTO mcp_job_items (
-			job_id, upload_id, file_name, checksum, status, document_id, error,
-			error_code, retryable, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			item.JobID, item.UploadID, strings.TrimSpace(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
+				job_id, upload_id, file_name, checksum, status, document_id, error,
+				error_code, retryable, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
 			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
 		); err != nil {
 			rollback()
@@ -75,6 +77,79 @@ func (s *MCPJobStore) CreateItems(jobID string, items []mcpJobItem) error {
 		return fmt.Errorf("commit mcp job items: %w", err)
 	}
 	return nil
+}
+
+// EnsureItems creates missing batch checkpoints idempotently. It is used after
+// recovery because the parent job and its child rows are intentionally durable
+// in separate transactions.
+func (s *MCPJobStore) EnsureItems(jobID string, items []mcpJobItem) error {
+	_, err := s.ensureItems(jobID, items, "", 0)
+	return err
+}
+
+func (s *MCPJobStore) EnsureItemsForLease(jobID string, items []mcpJobItem, expectedLeaseOwner string, expectedAttempt int) (bool, error) {
+	return s.ensureItems(jobID, items, expectedLeaseOwner, expectedAttempt)
+}
+
+func (s *MCPJobStore) ensureItems(jobID string, items []mcpJobItem, expectedLeaseOwner string, expectedAttempt int) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("mcp job store is nil")
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return false, fmt.Errorf("mcp job id is required")
+	}
+	if len(items) == 0 {
+		return true, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin ensure mcp job items transaction: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	if owner := strings.TrimSpace(expectedLeaseOwner); owner != "" {
+		var exists int
+		if err := tx.QueryRow(`SELECT EXISTS(
+			SELECT 1 FROM mcp_jobs
+			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+		)`, jobID, owner, expectedAttempt).Scan(&exists); err != nil {
+			rollback()
+			return false, fmt.Errorf("check mcp job lease for items: %w", err)
+		}
+		if exists == 0 {
+			rollback()
+			return false, nil
+		}
+	}
+	for _, item := range items {
+		item.JobID = jobID
+		item.UploadID = strings.TrimSpace(item.UploadID)
+		if item.UploadID == "" {
+			rollback()
+			return false, fmt.Errorf("mcp job item upload id is required")
+		}
+		item.Status = normalizeMCPJobItemStatus(item.Status)
+		if item.UpdatedAt == "" {
+			item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := tx.Exec(`INSERT INTO mcp_job_items (
+			job_id, upload_id, file_name, checksum, status, document_id, error,
+			error_code, retryable, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(job_id, upload_id) DO NOTHING`,
+			item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
+			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
+		); err != nil {
+			rollback()
+			return false, fmt.Errorf("ensure mcp job item %s: %w", item.UploadID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit ensured mcp job items: %w", err)
+	}
+	return true, nil
 }
 
 func (s *MCPJobStore) ListItems(jobID string) ([]mcpJobItem, error) {
@@ -135,30 +210,50 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 	if item.UpdatedAt == "" {
 		item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	query := `UPDATE mcp_job_items SET file_name = ?, checksum = ?, status = ?, document_id = ?,
-		error = ?, error_code = ?, retryable = ?, updated_at = ? WHERE job_id = ? AND upload_id = ?`
-	args := []any{
-		strings.TrimSpace(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
-		strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
-		item.JobID, item.UploadID,
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin update mcp job item transaction: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
 	}
 	if owner := strings.TrimSpace(expectedLeaseOwner); owner != "" {
-		query += ` AND EXISTS (
-			SELECT 1 FROM mcp_jobs WHERE mcp_jobs.id = mcp_job_items.job_id
-			AND mcp_jobs.lease_owner = ? AND mcp_jobs.attempt = ?
-			AND mcp_jobs.status IN ('queued', 'running')
-		)`
-		args = append(args, owner, expectedAttempt)
+		var exists int
+		if err := tx.QueryRow(`SELECT EXISTS(
+			SELECT 1 FROM mcp_jobs
+			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+		)`, item.JobID, owner, expectedAttempt).Scan(&exists); err != nil {
+			rollback()
+			return false, fmt.Errorf("check mcp job lease for item: %w", err)
+		}
+		if exists == 0 {
+			rollback()
+			return false, nil
+		}
 	}
-	result, err := s.db.Exec(query, args...)
-	if err != nil {
+	if _, err := tx.Exec(`INSERT INTO mcp_job_items (
+		job_id, upload_id, file_name, checksum, status, document_id, error,
+		error_code, retryable, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(job_id, upload_id) DO UPDATE SET
+		file_name = excluded.file_name,
+		checksum = excluded.checksum,
+		status = excluded.status,
+		document_id = excluded.document_id,
+		error = excluded.error,
+		error_code = excluded.error_code,
+		retryable = excluded.retryable,
+		updated_at = excluded.updated_at`,
+		item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
+		strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
+	); err != nil {
+		rollback()
 		return false, fmt.Errorf("update mcp job item: %w", err)
 	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("inspect mcp job item update: %w", err)
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit mcp job item update: %w", err)
 	}
-	return affected == 1, nil
+	return true, nil
 }
 
 func (s *MCPJobStore) DeleteItemsForJob(jobID string) error {
@@ -182,7 +277,7 @@ func scanMCPJobItem(row mcpJobRowScanner) (mcpJobItem, error) {
 	}
 	item.JobID = strings.TrimSpace(item.JobID)
 	item.UploadID = strings.TrimSpace(item.UploadID)
-	item.FileName = strings.TrimSpace(item.FileName)
+	item.FileName = normalizeMCPJobItemFileName(item.FileName)
 	item.Checksum = strings.ToLower(strings.TrimSpace(item.Checksum))
 	item.Status = normalizeMCPJobItemStatus(item.Status)
 	item.DocumentID = strings.TrimSpace(item.DocumentID)
@@ -190,6 +285,16 @@ func scanMCPJobItem(row mcpJobRowScanner) (mcpJobItem, error) {
 	item.ErrorCode = strings.TrimSpace(item.ErrorCode)
 	item.Retryable = retryable != 0
 	return item, nil
+}
+
+func normalizeMCPJobItemFileName(value string) string {
+	if normalized, err := util.NormalizeFilename(value); err == nil {
+		return normalized
+	}
+	if fallback := util.SanitizeFilename(value); fallback != "" {
+		return fallback
+	}
+	return "upload"
 }
 
 func normalizeMCPJobItemStatus(value string) string {

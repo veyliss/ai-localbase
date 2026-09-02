@@ -1,7 +1,9 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,6 +102,61 @@ func TestMCPJobStorePersistsAndSanitizesJobRecord(t *testing.T) {
 	}
 	if loaded.Descriptor.UploadID != "upl-1" || loaded.Descriptor.FileName != "guide.md" {
 		t.Fatalf("expected durable descriptor, got %+v", loaded.Descriptor)
+	}
+}
+
+func TestRedactMCPJobMessageRemovesCommonFilesystemPaths(t *testing.T) {
+	paths := []string{
+		"/home/alice/uploads/private.csv",
+		"/opt/ai-localbase/uploads/private.csv",
+		"/workspace/project/uploads/private.csv",
+		"/private/var/folders/private.csv",
+		`C:\\Users\\alice\\uploads\\private.csv`,
+		`\\\\server\\share\\private.csv`,
+		"../uploads/private.csv",
+		`..\\uploads\\private.csv`,
+		"./uploads/private.csv",
+	}
+	for _, filePath := range paths {
+		t.Run(filePath, func(t *testing.T) {
+			message := "open " + filePath + ": permission denied"
+			redacted := redactMCPJobMessage(message)
+			if strings.Contains(redacted, filePath) {
+				t.Fatalf("expected path to be redacted: %q", redacted)
+			}
+			if !strings.Contains(redacted, "[redacted path]") {
+				t.Fatalf("expected redacted path marker, got %q", redacted)
+			}
+		})
+	}
+}
+
+func TestMCPJobStoreRejectsOversizedResult(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	record := testMCPJobRecord("job-result-too-large", time.Now().UTC())
+	record.Job.Result = oversizedMCPJobResult()
+
+	err := store.Create(record)
+	if err == nil || !errors.Is(err, ErrMCPJobResultTooLarge) {
+		t.Fatalf("expected oversized result to be rejected explicitly, got %v", err)
+	}
+}
+
+func oversizedMCPJobResult() map[string]any {
+	items := make([]string, 0, 200)
+	for index := 0; index < 200; index++ {
+		items = append(items, fmt.Sprintf("%03d-%s", index, strings.Repeat("x", 1024)))
+	}
+	return map[string]any{"results": items}
+}
+
+func TestMCPJobStoreRejectsUnserializableResult(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	record := testMCPJobRecord("job-result-invalid", time.Now().UTC())
+	record.Job.Result = map[string]any{"invalid": make(chan struct{})}
+
+	if err := store.Create(record); err == nil || !strings.Contains(err.Error(), "sanitize mcp job result") {
+		t.Fatalf("expected unserializable result to be rejected explicitly, got %v", err)
 	}
 }
 

@@ -306,6 +306,39 @@ func TestRetryMCPJobCreatesChildWithRetryMetadata(t *testing.T) {
 	}
 }
 
+func TestAdminRetryKeepsChildVisibleToOriginalOwner(t *testing.T) {
+	service := &AppService{
+		mcpJobs: map[string]model.MCPJob{
+			"job-owned-by-user": {
+				ID:          "job-owned-by-user",
+				Status:      "failed",
+				Retryable:   true,
+				OwnerUserID: "original-user",
+			},
+		},
+		mcpJobRetries: map[string]mcpJobRetryAction{
+			"job-owned-by-user": func() (model.MCPJob, error) {
+				return model.MCPJob{
+					ID:          "job-owned-by-user-retry",
+					Status:      "queued",
+					Retryable:   true,
+					OwnerUserID: "admin-user",
+				}, nil
+			},
+		},
+		mcpJobCancels: map[string]context.CancelFunc{},
+	}
+
+	admin := AuthPrincipal{AuthType: "session", UserID: "admin-user", Scopes: []string{"mcp:admin"}}
+	child, err := service.RetryMCPJobAs("job-owned-by-user", admin)
+	if err != nil {
+		t.Fatalf("admin retry: %v", err)
+	}
+	if child.OwnerUserID != "original-user" || child.OwnerAPIKeyID != "" {
+		t.Fatalf("expected retry child to retain original owner, got %+v", child)
+	}
+}
+
 func TestRetryMCPJobRejectsNonFailedAndExhaustedJobs(t *testing.T) {
 	service := &AppService{
 		mcpJobs: map[string]model.MCPJob{

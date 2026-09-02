@@ -134,7 +134,15 @@ func (s *UploadStagingService) ManifestHealth() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.manifestLoadFailed {
-		return s.manifestErr
+		// The first read can race with a mounted volume becoming available. Retry
+		// the load on every health check so the process does not need a restart
+		// after the staging directory or manifest is repaired.
+		if err := s.loadManifest(); err != nil {
+			s.manifestErr = err
+			return err
+		}
+		s.manifestLoadFailed = false
+		s.manifestErr = nil
 	}
 	if err := s.probeManifestWriteLocked(); err != nil {
 		s.manifestErr = err
@@ -148,11 +156,8 @@ func (s *UploadStagingService) ensureManifestHealthy() error {
 	if s == nil {
 		return fmt.Errorf("upload staging service is nil")
 	}
-	s.mu.RLock()
-	manifestErr := s.manifestErr
-	s.mu.RUnlock()
-	if manifestErr != nil {
-		return fmt.Errorf("upload staging manifest is unavailable")
+	if err := s.ManifestHealth(); err != nil {
+		return fmt.Errorf("upload staging manifest is unavailable: %w", err)
 	}
 	return nil
 }
@@ -782,9 +787,11 @@ func (s *UploadStagingService) stageFromReader(fileName string, sizeHint int64, 
 }
 
 func (s *UploadStagingService) loadManifest() error {
+	loadedItems := make(map[string]model.StagedUpload)
 	content, err := os.ReadFile(s.manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.items = loadedItems
 			return nil
 		}
 		return fmt.Errorf("read staging manifest: %w", err)
@@ -819,7 +826,7 @@ func (s *UploadStagingService) loadManifest() error {
 				fileName = "upload"
 			}
 		}
-		s.items[id] = model.StagedUpload{
+		loadedItems[id] = model.StagedUpload{
 			ID:                   id,
 			FileName:             fileName,
 			Path:                 filepath.Join(s.rootDir, storedName),
@@ -838,6 +845,7 @@ func (s *UploadStagingService) loadManifest() error {
 			ProcessingLeaseUntil: persisted.ProcessingLeaseUntil,
 		}
 	}
+	s.items = loadedItems
 	return nil
 }
 
@@ -903,6 +911,7 @@ func (s *UploadStagingService) saveManifestLocked() error {
 		return s.recordManifestErrorLocked(fmt.Errorf("replace staging manifest: %w", err))
 	}
 	s.manifestErr = nil
+	s.manifestLoadFailed = false
 	return nil
 }
 

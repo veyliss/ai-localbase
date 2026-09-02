@@ -66,13 +66,20 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize MCP job store: %w", err)
 	}
+
+	appService := service.NewAppServiceWithJobStore(qdrantService, stateStore, chatHistoryStore, serverConfig, mcpJobStore)
 	defer func() {
+		// Also shut down on initialization failures. ShutdownJobs may return after
+		// its deadline while a worker is still unwinding, so wait before closing
+		// SQLite and let its final fenced write complete.
+		if shutdownErr := appService.ShutdownJobs(context.Background()); shutdownErr != nil {
+			log.Printf("failed to finish MCP job shutdown: %v", shutdownErr)
+		}
+		appService.WaitForMCPJobs()
 		if closeErr := mcpJobStore.Close(); closeErr != nil {
 			log.Printf("failed to close MCP job store: %v", closeErr)
 		}
 	}()
-
-	appService := service.NewAppServiceWithJobStore(qdrantService, stateStore, chatHistoryStore, serverConfig, mcpJobStore)
 	stopUploadStagingCleanup := startUploadStagingCleanup(appService)
 	defer stopUploadStagingCleanup()
 	stopMCPJobMaintenance := startMCPJobMaintenance(appService)

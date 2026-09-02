@@ -25,6 +25,7 @@ type mcpJobItem struct {
 	UploadID   string
 	FileName   string
 	Checksum   string
+	Size       int64
 	Status     string
 	DocumentID string
 	Error      string
@@ -58,16 +59,20 @@ func (s *MCPJobStore) CreateItems(jobID string, items []mcpJobItem) error {
 			rollback()
 			return fmt.Errorf("mcp job item upload id is required")
 		}
+		if item.Size < 0 {
+			rollback()
+			return fmt.Errorf("mcp job item size cannot be negative")
+		}
 		item.Status = normalizeMCPJobItemStatus(item.Status)
 		if item.UpdatedAt == "" {
 			item.UpdatedAt = s.nowUTC().Format(time.RFC3339Nano)
 		}
 		if _, err := tx.Exec(`INSERT INTO mcp_job_items (
-				job_id, upload_id, file_name, checksum, status, document_id, error,
-				error_code, retryable, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					job_id, upload_id, file_name, checksum, status, document_id, error,
+					error_code, retryable, size, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
-			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
+			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.Size, item.UpdatedAt,
 		); err != nil {
 			rollback()
 			return fmt.Errorf("create mcp job item %s: %w", item.UploadID, err)
@@ -131,17 +136,21 @@ func (s *MCPJobStore) ensureItems(jobID string, items []mcpJobItem, expectedLeas
 			rollback()
 			return false, fmt.Errorf("mcp job item upload id is required")
 		}
+		if item.Size < 0 {
+			rollback()
+			return false, fmt.Errorf("mcp job item size cannot be negative")
+		}
 		item.Status = normalizeMCPJobItemStatus(item.Status)
 		if item.UpdatedAt == "" {
 			item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		if _, err := tx.Exec(`INSERT INTO mcp_job_items (
-			job_id, upload_id, file_name, checksum, status, document_id, error,
-			error_code, retryable, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(job_id, upload_id) DO NOTHING`,
+				job_id, upload_id, file_name, checksum, status, document_id, error,
+				error_code, retryable, size, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(job_id, upload_id) DO NOTHING`,
 			item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
-			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
+			strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.Size, item.UpdatedAt,
 		); err != nil {
 			rollback()
 			return false, fmt.Errorf("ensure mcp job item %s: %w", item.UploadID, err)
@@ -158,8 +167,8 @@ func (s *MCPJobStore) ListItems(jobID string) ([]mcpJobItem, error) {
 		return nil, fmt.Errorf("mcp job store is nil")
 	}
 	rows, err := s.db.Query(`SELECT job_id, upload_id, file_name, checksum, status,
-		document_id, error, error_code, retryable, updated_at
-		FROM mcp_job_items WHERE job_id = ? ORDER BY updated_at ASC, upload_id ASC`, strings.TrimSpace(jobID))
+			document_id, error, error_code, retryable, size, updated_at
+			FROM mcp_job_items WHERE job_id = ? ORDER BY updated_at ASC, upload_id ASC`, strings.TrimSpace(jobID))
 	if err != nil {
 		return nil, fmt.Errorf("list mcp job items: %w", err)
 	}
@@ -183,7 +192,7 @@ func (s *MCPJobStore) GetItem(jobID, uploadID string) (mcpJobItem, bool, error) 
 		return mcpJobItem{}, false, fmt.Errorf("mcp job store is nil")
 	}
 	row := s.db.QueryRow(`SELECT job_id, upload_id, file_name, checksum, status,
-		document_id, error, error_code, retryable, updated_at
+		document_id, error, error_code, retryable, size, updated_at
 		FROM mcp_job_items WHERE job_id = ? AND upload_id = ?`, strings.TrimSpace(jobID), strings.TrimSpace(uploadID))
 	item, err := scanMCPJobItem(row)
 	if err != nil {
@@ -206,6 +215,9 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 	item.UploadID = strings.TrimSpace(item.UploadID)
 	if item.JobID == "" || item.UploadID == "" {
 		return false, fmt.Errorf("mcp job item identifiers are required")
+	}
+	if item.Size < 0 {
+		return false, fmt.Errorf("mcp job item size cannot be negative")
 	}
 	item.Status = normalizeMCPJobItemStatus(item.Status)
 	if item.UpdatedAt == "" {
@@ -235,11 +247,12 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 	}
 	if _, err := tx.Exec(`INSERT INTO mcp_job_items (
 		job_id, upload_id, file_name, checksum, status, document_id, error,
-		error_code, retryable, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		error_code, retryable, size, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(job_id, upload_id) DO UPDATE SET
 		file_name = excluded.file_name,
 		checksum = excluded.checksum,
+		size = excluded.size,
 		status = excluded.status,
 		document_id = excluded.document_id,
 		error = excluded.error,
@@ -247,7 +260,7 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 		retryable = excluded.retryable,
 		updated_at = excluded.updated_at`,
 		item.JobID, item.UploadID, normalizeMCPJobItemFileName(item.FileName), strings.ToLower(strings.TrimSpace(item.Checksum)), item.Status,
-		strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.UpdatedAt,
+		strings.TrimSpace(item.DocumentID), redactMCPJobMessage(item.Error), strings.TrimSpace(item.ErrorCode), boolToInt(item.Retryable), item.Size, item.UpdatedAt,
 	); err != nil {
 		rollback()
 		return false, fmt.Errorf("update mcp job item: %w", err)
@@ -273,7 +286,7 @@ func scanMCPJobItem(row mcpJobRowScanner) (mcpJobItem, error) {
 	var retryable int
 	if err := row.Scan(
 		&item.JobID, &item.UploadID, &item.FileName, &item.Checksum, &item.Status,
-		&item.DocumentID, &item.Error, &item.ErrorCode, &retryable, &item.UpdatedAt,
+		&item.DocumentID, &item.Error, &item.ErrorCode, &retryable, &item.Size, &item.UpdatedAt,
 	); err != nil {
 		return mcpJobItem{}, err
 	}

@@ -69,8 +69,13 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	owner := auth.PrincipalFromContext(c)
+	if err := h.appService.ValidateBatchIndexInputBytes(req.UploadIDs, owner); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if req.Async {
-		job, err := h.appService.StartBatchIndexJobAs(knowledgeBaseID, req.UploadIDs, concurrency, auth.PrincipalFromContext(c))
+		job, err := h.appService.StartBatchIndexJobAs(knowledgeBaseID, req.UploadIDs, concurrency, owner)
 		if err != nil {
 			writeError(c, http.StatusBadRequest, err.Error())
 			return
@@ -82,7 +87,7 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 	start := time.Now()
 
 	// 批量索引
-	results := h.batchIndexFromStaged(knowledgeBaseID, req.UploadIDs, concurrency, auth.PrincipalFromContext(c))
+	results := h.batchIndexFromStaged(knowledgeBaseID, req.UploadIDs, concurrency, owner)
 
 	// 统计结果
 	successful := 0

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +102,68 @@ func TestMCPJobStorePersistsAndSanitizesJobRecord(t *testing.T) {
 	}
 	if loaded.Descriptor.UploadID != "upl-1" || loaded.Descriptor.FileName != "guide.md" {
 		t.Fatalf("expected durable descriptor, got %+v", loaded.Descriptor)
+	}
+}
+
+func TestMCPJobStorePersistsBatchInputMetadataAndProtectsFile(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	info, err := os.Stat(store.Path())
+	if err != nil {
+		t.Fatalf("stat mcp job store: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("expected mcp job store mode 0600, got %04o", got)
+	}
+
+	record := testMCPJobRecord("job-batch-input-metadata", time.Now().UTC())
+	record.Job.Type = "batch-index"
+	record.Descriptor = mcpJobDescriptor{
+		Version:     mcpJobDescriptorVersion,
+		Type:        "batch-index",
+		UploadIDs:   []string{"upload-sized"},
+		Concurrency: 1,
+		InputBytes:  42,
+	}
+	if err := store.Create(record); err != nil {
+		t.Fatalf("create batch input record: %v", err)
+	}
+	if err := store.CreateItems(record.Job.ID, []mcpJobItem{{
+		UploadID:  "upload-sized",
+		FileName:  "sized.txt",
+		Size:      42,
+		Status:    mcpJobItemPending,
+		Retryable: true,
+	}}); err != nil {
+		t.Fatalf("create sized batch item: %v", err)
+	}
+	loaded, found, err := store.Get(record.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load batch input record: found=%t err=%v", found, err)
+	}
+	if loaded.Descriptor.InputBytes != 42 {
+		t.Fatalf("expected persisted input bytes 42, got %d", loaded.Descriptor.InputBytes)
+	}
+	items, err := store.ListItems(record.Job.ID)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("load batch input item: len=%d err=%v", len(items), err)
+	}
+	if items[0].Size != 42 {
+		t.Fatalf("expected persisted item size 42, got %d", items[0].Size)
+	}
+}
+
+func TestMCPBatchInputSizeLimit(t *testing.T) {
+	if err := ValidateMCPBatchInputBytes(mcpBatchMaxInputBytes); err != nil {
+		t.Fatalf("expected maximum batch input size to be accepted: %v", err)
+	}
+	if err := ValidateMCPBatchInputBytes(mcpBatchMaxInputBytes + 1); err == nil {
+		t.Fatal("expected batch input over the limit to be rejected")
+	}
+	if _, err := mcpBatchInputBytes([]mcpJobItem{
+		{UploadID: "first", Size: mcpBatchMaxInputBytes - 1},
+		{UploadID: "second", Size: 2},
+	}); err == nil {
+		t.Fatal("expected aggregate batch input size to be rejected")
 	}
 }
 

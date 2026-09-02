@@ -586,6 +586,80 @@ func TestMCPJobServiceGracefulShutdownReleasesLeaseForNextRestart(t *testing.T) 
 	}
 }
 
+func TestMCPJobServiceWaitsBeforeClosingStoreAfterShutdownTimeout(t *testing.T) {
+	root := t.TempDir()
+	config := durableMCPTestConfig(root)
+	store, err := NewMCPJobStore(filepath.Join(root, "mcp-jobs.db"))
+	if err != nil {
+		t.Fatalf("create job store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close job store: %v", err)
+		}
+	}()
+	service := NewAppServiceWithJobStore(nil, NewAppStateStore(config.StateFile), nil, config, store)
+
+	job := model.MCPJob{
+		ID:        "job-shutdown-timeout",
+		Type:      "import",
+		Status:    "queued",
+		Resumable: true,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	ok, err := service.registerMCPJobWithDescriptor(job, func() {}, nil, mcpJobDescriptor{
+		Version: mcpJobDescriptorVersion,
+		Type:    "import",
+	})
+	if err != nil || !ok {
+		t.Fatalf("register timeout job: ok=%t err=%v", ok, err)
+	}
+
+	releaseWorker := make(chan struct{})
+	workerStarted := make(chan struct{})
+	go func() {
+		defer service.mcpJobWG.Done()
+		close(workerStarted)
+		<-releaseWorker
+	}()
+	<-workerStarted
+
+	shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	err = service.ShutdownJobs(shutdownContext)
+	shutdownCancel()
+	if err == nil {
+		t.Fatal("expected shutdown timeout while worker is still running")
+	}
+	if err != context.DeadlineExceeded {
+		t.Fatalf("expected shutdown deadline error, got %v", err)
+	}
+
+	waitDone := make(chan struct{})
+	go func() {
+		service.WaitForMCPJobs()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		t.Fatal("expected final cleanup wait to remain blocked")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, found, err := store.Get(job.ID); err != nil || !found {
+		t.Fatalf("expected job store to remain usable during cleanup wait: found=%t err=%v", found, err)
+	}
+
+	close(releaseWorker)
+	select {
+	case <-waitDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for worker cleanup")
+	}
+	if err := service.ShutdownJobs(context.Background()); err != nil {
+		t.Fatalf("finish shutdown after worker exit: %v", err)
+	}
+}
+
 func TestMCPJobServiceGracefulShutdownReleasesTrackedStagingLease(t *testing.T) {
 	root := t.TempDir()
 	config := durableMCPTestConfig(root)

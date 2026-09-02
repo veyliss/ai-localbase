@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	mcpJobStoreSchemaVersion = 1
+	mcpJobStoreSchemaVersion = 2
 	mcpJobStoreDefaultKeep   = 50
 	mcpJobLeaseDuration      = 30 * time.Second
 	mcpJobHeartbeatInterval  = 10 * time.Second
@@ -50,6 +50,7 @@ type mcpJobDescriptor struct {
 	UploadIDs       []string `json:"uploadIds,omitempty"`
 	Concurrency     int      `json:"concurrency,omitempty"`
 	MaxPerDocument  int      `json:"maxPerDocument,omitempty"`
+	InputBytes      int64    `json:"inputBytes,omitempty"`
 }
 
 type mcpJobStoreRecord struct {
@@ -167,6 +168,7 @@ func (s *MCPJobStore) init() error {
 			error TEXT NOT NULL DEFAULT '',
 			error_code TEXT NOT NULL DEFAULT '',
 			retryable INTEGER NOT NULL DEFAULT 1,
+			size INTEGER NOT NULL DEFAULT 0,
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY (job_id, upload_id)
 		);`,
@@ -189,7 +191,42 @@ func (s *MCPJobStore) init() error {
 }
 
 func (s *MCPJobStore) ensureColumns() error {
-	rows, err := s.db.Query(`PRAGMA table_info(mcp_jobs)`)
+	if err := s.ensureColumnsForTable("mcp_jobs", []struct {
+		name       string
+		definition string
+	}{
+		{"error_code", "TEXT NOT NULL DEFAULT ''"},
+		{"descriptor_json", "TEXT NOT NULL DEFAULT '{}'"},
+		{"resumable", "INTEGER NOT NULL DEFAULT 1"},
+		{"recovery_state", "TEXT NOT NULL DEFAULT ''"},
+		{"attempt", "INTEGER NOT NULL DEFAULT 0"},
+		{"lease_owner", "TEXT NOT NULL DEFAULT ''"},
+		{"lease_expires_at", "TEXT NOT NULL DEFAULT ''"},
+		{"last_heartbeat_at", "TEXT NOT NULL DEFAULT ''"},
+		{"next_action", "TEXT NOT NULL DEFAULT ''"},
+	}); err != nil {
+		return err
+	}
+	return s.ensureColumnsForTable("mcp_job_items", []struct {
+		name       string
+		definition string
+	}{
+		{"size", "INTEGER NOT NULL DEFAULT 0"},
+	})
+}
+
+func (s *MCPJobStore) ensureColumnsForTable(table string, columns []struct {
+	name       string
+	definition string
+}) error {
+	pragma := ""
+	switch table {
+	case "mcp_jobs", "mcp_job_items":
+		pragma = "PRAGMA table_info(" + table + ")"
+	default:
+		return fmt.Errorf("unsupported mcp job store table %q", table)
+	}
+	rows, err := s.db.Query(pragma)
 	if err != nil {
 		return fmt.Errorf("inspect mcp job store schema: %w", err)
 	}
@@ -211,26 +248,11 @@ func (s *MCPJobStore) ensureColumns() error {
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close mcp job store schema rows: %w", err)
 	}
-
-	legacyColumns := []struct {
-		name       string
-		definition string
-	}{
-		{"error_code", "TEXT NOT NULL DEFAULT ''"},
-		{"descriptor_json", "TEXT NOT NULL DEFAULT '{}'"},
-		{"resumable", "INTEGER NOT NULL DEFAULT 1"},
-		{"recovery_state", "TEXT NOT NULL DEFAULT ''"},
-		{"attempt", "INTEGER NOT NULL DEFAULT 0"},
-		{"lease_owner", "TEXT NOT NULL DEFAULT ''"},
-		{"lease_expires_at", "TEXT NOT NULL DEFAULT ''"},
-		{"last_heartbeat_at", "TEXT NOT NULL DEFAULT ''"},
-		{"next_action", "TEXT NOT NULL DEFAULT ''"},
-	}
-	for _, column := range legacyColumns {
+	for _, column := range columns {
 		if found[column.name] {
 			continue
 		}
-		if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE mcp_jobs ADD COLUMN %s %s`, column.name, column.definition)); err != nil {
+		if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column.name, column.definition)); err != nil {
 			return fmt.Errorf("add mcp job store column %s: %w", column.name, err)
 		}
 	}
@@ -888,6 +910,9 @@ func validateMCPJobDescriptor(descriptor mcpJobDescriptor, fallbackType string) 
 		return descriptor, fmt.Errorf("invalid persisted batch concurrency: %w", err)
 	}
 	descriptor.Concurrency = concurrency
+	if descriptor.InputBytes < 0 || descriptor.InputBytes > mcpBatchMaxInputBytes {
+		return descriptor, fmt.Errorf("invalid persisted batch input size: must be between 0 and %s", util.FormatFileSize(mcpBatchMaxInputBytes))
+	}
 	return descriptor, nil
 }
 

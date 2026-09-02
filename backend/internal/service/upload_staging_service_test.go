@@ -356,6 +356,35 @@ func TestUploadStagingRejectsManifestPathTraversal(t *testing.T) {
 	}
 }
 
+func TestUploadStagingManifestLoadFailureCanRecoverWithoutRestart(t *testing.T) {
+	rootDir := t.TempDir()
+	manifestPath := filepath.Join(rootDir, "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("write broken manifest: %v", err)
+	}
+
+	staging := NewUploadStagingService(rootDir, time.Hour)
+	if err := staging.ManifestLoadError(); err == nil {
+		t.Fatal("expected initial manifest load to fail")
+	}
+	if _, err := staging.StageBytes("blocked.txt", []byte("content"), "test"); err == nil {
+		t.Fatal("expected staging to remain blocked while manifest is invalid")
+	}
+
+	if err := os.WriteFile(manifestPath, []byte(`{"version":2,"items":[]}`), 0o600); err != nil {
+		t.Fatalf("repair manifest: %v", err)
+	}
+	if err := staging.ManifestHealth(); err != nil {
+		t.Fatalf("reload repaired manifest: %v", err)
+	}
+	if err := staging.ManifestLoadError(); err != nil {
+		t.Fatalf("expected recovered manifest health, got %v", err)
+	}
+	if _, err := staging.StageBytes("recovered.txt", []byte("content"), "test"); err != nil {
+		t.Fatalf("stage upload after manifest recovery: %v", err)
+	}
+}
+
 func TestUploadStagingMarkConsumedRollsBackWhenManifestWriteFails(t *testing.T) {
 	rootDir := t.TempDir()
 	staging := NewUploadStagingService(rootDir, time.Hour)

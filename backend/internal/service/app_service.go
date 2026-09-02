@@ -55,6 +55,7 @@ const (
 	mcpBatchDefaultConcurrency    = 3
 	mcpBatchMaxConcurrency        = 10
 	mcpBatchMaxInputItems         = 256
+	mcpBatchMaxInputBytes         = 512 * 1024 * 1024
 )
 
 var (
@@ -70,6 +71,33 @@ func ValidateBatchIndexInputs(uploadIDs []string) error {
 		return fmt.Errorf("uploadIds exceeds the maximum of %d items", mcpBatchMaxInputItems)
 	}
 	return nil
+}
+
+func ValidateMCPBatchInputBytes(total int64) error {
+	if total < 0 {
+		return fmt.Errorf("batch input size cannot be negative")
+	}
+	if total > mcpBatchMaxInputBytes {
+		return fmt.Errorf("batch input exceeds the maximum of %s", util.FormatFileSize(mcpBatchMaxInputBytes))
+	}
+	return nil
+}
+
+func mcpBatchInputBytes(items []mcpJobItem) (int64, error) {
+	var total int64
+	for _, item := range items {
+		if item.Size < 0 {
+			return 0, fmt.Errorf("staged upload size cannot be negative")
+		}
+		if item.Size > mcpBatchMaxInputBytes-total {
+			return 0, fmt.Errorf("batch input exceeds the maximum of %s", util.FormatFileSize(mcpBatchMaxInputBytes))
+		}
+		total += item.Size
+	}
+	if err := ValidateMCPBatchInputBytes(total); err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 // ValidateMCPBatchConcurrency validates the user-visible batch worker limit.
@@ -1324,6 +1352,10 @@ func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 	if err != nil {
 		return model.MCPJob{}, err
 	}
+	totalInputBytes, err := mcpBatchInputBytes(batchItems)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
 	for _, item := range batchItems {
 		if expected := strings.ToLower(strings.TrimSpace(expectedChecksums[item.UploadID])); expected != "" && !strings.EqualFold(expected, item.Checksum) {
 			return model.MCPJob{}, fmt.Errorf("staged upload checksum metadata mismatch")
@@ -1358,6 +1390,7 @@ func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 		KnowledgeBaseID: knowledgeBaseID,
 		UploadIDs:       append([]string(nil), ids...),
 		Concurrency:     concurrency,
+		InputBytes:      totalInputBytes,
 	}
 
 	if ok, err := s.registerMCPJobWithDescriptorAndItems(job, cancel, retryAction, descriptor, batchItems); !ok {
@@ -1377,6 +1410,37 @@ func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 	return publicMCPJob(job), nil
 }
 
+// ValidateBatchIndexInputBytes checks the staged files before the synchronous
+// HTTP path starts workers. The asynchronous path performs the same check when
+// it creates its durable descriptor.
+func (s *AppService) ValidateBatchIndexInputBytes(uploadIDs []string, owner AuthPrincipal) error {
+	if err := ValidateBatchIndexInputs(uploadIDs); err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(uploadIDs))
+	seen := make(map[string]struct{}, len(uploadIDs))
+	for _, uploadID := range uploadIDs {
+		trimmedID := strings.TrimSpace(uploadID)
+		if trimmedID == "" {
+			continue
+		}
+		if _, exists := seen[trimmedID]; exists {
+			continue
+		}
+		seen[trimmedID] = struct{}{}
+		ids = append(ids, trimmedID)
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("uploadIds cannot be empty")
+	}
+	items, err := s.prepareMCPBatchItems("", ids, owner)
+	if err != nil {
+		return err
+	}
+	_, err = mcpBatchInputBytes(items)
+	return err
+}
+
 func (s *AppService) prepareMCPBatchItems(knowledgeBaseID string, uploadIDs []string, owner AuthPrincipal) ([]mcpJobItem, error) {
 	if s == nil || s.staging == nil {
 		return nil, fmt.Errorf("upload staging service is not configured")
@@ -1387,12 +1451,14 @@ func (s *AppService) prepareMCPBatchItems(knowledgeBaseID string, uploadIDs []st
 			UploadID:  uploadID,
 			Status:    mcpJobItemPending,
 			Retryable: true,
+			Size:      0,
 			UpdatedAt: util.NowRFC3339(),
 		}
 		staged, err := s.staging.GetAs(uploadID, owner)
 		if err == nil {
 			item.FileName = staged.FileName
 			item.Checksum = staged.SHA256
+			item.Size = staged.Size
 			items = append(items, item)
 			continue
 		}
@@ -1455,6 +1521,13 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 	itemByUploadID, err := s.loadMCPBatchItemsForWorker(jobID, uploadIDs, owner, lease)
 	if err != nil {
 		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "批量索引任务失败。", nil, err.Error())
+		return
+	}
+	if totalInputBytes, sizeErr := s.mcpBatchInputBytesForWorker(jobID, uploadIDs, itemByUploadID); sizeErr != nil {
+		s.failMCPJobForInvalidDescriptor(jobID, lease, sizeErr.Error())
+		return
+	} else if descriptorBytes, descriptorOK := s.mcpBatchDescriptorInputBytes(jobID); descriptorOK && descriptorBytes != totalInputBytes {
+		s.failMCPJobForInvalidDescriptor(jobID, lease, "batch input size metadata mismatch")
 		return
 	}
 
@@ -1654,7 +1727,15 @@ func (s *AppService) loadMCPBatchItemsForWorker(jobID string, uploadIDs []string
 	items := make(map[string]mcpJobItem, len(uploadIDs))
 	if s == nil || s.mcpJobStore == nil {
 		for _, uploadID := range uploadIDs {
-			items[uploadID] = mcpJobItem{JobID: jobID, UploadID: uploadID, Status: mcpJobItemPending, Retryable: true}
+			item := mcpJobItem{JobID: jobID, UploadID: uploadID, Status: mcpJobItemPending, Retryable: true}
+			if s != nil && s.staging != nil {
+				if staged, stageErr := s.staging.GetAs(uploadID, owner); stageErr == nil {
+					item.FileName = staged.FileName
+					item.Checksum = staged.SHA256
+					item.Size = staged.Size
+				}
+			}
+			items[uploadID] = item
 		}
 		return items, nil
 	}
@@ -1663,6 +1744,13 @@ func (s *AppService) loadMCPBatchItemsForWorker(jobID string, uploadIDs []string
 		return nil, err
 	}
 	for _, item := range persisted {
+		if item.Size == 0 && s.staging != nil && item.Status != mcpJobItemFailed && item.Status != mcpJobItemCancelled {
+			if staged, stageErr := s.staging.GetAs(item.UploadID, owner); stageErr == nil {
+				item.FileName = staged.FileName
+				item.Checksum = staged.SHA256
+				item.Size = staged.Size
+			}
+		}
 		items[item.UploadID] = item
 	}
 	missing := make([]mcpJobItem, 0)
@@ -1673,6 +1761,7 @@ func (s *AppService) loadMCPBatchItemsForWorker(jobID string, uploadIDs []string
 				if staged, stageErr := s.staging.GetAs(uploadID, owner); stageErr == nil {
 					item.FileName = staged.FileName
 					item.Checksum = staged.SHA256
+					item.Size = staged.Size
 				} else {
 					item.Status = mcpJobItemFailed
 					item.ErrorCode, item.Error = PublicIndexFailure(stageErr)
@@ -1698,6 +1787,36 @@ func (s *AppService) loadMCPBatchItemsForWorker(jobID string, uploadIDs []string
 		}
 	}
 	return items, nil
+}
+
+func (s *AppService) mcpBatchInputBytesForWorker(jobID string, uploadIDs []string, items map[string]mcpJobItem) (int64, error) {
+	if len(uploadIDs) == 0 {
+		return 0, fmt.Errorf("uploadIds cannot be empty")
+	}
+	batchItems := make([]mcpJobItem, 0, len(uploadIDs))
+	for _, uploadID := range uploadIDs {
+		item, ok := items[uploadID]
+		if !ok {
+			return 0, fmt.Errorf("batch item %s is missing", uploadID)
+		}
+		item.JobID = jobID
+		item.UploadID = uploadID
+		batchItems = append(batchItems, item)
+	}
+	return mcpBatchInputBytes(batchItems)
+}
+
+func (s *AppService) mcpBatchDescriptorInputBytes(jobID string) (int64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.mcpJobMu.Lock()
+	defer s.mcpJobMu.Unlock()
+	descriptor, ok := s.mcpJobDescriptors[strings.TrimSpace(jobID)]
+	if !ok || descriptor.Type != "batch-index" || descriptor.InputBytes <= 0 {
+		return 0, false
+	}
+	return descriptor.InputBytes, true
 }
 
 func (s *AppService) markMCPBatchItemRunning(item mcpJobItem) bool {
@@ -2395,6 +2514,18 @@ func (s *AppService) ShutdownJobs(ctx context.Context) error {
 	}
 }
 
+// WaitForMCPJobs waits for all workers and the recovery monitor to exit. It is
+// intended for the final resource cleanup after ShutdownJobs has cancelled the
+// workers; keeping this wait separate prevents a timed-out HTTP shutdown from
+// closing the durable Job Store while a worker can still write to it.
+func (s *AppService) WaitForMCPJobs() {
+	if s == nil {
+		return
+	}
+	s.mcpJobWG.Wait()
+	s.mcpJobRecoveryWG.Wait()
+}
+
 func (s *AppService) restoreMCPJobs() {
 	if s == nil || s.mcpJobStore == nil {
 		return
@@ -2568,6 +2699,7 @@ func (s *AppService) failMCPJobForInvalidDescriptor(jobID string, lease mcpJobLe
 	if descriptor.Type == "batch-index" || job.Type == "batch-index" {
 		descriptor.Type = "batch-index"
 		descriptor.Concurrency = 0
+		descriptor.InputBytes = 0
 	}
 	s.mcpJobDescriptors[jobID] = normalizeMCPJobDescriptor(descriptor, job.Type)
 	if jobExists {
@@ -3075,6 +3207,10 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 	}
 	retriedJob.RetryCount = nextRetryCount
 	retriedJob.ParentJobID = jobID
+	// The administrator is authorized to operate on behalf of the source job,
+	// but the retry child must remain visible to that job's original owner.
+	retriedJob.OwnerUserID = job.OwnerUserID
+	retriedJob.OwnerAPIKeyID = job.OwnerAPIKeyID
 	if stored, exists := s.mcpJobs[retriedJob.ID]; exists {
 		stored.RetryCount = nextRetryCount
 		stored.ParentJobID = jobID

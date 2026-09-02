@@ -163,6 +163,8 @@ func TestMCPJobStoreRejectsUnserializableResult(t *testing.T) {
 func TestMCPJobStoreClaimHonorsLeaseAndRejectsStaleUpdate(t *testing.T) {
 	store := newTestMCPJobStore(t)
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	currentNow := now
+	store.now = func() time.Time { return currentNow }
 	record := testMCPJobRecord("job-lease", now)
 	if err := store.Create(record); err != nil {
 		t.Fatalf("create job: %v", err)
@@ -190,6 +192,7 @@ func TestMCPJobStoreClaimHonorsLeaseAndRejectsStaleUpdate(t *testing.T) {
 	if recovered.Job.RecoveryState != "" {
 		t.Fatalf("normal claim should not be marked as restart recovery: %+v", recovered.Job)
 	}
+	currentNow = now.Add(2 * time.Minute)
 
 	stale := claimed
 	stale.Job.Summary = "旧 Worker 的写入"

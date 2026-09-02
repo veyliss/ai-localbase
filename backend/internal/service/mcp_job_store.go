@@ -62,6 +62,7 @@ type mcpJobStoreRecord struct {
 type MCPJobStore struct {
 	db   *sql.DB
 	path string
+	now  func() time.Time
 }
 
 func NewMCPJobStore(path string) (*MCPJobStore, error) {
@@ -80,10 +81,14 @@ func NewMCPJobStore(path string) (*MCPJobStore, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
-	store := &MCPJobStore{db: db, path: trimmedPath}
+	store := &MCPJobStore{db: db, path: trimmedPath, now: func() time.Time { return time.Now().UTC() }}
 	if err := store.init(); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if err := os.Chmod(trimmedPath, 0o600); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("protect mcp job store file: %w", err)
 	}
 	return store, nil
 }
@@ -100,6 +105,13 @@ func (s *MCPJobStore) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+func (s *MCPJobStore) nowUTC() time.Time {
+	if s != nil && s.now != nil {
+		return s.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (s *MCPJobStore) init() error {
@@ -265,13 +277,14 @@ func (s *MCPJobStore) Update(record mcpJobStoreRecord, expectedLeaseOwner string
 	if err != nil {
 		return false, fmt.Errorf("prepare mcp job: %w", err)
 	}
-	values = append(values[1:], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt)
+	values = append(values[1:], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt, s.nowUTC().Format(time.RFC3339Nano))
 	result, err := s.db.Exec(`UPDATE mcp_jobs SET
 		type = ?, status = ?, progress = ?, summary = ?, result_json = ?, error = ?, error_code = ?,
 		warnings_json = ?, retryable = ?, retry_count = ?, parent_job_id = ?, created_at = ?, updated_at = ?,
 		completed_at = ?, owner_user_id = ?, owner_api_key_id = ?, descriptor_json = ?, resumable = ?,
 		recovery_state = ?, attempt = ?, lease_owner = ?, lease_expires_at = ?, last_heartbeat_at = ?, next_action = ?
-		WHERE id = ? AND lease_owner = ? AND attempt = ?`, values...)
+		WHERE id = ? AND lease_owner = ? AND attempt = ?
+		AND (lease_owner = '' OR lease_expires_at > ?)`, values...)
 	if err != nil {
 		return false, fmt.Errorf("update mcp job: %w", err)
 	}
@@ -298,13 +311,14 @@ func (s *MCPJobStore) UpdateState(record mcpJobStoreRecord, expectedLeaseOwner s
 		return false, fmt.Errorf("prepare mcp job: %w", err)
 	}
 	stateValues := append([]any{}, values[1:21]...)
-	stateValues = append(stateValues, values[23], values[24], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt)
+	stateValues = append(stateValues, values[23], values[24], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt, s.nowUTC().Format(time.RFC3339Nano))
 	result, err := s.db.Exec(`UPDATE mcp_jobs SET
 		type = ?, status = ?, progress = ?, summary = ?, result_json = ?, error = ?, error_code = ?,
 		warnings_json = ?, retryable = ?, retry_count = ?, parent_job_id = ?, created_at = ?, updated_at = ?,
 		completed_at = ?, owner_user_id = ?, owner_api_key_id = ?, descriptor_json = ?, resumable = ?,
 		recovery_state = ?, attempt = ?, last_heartbeat_at = ?, next_action = ?
-		WHERE id = ? AND lease_owner = ? AND attempt = ?`, stateValues...)
+		WHERE id = ? AND lease_owner = ? AND attempt = ?
+		AND (lease_owner = '' OR lease_expires_at > ?)`, stateValues...)
 	if err != nil {
 		return false, fmt.Errorf("update mcp job state: %w", err)
 	}
@@ -333,16 +347,28 @@ func (s *MCPJobStore) Claim(jobID, workerID string, leaseDuration time.Duration,
 }
 
 func (s *MCPJobStore) ClaimRecoverable(workerID string, leaseDuration time.Duration, now time.Time) ([]mcpJobStoreRecord, error) {
+	return s.ClaimRecoverableLimited(workerID, leaseDuration, now, 0)
+}
+
+// ClaimRecoverableLimited claims at most limit jobs. A non-positive limit keeps
+// the legacy behavior and claims every currently recoverable job.
+func (s *MCPJobStore) ClaimRecoverableLimited(workerID string, leaseDuration time.Duration, now time.Time, limit int) ([]mcpJobStoreRecord, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("mcp job store is nil")
 	}
 	nowValue := now.UTC().Format(time.RFC3339Nano)
-	rows, err := s.db.Query(`SELECT id FROM mcp_jobs
+	query := `SELECT id FROM mcp_jobs
 		WHERE resumable = 1 AND (
 			(status = 'queued' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
 			OR (status = 'running' AND (lease_owner = '' OR lease_expires_at = '' OR lease_expires_at <= ?))
 		)
-		ORDER BY updated_at ASC`, nowValue, nowValue)
+		ORDER BY updated_at ASC`
+	queryArgs := []any{nowValue, nowValue}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		queryArgs = append(queryArgs, limit)
+	}
+	rows, err := s.db.Query(query, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("list recoverable mcp jobs: %w", err)
 	}
@@ -415,13 +441,15 @@ func (s *MCPJobStore) RenewLease(jobID, workerID string, attempt int, leaseDurat
 	if leaseDuration <= 0 {
 		leaseDuration = mcpJobLeaseDuration
 	}
+	now = now.UTC()
 	result, err := s.db.Exec(`UPDATE mcp_jobs SET
 		lease_expires_at = ?, last_heartbeat_at = ?, updated_at = ?
-		WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')`,
-		now.Add(leaseDuration).UTC().Format(time.RFC3339Nano),
-		now.UTC().Format(time.RFC3339Nano),
-		now.UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(jobID), strings.TrimSpace(workerID), attempt,
+		WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
+		AND lease_expires_at > ?`,
+		now.Add(leaseDuration).Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano),
+		strings.TrimSpace(jobID), strings.TrimSpace(workerID), attempt, now.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return false, fmt.Errorf("renew mcp job lease: %w", err)
@@ -446,7 +474,8 @@ func (s *MCPJobStore) LeaseOwned(jobID, workerID string, attempt int) (bool, err
 	err := s.db.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM mcp_jobs
 		WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
-	)`, jobID, workerID, attempt).Scan(&exists)
+		AND lease_expires_at > ?
+	)`, jobID, workerID, attempt, s.nowUTC().Format(time.RFC3339Nano)).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check mcp job lease: %w", err)
 	}
@@ -578,14 +607,16 @@ func (s *MCPJobStore) CancelItems(jobID, expectedLeaseOwner string, expectedAtte
 	}
 	query := `UPDATE mcp_job_items SET status = 'cancelled', error = ?, error_code = 'cancelled', retryable = 0, updated_at = ?
 		WHERE job_id = ? AND status IN ('pending', 'running')`
-	args := []any{"任务已取消。", time.Now().UTC().Format(time.RFC3339Nano), strings.TrimSpace(jobID)}
+	nowValue := s.nowUTC().Format(time.RFC3339Nano)
+	args := []any{"任务已取消。", nowValue, strings.TrimSpace(jobID)}
 	if owner := strings.TrimSpace(expectedLeaseOwner); owner != "" {
 		query += ` AND EXISTS (
 			SELECT 1 FROM mcp_jobs WHERE mcp_jobs.id = mcp_job_items.job_id
 			AND mcp_jobs.lease_owner = ? AND mcp_jobs.attempt = ?
 			AND mcp_jobs.status IN ('queued', 'running')
+			AND mcp_jobs.lease_expires_at > ?
 		)`
-		args = append(args, owner, expectedAttempt)
+		args = append(args, owner, expectedAttempt, nowValue)
 	}
 	if _, err := s.db.Exec(query, args...); err != nil {
 		return fmt.Errorf("cancel mcp job items: %w", err)
@@ -607,7 +638,7 @@ func (s *MCPJobStore) Stats() (mcpJobStoreStats, error) {
 		return mcpJobStoreStats{}, fmt.Errorf("mcp job store is nil")
 	}
 	var stats mcpJobStoreStats
-	nowValue := time.Now().UTC().Format(time.RFC3339Nano)
+	nowValue := s.nowUTC().Format(time.RFC3339Nano)
 	if err := s.db.QueryRow(`SELECT
 		COALESCE(SUM(CASE WHEN status IN ('queued', 'running') THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN recovery_state = 'recovering' THEN 1 ELSE 0 END), 0),

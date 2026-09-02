@@ -60,7 +60,7 @@ func (s *MCPJobStore) CreateItems(jobID string, items []mcpJobItem) error {
 		}
 		item.Status = normalizeMCPJobItemStatus(item.Status)
 		if item.UpdatedAt == "" {
-			item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			item.UpdatedAt = s.nowUTC().Format(time.RFC3339Nano)
 		}
 		if _, err := tx.Exec(`INSERT INTO mcp_job_items (
 				job_id, upload_id, file_name, checksum, status, document_id, error,
@@ -114,7 +114,8 @@ func (s *MCPJobStore) ensureItems(jobID string, items []mcpJobItem, expectedLeas
 		if err := tx.QueryRow(`SELECT EXISTS(
 			SELECT 1 FROM mcp_jobs
 			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
-		)`, jobID, owner, expectedAttempt).Scan(&exists); err != nil {
+			AND lease_expires_at > ?
+		)`, jobID, owner, expectedAttempt, s.nowUTC().Format(time.RFC3339Nano)).Scan(&exists); err != nil {
 			rollback()
 			return false, fmt.Errorf("check mcp job lease for items: %w", err)
 		}
@@ -208,7 +209,7 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 	}
 	item.Status = normalizeMCPJobItemStatus(item.Status)
 	if item.UpdatedAt == "" {
-		item.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		item.UpdatedAt = s.nowUTC().Format(time.RFC3339Nano)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -222,7 +223,8 @@ func (s *MCPJobStore) UpdateItem(item mcpJobItem, expectedLeaseOwner string, exp
 		if err := tx.QueryRow(`SELECT EXISTS(
 			SELECT 1 FROM mcp_jobs
 			WHERE id = ? AND lease_owner = ? AND attempt = ? AND status IN ('queued', 'running')
-		)`, item.JobID, owner, expectedAttempt).Scan(&exists); err != nil {
+			AND lease_expires_at > ?
+		)`, item.JobID, owner, expectedAttempt, s.nowUTC().Format(time.RFC3339Nano)).Scan(&exists); err != nil {
 			rollback()
 			return false, fmt.Errorf("check mcp job lease for item: %w", err)
 		}

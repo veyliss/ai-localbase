@@ -51,6 +51,10 @@ const (
 	maxKnowledgeTemperature       = 0.5
 	mcpJobStagingLeaseDuration    = 15 * time.Second
 	mcpJobStagingLeaseWaitTimeout = 2 * mcpJobLeaseDuration
+	mcpJobRecoveryConcurrency     = 4
+	mcpBatchDefaultConcurrency    = 3
+	mcpBatchMaxConcurrency        = 10
+	mcpBatchMaxInputItems         = 256
 )
 
 var (
@@ -58,6 +62,25 @@ var (
 	ErrConversationScopeUpgradeNeeded = errors.New("legacy conversation scope is not trusted")
 	ErrMCPJobLeaseLost                = errors.New("mcp job lease is no longer owned by this worker")
 )
+
+// ValidateBatchIndexInputs applies the same input bound to HTTP, MCP, and
+// internal callers before any worker or checkpoint is created.
+func ValidateBatchIndexInputs(uploadIDs []string) error {
+	if len(uploadIDs) > mcpBatchMaxInputItems {
+		return fmt.Errorf("uploadIds exceeds the maximum of %d items", mcpBatchMaxInputItems)
+	}
+	return nil
+}
+
+func normalizeMCPBatchConcurrency(value int) int {
+	if value <= 0 {
+		return mcpBatchDefaultConcurrency
+	}
+	if value > mcpBatchMaxConcurrency {
+		return mcpBatchMaxConcurrency
+	}
+	return value
+}
 
 func normalizeServiceContext(ctx context.Context) context.Context {
 	if ctx == nil {
@@ -99,6 +122,7 @@ type AppService struct {
 	mcpJobRecoveryStop    chan struct{}
 	mcpJobRecoveryOnce    sync.Once
 	mcpJobRecoveryWG      sync.WaitGroup
+	mcpJobRecoverySlots   chan struct{}
 	mcpJobsShutdown       bool
 	mcpJobStatsMu         sync.Mutex
 	mcpJobPersistenceFail int64
@@ -253,6 +277,7 @@ func NewAppServiceWithJobStore(qdrant *QdrantService, store *AppStateStore, chat
 		mcpJobStore:         jobStore,
 		mcpWorkerID:         util.NextID("mcp-worker"),
 		mcpJobRecoveryStop:  make(chan struct{}),
+		mcpJobRecoverySlots: make(chan struct{}, mcpJobRecoveryConcurrency),
 		indexReservations:   map[string]chan struct{}{},
 	}
 	service.retrievalOrchestrator = NewRetrievalOrchestrator(service)
@@ -1253,12 +1278,10 @@ func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 	if len(uploadIDs) == 0 {
 		return model.MCPJob{}, fmt.Errorf("uploadIds cannot be empty")
 	}
-	if concurrency <= 0 {
-		concurrency = 3
+	if err := ValidateBatchIndexInputs(uploadIDs); err != nil {
+		return model.MCPJob{}, err
 	}
-	if concurrency > 10 {
-		concurrency = 10
-	}
+	concurrency = normalizeMCPBatchConcurrency(concurrency)
 
 	ids := make([]string, 0, len(uploadIDs))
 	seenIDs := make(map[string]struct{}, len(uploadIDs))
@@ -1392,6 +1415,11 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "批量索引任务失败。", nil, "uploadIds cannot be empty")
 		return
 	}
+	if err := ValidateBatchIndexInputs(uploadIDs); err != nil {
+		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "批量索引任务失败。", nil, err.Error())
+		return
+	}
+	concurrency = normalizeMCPBatchConcurrency(concurrency)
 	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 5
@@ -1448,23 +1476,34 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 		value    map[string]any
 		ok       bool
 	}
-	sem := make(chan struct{}, concurrency)
 	results := make(chan result, len(pendingUploadIDs))
 	var wg sync.WaitGroup
-	for _, uploadID := range pendingUploadIDs {
+	workerCount := minInt(concurrency, len(pendingUploadIDs))
+	work := make(chan string)
+	for index := 0; index < workerCount; index++ {
 		wg.Add(1)
-		go func(id string) {
+		go func() {
 			defer wg.Done()
-			item := itemByUploadID[id]
-			select {
-			case <-ctx.Done():
-				item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
-				if item.Status == mcpJobItemCancelled {
-					s.persistMCPBatchItemWithLease(item, lease)
+			for {
+				var id string
+				select {
+				case <-ctx.Done():
+					return
+				case nextID, ok := <-work:
+					if !ok {
+						return
+					}
+					id = nextID
 				}
-				results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
+				item := itemByUploadID[id]
+				if ctx.Err() != nil {
+					item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
+					if item.Status == mcpJobItemCancelled {
+						s.persistMCPBatchItemWithLease(item, lease)
+					}
+					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
+					continue
+				}
 				if !s.markMCPBatchItemRunningWithLease(item, lease) {
 					item.Status = mcpJobItemFailed
 					item.ErrorCode = "job_lease_lost"
@@ -1528,8 +1567,18 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 				s.persistMCPBatchItemWithLease(item, lease)
 				results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, document), ok: true}
 			}
-		}(uploadID)
+		}()
 	}
+	go func() {
+		defer close(work)
+		for _, uploadID := range pendingUploadIDs {
+			select {
+			case work <- uploadID:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	go func() {
 		wg.Wait()
 		close(results)

@@ -60,6 +60,10 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "uploadIds cannot be empty")
 		return
 	}
+	if err := service.ValidateBatchIndexInputs(req.UploadIDs); err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if req.Async {
 		job, err := h.appService.StartBatchIndexJobAs(knowledgeBaseID, req.UploadIDs, req.Concurrency, auth.PrincipalFromContext(c))
 		if err != nil {
@@ -72,12 +76,7 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 
 	// 设置默认并发数
 	concurrency := req.Concurrency
-	if concurrency <= 0 {
-		concurrency = 3 // 默认3个并发
-	}
-	if concurrency > 10 {
-		concurrency = 10 // 最大10个并发
-	}
+	concurrency = normalizeBatchConcurrency(concurrency)
 
 	start := time.Now()
 
@@ -108,24 +107,32 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 
 // batchIndexFromStaged 从暂存文件批量索引
 func (h *AppHandler) batchIndexFromStaged(knowledgeBaseID string, uploadIDs []string, concurrency int, owner service.AuthPrincipal) []IndexResult {
-	sem := make(chan struct{}, concurrency)
+	if err := service.ValidateBatchIndexInputs(uploadIDs); err != nil {
+		return []IndexResult{{Success: false, ErrorCode: "invalid_argument", Error: err.Error()}}
+	}
+	concurrency = normalizeBatchConcurrency(concurrency)
 	var wg sync.WaitGroup
 	resultChan := make(chan IndexResult, len(uploadIDs))
-
-	for _, uploadID := range uploadIDs {
-		wg.Add(1)
-		go func(uid string) {
-			defer wg.Done()
-
-			// 获取信号量
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			// 索引单个文档
-			result := h.indexSingleStaged(knowledgeBaseID, uid, owner)
-			resultChan <- result
-		}(uploadID)
+	work := make(chan string)
+	workerCount := concurrency
+	if len(uploadIDs) < workerCount {
+		workerCount = len(uploadIDs)
 	}
+	for index := 0; index < workerCount; index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for uploadID := range work {
+				resultChan <- h.indexSingleStaged(knowledgeBaseID, uploadID, owner)
+			}
+		}()
+	}
+	go func() {
+		for _, uploadID := range uploadIDs {
+			work <- uploadID
+		}
+		close(work)
+	}()
 
 	// 等待所有goroutine完成
 	wg.Wait()

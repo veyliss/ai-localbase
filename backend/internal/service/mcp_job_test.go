@@ -38,7 +38,7 @@ func TestMCPJobTerminalStatusIsNotOverwritten(t *testing.T) {
 	}
 }
 
-func TestCompleteMCPJobPersistsExplicitFailureForOversizedResult(t *testing.T) {
+func TestCompleteMCPJobPersistsTruncatedResultWithoutChangingOutcome(t *testing.T) {
 	store := newTestMCPJobStore(t)
 	now := time.Now().UTC()
 	record := testMCPJobRecord("job-result-fallback", now)
@@ -73,11 +73,14 @@ func TestCompleteMCPJobPersistsExplicitFailureForOversizedResult(t *testing.T) {
 	if !found {
 		t.Fatal("expected completed job to remain persisted")
 	}
-	if loaded.Job.Status != "failed" || loaded.Job.ErrorCode != "result_persistence_failed" {
-		t.Fatalf("expected explicit result persistence failure, got %+v", loaded.Job)
+	if loaded.Job.Status != "succeeded" || loaded.Job.ErrorCode != "" {
+		t.Fatalf("expected successful outcome to remain successful, got %+v", loaded.Job)
 	}
-	if loaded.Job.Result != nil {
-		t.Fatalf("expected oversized result not to be persisted, got %#v", loaded.Job.Result)
+	if loaded.Job.Result["truncated"] != true {
+		t.Fatalf("expected oversized result to be persisted with a truncation marker, got %#v", loaded.Job.Result)
+	}
+	if service.mcpJobs[record.Job.ID].Result["truncated"] != true {
+		t.Fatalf("expected in-memory result to use the bounded representation, got %#v", service.mcpJobs[record.Job.ID].Result)
 	}
 }
 

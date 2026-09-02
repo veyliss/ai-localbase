@@ -42,16 +42,6 @@ type BatchIndexResponse struct {
 	Job        *model.MCPJob `json:"job,omitempty"`
 }
 
-func normalizeBatchConcurrency(value int) int {
-	if value <= 0 {
-		return 3
-	}
-	if value > 10 {
-		return 10
-	}
-	return value
-}
-
 // BatchIndexDocuments 批量索引文档
 func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 	knowledgeBaseID := c.Param("id")
@@ -74,8 +64,13 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	concurrency, err := service.ValidateMCPBatchConcurrency(req.Concurrency)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if req.Async {
-		job, err := h.appService.StartBatchIndexJobAs(knowledgeBaseID, req.UploadIDs, req.Concurrency, auth.PrincipalFromContext(c))
+		job, err := h.appService.StartBatchIndexJobAs(knowledgeBaseID, req.UploadIDs, concurrency, auth.PrincipalFromContext(c))
 		if err != nil {
 			writeError(c, http.StatusBadRequest, err.Error())
 			return
@@ -83,10 +78,6 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 		c.JSON(http.StatusAccepted, BatchIndexResponse{Total: len(req.UploadIDs), Job: &job})
 		return
 	}
-
-	// 设置默认并发数
-	concurrency := req.Concurrency
-	concurrency = normalizeBatchConcurrency(concurrency)
 
 	start := time.Now()
 
@@ -120,7 +111,11 @@ func (h *AppHandler) batchIndexFromStaged(knowledgeBaseID string, uploadIDs []st
 	if err := service.ValidateBatchIndexInputs(uploadIDs); err != nil {
 		return []IndexResult{{Success: false, ErrorCode: "invalid_argument", Error: err.Error()}}
 	}
-	concurrency = normalizeBatchConcurrency(concurrency)
+	validatedConcurrency, err := service.ValidateMCPBatchConcurrency(concurrency)
+	if err != nil {
+		return []IndexResult{{Success: false, ErrorCode: "invalid_argument", Error: err.Error()}}
+	}
+	concurrency = validatedConcurrency
 	var wg sync.WaitGroup
 	resultChan := make(chan IndexResult, len(uploadIDs))
 	work := make(chan string)

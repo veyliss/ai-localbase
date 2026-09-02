@@ -72,14 +72,26 @@ func ValidateBatchIndexInputs(uploadIDs []string) error {
 	return nil
 }
 
+// ValidateMCPBatchConcurrency validates the user-visible batch worker limit.
+// Zero means "use the service default"; invalid values are rejected instead
+// of being silently clamped, which is important when the value came from a
+// durable job descriptor.
+func ValidateMCPBatchConcurrency(value int) (int, error) {
+	if value == 0 {
+		return mcpBatchDefaultConcurrency, nil
+	}
+	if value < 0 || value > mcpBatchMaxConcurrency {
+		return 0, fmt.Errorf("batch concurrency must be between 1 and %d, or 0 for the default", mcpBatchMaxConcurrency)
+	}
+	return value, nil
+}
+
 func normalizeMCPBatchConcurrency(value int) int {
-	if value <= 0 {
+	normalized, err := ValidateMCPBatchConcurrency(value)
+	if err != nil {
 		return mcpBatchDefaultConcurrency
 	}
-	if value > mcpBatchMaxConcurrency {
-		return mcpBatchMaxConcurrency
-	}
-	return value
+	return normalized
 }
 
 func normalizeServiceContext(ctx context.Context) context.Context {
@@ -1286,7 +1298,11 @@ func (s *AppService) startBatchIndexJobAs(knowledgeBaseID string, uploadIDs []st
 	if err := ValidateBatchIndexInputs(uploadIDs); err != nil {
 		return model.MCPJob{}, err
 	}
-	concurrency = normalizeMCPBatchConcurrency(concurrency)
+	validatedConcurrency, err := ValidateMCPBatchConcurrency(concurrency)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
+	concurrency = validatedConcurrency
 
 	ids := make([]string, 0, len(uploadIDs))
 	seenIDs := make(map[string]struct{}, len(uploadIDs))
@@ -1424,7 +1440,12 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 		s.completeMCPJobWithLease(jobID, lease, "failed", 100, "批量索引任务失败。", nil, err.Error())
 		return
 	}
-	concurrency = normalizeMCPBatchConcurrency(concurrency)
+	validatedConcurrency, err := ValidateMCPBatchConcurrency(concurrency)
+	if err != nil {
+		s.failMCPJobForInvalidDescriptor(jobID, lease, err.Error())
+		return
+	}
+	concurrency = validatedConcurrency
 	s.updateMCPJobWithLease(jobID, lease, func(job *model.MCPJob) {
 		job.Status = "running"
 		job.Progress = 5
@@ -2512,8 +2533,13 @@ func mcpJobOwnerFromRecord(job model.MCPJob) AuthPrincipal {
 }
 
 func (s *AppService) runRecoveredMCPJob(ctx context.Context, job model.MCPJob, descriptor mcpJobDescriptor, owner AuthPrincipal) {
-	descriptor = normalizeMCPJobDescriptor(descriptor, job.Type)
 	lease := s.mcpJobLeaseForWorker(ctx, job.ID)
+	validatedDescriptor, err := validateMCPJobDescriptor(descriptor, job.Type)
+	if err != nil {
+		s.failMCPJobForInvalidDescriptor(job.ID, lease, err.Error())
+		return
+	}
+	descriptor = validatedDescriptor
 	switch descriptor.Type {
 	case "import":
 		s.runMCPImportJob(ctx, job.ID, descriptor, owner)
@@ -2528,6 +2554,30 @@ func (s *AppService) runRecoveredMCPJob(ctx context.Context, job model.MCPJob, d
 	}
 }
 
+// failMCPJobForInvalidDescriptor rejects a persisted job before its worker can
+// touch an upload or an index. The invalid field is cleared only for the
+// terminal diagnostic write, so the worker never silently executes a clamped
+// value and the failure itself remains durable.
+func (s *AppService) failMCPJobForInvalidDescriptor(jobID string, lease mcpJobLease, message string) {
+	if s == nil {
+		return
+	}
+	s.mcpJobMu.Lock()
+	job, jobExists := s.mcpJobs[jobID]
+	descriptor := s.mcpJobDescriptors[jobID]
+	if descriptor.Type == "batch-index" || job.Type == "batch-index" {
+		descriptor.Type = "batch-index"
+		descriptor.Concurrency = 0
+	}
+	s.mcpJobDescriptors[jobID] = normalizeMCPJobDescriptor(descriptor, job.Type)
+	if jobExists {
+		job.Resumable = false
+		s.mcpJobs[jobID] = job
+	}
+	s.mcpJobMu.Unlock()
+	s.completeMCPJobWithLease(jobID, lease, "failed", 100, "任务恢复失败。", nil, message)
+}
+
 func jobRequestFromMCPDescriptor(descriptor mcpJobDescriptor) model.GenerateEvalDatasetRequest {
 	return model.GenerateEvalDatasetRequest{
 		KnowledgeBaseID: descriptor.KnowledgeBaseID,
@@ -2537,7 +2587,11 @@ func jobRequestFromMCPDescriptor(descriptor mcpJobDescriptor) model.GenerateEval
 }
 
 func (s *AppService) startMCPJobFromDescriptor(descriptor mcpJobDescriptor, owner AuthPrincipal) (model.MCPJob, error) {
-	descriptor = normalizeMCPJobDescriptor(descriptor, descriptor.Type)
+	validatedDescriptor, err := validateMCPJobDescriptor(descriptor, descriptor.Type)
+	if err != nil {
+		return model.MCPJob{}, err
+	}
+	descriptor = validatedDescriptor
 	switch descriptor.Type {
 	case "import":
 		return s.StartMCPImportJobAs(model.MCPStartImportJobRequest{
@@ -2979,6 +3033,7 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 		s.mcpJobMu.Unlock()
 		return model.MCPJob{}, fmt.Errorf("job cannot be retried: retry limit reached or job is not retryable")
 	}
+	retryOwner := mcpJobOwnerFromRecord(job)
 	retryAction := s.mcpJobRetries[jobID]
 	if retryAction == nil {
 		descriptor := s.mcpJobDescriptors[jobID]
@@ -2988,11 +3043,11 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 				if len(retryUploadIDs) == 0 {
 					return model.MCPJob{}, fmt.Errorf("batch job has no retryable items")
 				}
-				return s.startBatchIndexJobAs(descriptor.KnowledgeBaseID, retryUploadIDs, descriptor.Concurrency, owner, expectedChecksums)
+				return s.startBatchIndexJobAs(descriptor.KnowledgeBaseID, retryUploadIDs, descriptor.Concurrency, retryOwner, expectedChecksums)
 			}
 		} else if descriptor.Type != "" {
 			retryAction = func() (model.MCPJob, error) {
-				return s.startMCPJobFromDescriptor(descriptor, owner)
+				return s.startMCPJobFromDescriptor(descriptor, retryOwner)
 			}
 		}
 	}
@@ -3027,7 +3082,10 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 			stored.Retryable = stored.Status == "failed" && nextRetryCount < mcpJobMaxRetries
 		}
 		s.mcpJobs[retriedJob.ID] = stored
-		s.persistMCPJobLocked(stored, false)
+		if !s.persistMCPJobLocked(stored, false) {
+			s.mcpJobMu.Unlock()
+			return model.MCPJob{}, fmt.Errorf("persist retry child relationship failed")
+		}
 		retriedJob = stored
 	}
 	if stored, exists := s.mcpJobs[jobID]; exists {
@@ -3035,7 +3093,10 @@ func (s *AppService) RetryMCPJobAs(jobID string, owner AuthPrincipal) (model.MCP
 		stored.Retryable = false
 		stored.UpdatedAt = util.NowRFC3339()
 		s.mcpJobs[jobID] = stored
-		s.persistMCPJobLocked(stored, false)
+		if !s.persistMCPJobLocked(stored, false) {
+			s.mcpJobMu.Unlock()
+			return model.MCPJob{}, fmt.Errorf("persist retry parent relationship failed")
+		}
 	}
 	s.mcpJobMu.Unlock()
 	return publicMCPJob(retriedJob), nil
@@ -3434,10 +3495,10 @@ func (s *AppService) completeMCPJobWithLease(jobID string, expectedLease mcpJobL
 	}
 	var resultPersistenceErr error
 	if s.mcpJobStore != nil {
-		job.Result, resultPersistenceErr = sanitizeMCPJobResultStrict(result)
-		if resultPersistenceErr == nil {
-			_, resultPersistenceErr = encodeMCPJobResult(job.Result)
-		}
+		// Oversized results are reduced to a bounded summary by the store
+		// serializer. Only an actually unserializable result is a persistence
+		// failure; result size must not rewrite the task's business outcome.
+		job.Result, resultPersistenceErr = prepareMCPJobResult(result)
 		if resultPersistenceErr != nil {
 			log.Printf("MCP job %s result cannot be persisted: %v", jobID, resultPersistenceErr)
 			status = "failed"
@@ -3537,6 +3598,8 @@ func classifyMCPJobErrorCode(status, errorMessage string) string {
 	switch {
 	case strings.Contains(message, "not found"):
 		return "not_found"
+	case strings.Contains(message, "invalid"), strings.Contains(message, "between"):
+		return "invalid_argument"
 	case strings.Contains(message, "required"), strings.Contains(message, "unsupported"):
 		return "invalid_argument"
 	case strings.Contains(message, "timeout"), strings.Contains(message, "deadline"):

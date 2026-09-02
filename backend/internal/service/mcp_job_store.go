@@ -822,6 +822,10 @@ func mcpJobStoreValues(record mcpJobStoreRecord) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	descriptor, err := validateMCPJobDescriptor(record.Descriptor, job.Type)
+	if err != nil {
+		return nil, fmt.Errorf("validate mcp job descriptor: %w", err)
+	}
 	resultJSON, err := encodeMCPJobResult(job.Result)
 	if err != nil {
 		return nil, err
@@ -835,7 +839,7 @@ func mcpJobStoreValues(record mcpJobStoreRecord) ([]any, error) {
 		}
 	}
 	descriptorJSON := "{}"
-	if encoded, err := json.Marshal(normalizeMCPJobDescriptor(record.Descriptor, job.Type)); err != nil {
+	if encoded, err := json.Marshal(descriptor); err != nil {
 		return nil, fmt.Errorf("encode mcp job descriptor: %w", err)
 	} else {
 		descriptorJSON = string(encoded)
@@ -868,10 +872,23 @@ func normalizeMCPJobDescriptor(descriptor mcpJobDescriptor, fallbackType string)
 	descriptor.UploadID = strings.TrimSpace(descriptor.UploadID)
 	descriptor.Checksum = strings.ToLower(strings.TrimSpace(descriptor.Checksum))
 	descriptor.UploadIDs = cloneStrings(descriptor.UploadIDs)
-	if descriptor.Type == "batch-index" {
-		descriptor.Concurrency = normalizeMCPBatchConcurrency(descriptor.Concurrency)
+	if descriptor.Type == "batch-index" && descriptor.Concurrency == 0 {
+		descriptor.Concurrency = mcpBatchDefaultConcurrency
 	}
 	return descriptor
+}
+
+func validateMCPJobDescriptor(descriptor mcpJobDescriptor, fallbackType string) (mcpJobDescriptor, error) {
+	descriptor = normalizeMCPJobDescriptor(descriptor, fallbackType)
+	if descriptor.Type != "batch-index" {
+		return descriptor, nil
+	}
+	concurrency, err := ValidateMCPBatchConcurrency(descriptor.Concurrency)
+	if err != nil {
+		return descriptor, fmt.Errorf("invalid persisted batch concurrency: %w", err)
+	}
+	descriptor.Concurrency = concurrency
+	return descriptor, nil
 }
 
 func normalizeMCPJobType(value string) string {
@@ -893,12 +910,31 @@ func prepareMCPJobForPersistence(job model.MCPJob) (model.MCPJob, error) {
 	for index := range job.Warnings {
 		job.Warnings[index] = redactMCPJobMessage(job.Warnings[index])
 	}
-	sanitizedResult, err := sanitizeMCPJobResultStrict(job.Result)
+	sanitizedResult, err := prepareMCPJobResult(job.Result)
 	if err != nil {
 		return model.MCPJob{}, fmt.Errorf("sanitize mcp job result: %w", err)
 	}
 	job.Result = sanitizedResult
 	return job, nil
+}
+
+func prepareMCPJobResult(values map[string]any) (map[string]any, error) {
+	sanitized, err := sanitizeMCPJobResultStrict(values)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := encodeMCPJobResult(sanitized)
+	if err != nil {
+		return nil, err
+	}
+	if encoded == "{}" {
+		return map[string]any{}, nil
+	}
+	var bounded map[string]any
+	if err := json.Unmarshal([]byte(encoded), &bounded); err != nil {
+		return nil, err
+	}
+	return bounded, nil
 }
 
 func sanitizeMCPJobResult(values map[string]any) map[string]any {
@@ -929,10 +965,115 @@ func encodeMCPJobResult(values map[string]any) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("encode mcp job result: %w", err)
 	}
+	if len(encoded) <= mcpJobResultMaxBytes {
+		return string(encoded), nil
+	}
+	truncated := truncateMCPJobResult(values, len(encoded))
+	encoded, err = json.Marshal(truncated)
+	if err != nil {
+		return "", fmt.Errorf("encode truncated mcp job result: %w", err)
+	}
 	if len(encoded) > mcpJobResultMaxBytes {
-		return "", fmt.Errorf("%w: %d bytes exceeds %d bytes", ErrMCPJobResultTooLarge, len(encoded), mcpJobResultMaxBytes)
+		return "", fmt.Errorf("%w: truncated result is %d bytes", ErrMCPJobResultTooLarge, len(encoded))
 	}
 	return string(encoded), nil
+}
+
+const (
+	mcpJobResultPreviewFields = 128
+	mcpJobResultPreviewRunes  = 256
+)
+
+// truncateMCPJobResult keeps bounded metadata and scalar counters while
+// dropping bulky payloads. The result remains valid JSON and therefore does
+// not change the terminal state or retry semantics of the parent job.
+func truncateMCPJobResult(values map[string]any, originalBytes int) map[string]any {
+	statistics := map[string]any{
+		"originalBytes":  originalBytes,
+		"maxBytes":       mcpJobResultMaxBytes,
+		"topLevelFields": len(values),
+		"arrayItems":     countMCPJobResultArrayItems(values),
+		"stringValues":   countMCPJobResultStrings(values),
+	}
+	result := map[string]any{
+		"truncated":  true,
+		"summary":    fmt.Sprintf("任务结果原始大小为 %d 字节，超过 %d 字节持久化上限，已保存摘要和统计信息。", originalBytes, mcpJobResultMaxBytes),
+		"statistics": statistics,
+		"truncation": map[string]any{
+			"originalBytes": originalBytes,
+			"maxBytes":      mcpJobResultMaxBytes,
+		},
+	}
+
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	omittedFields := 0
+	for _, key := range keys {
+		if key == "truncated" || key == "summary" || key == "statistics" || key == "truncation" {
+			continue
+		}
+		if len(result) >= mcpJobResultPreviewFields+4 {
+			omittedFields++
+			continue
+		}
+		result[truncateRunes(key, 128)] = summarizeMCPJobResultValue(values[key])
+	}
+	if omittedFields > 0 {
+		result["omittedFields"] = omittedFields
+	}
+
+	encoded, err := json.Marshal(result)
+	if err == nil && len(encoded) <= mcpJobResultMaxBytes {
+		return result
+	}
+	// The metadata-only fallback is intentionally tiny even if a caller supplied
+	// an unusually large number of top-level fields or field names.
+	return map[string]any{
+		"truncated":  true,
+		"summary":    "任务结果过大，已保存摘要和统计信息。",
+		"statistics": statistics,
+		"truncation": map[string]any{
+			"originalBytes": originalBytes,
+			"maxBytes":      mcpJobResultMaxBytes,
+		},
+		"omittedFields": len(keys),
+	}
+}
+
+func summarizeMCPJobResultValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return truncateRunes(typed, mcpJobResultPreviewRunes)
+	case []any:
+		return map[string]any{"itemCount": len(typed)}
+	case map[string]any:
+		return map[string]any{"fieldCount": len(typed)}
+	default:
+		return value
+	}
+}
+
+func countMCPJobResultArrayItems(values map[string]any) int {
+	count := 0
+	for _, value := range values {
+		if items, ok := value.([]any); ok {
+			count += len(items)
+		}
+	}
+	return count
+}
+
+func countMCPJobResultStrings(values map[string]any) int {
+	count := 0
+	for _, value := range values {
+		if _, ok := value.(string); ok {
+			count++
+		}
+	}
+	return count
 }
 
 func sanitizeMCPJobResultMap(values map[string]any) map[string]any {

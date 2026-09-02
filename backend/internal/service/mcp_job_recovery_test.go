@@ -120,6 +120,67 @@ func TestMCPRetryRejectsChangedStagedMetadataAfterRestart(t *testing.T) {
 	}
 }
 
+func TestMCPRecoveryRejectsInvalidPersistedBatchConcurrency(t *testing.T) {
+	root := t.TempDir()
+	config := durableMCPTestConfig(root)
+	store, err := NewMCPJobStore(filepath.Join(root, "mcp-jobs.db"))
+	if err != nil {
+		t.Fatalf("create job store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close job store: %v", err)
+		}
+	}()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	job := model.MCPJob{
+		ID:        "job-invalid-persisted-concurrency",
+		Type:      "batch-index",
+		Status:    "queued",
+		Retryable: true,
+		Resumable: true,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.Create(mcpJobStoreRecord{
+		Job: job,
+		Descriptor: mcpJobDescriptor{
+			Version:     mcpJobDescriptorVersion,
+			Type:        "batch-index",
+			UploadIDs:   []string{"upload-invalid"},
+			Concurrency: 1,
+		},
+	}); err != nil {
+		t.Fatalf("create valid recovery record: %v", err)
+	}
+	claimed, ok, err := store.Claim(job.ID, "recovery-worker", time.Minute, time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("claim recovery record: ok=%t err=%v", ok, err)
+	}
+	lease := mcpJobLease{Owner: claimed.LeaseOwner, Attempt: claimed.Job.Attempt, ExpiresAt: claimed.LeaseExpiresAt}
+	service := NewAppService(nil, NewAppStateStore(config.StateFile), nil, config)
+	service.mcpJobStore = store
+	service.mcpJobMu.Lock()
+	service.mcpJobs[job.ID] = claimed.Job
+	service.mcpJobDescriptors[job.ID] = claimed.Descriptor
+	service.mcpJobLeases[job.ID] = lease
+	service.mcpJobMu.Unlock()
+	ctx := context.WithValue(context.Background(), mcpJobLeaseContextKey{}, mcpJobExecution{JobID: job.ID, Lease: lease})
+
+	invalid := claimed.Descriptor
+	invalid.Concurrency = mcpBatchMaxConcurrency + 1
+	service.runRecoveredMCPJob(ctx, claimed.Job, invalid, AuthPrincipal{})
+
+	loaded, found, err := store.Get(job.ID)
+	if err != nil || !found {
+		t.Fatalf("load rejected recovery job: found=%t err=%v", found, err)
+	}
+	if loaded.Job.Status != "failed" || loaded.Job.ErrorCode != "invalid_argument" || loaded.Job.Retryable {
+		t.Fatalf("expected invalid persisted concurrency to fail non-retryably, got %+v", loaded.Job)
+	}
+}
+
 func waitForMCPJobStatus(t *testing.T, service *AppService, jobID string, owner AuthPrincipal, expected string) model.MCPJob {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

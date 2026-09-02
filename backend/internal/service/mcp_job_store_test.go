@@ -1,7 +1,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -131,14 +130,58 @@ func TestRedactMCPJobMessageRemovesCommonFilesystemPaths(t *testing.T) {
 	}
 }
 
-func TestMCPJobStoreRejectsOversizedResult(t *testing.T) {
+func TestMCPJobStoreTruncatesOversizedResultWithoutChangingJobState(t *testing.T) {
 	store := newTestMCPJobStore(t)
 	record := testMCPJobRecord("job-result-too-large", time.Now().UTC())
 	record.Job.Result = oversizedMCPJobResult()
 
-	err := store.Create(record)
-	if err == nil || !errors.Is(err, ErrMCPJobResultTooLarge) {
-		t.Fatalf("expected oversized result to be rejected explicitly, got %v", err)
+	if err := store.Create(record); err != nil {
+		t.Fatalf("expected oversized result to be persisted as a summary, got %v", err)
+	}
+	loaded, found, err := store.Get(record.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load truncated result: found=%t err=%v", found, err)
+	}
+	if loaded.Job.Status != record.Job.Status || loaded.Job.Retryable != record.Job.Retryable {
+		t.Fatalf("expected job state to remain unchanged, got %+v", loaded.Job)
+	}
+	if loaded.Job.Result["truncated"] != true {
+		t.Fatalf("expected truncation marker, got %#v", loaded.Job.Result)
+	}
+	statistics, ok := loaded.Job.Result["statistics"].(map[string]any)
+	if !ok || statistics["originalBytes"] == nil || statistics["maxBytes"] == nil {
+		t.Fatalf("expected truncation statistics, got %#v", loaded.Job.Result)
+	}
+}
+
+func TestMCPJobStoreRejectsInvalidBatchConcurrency(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	for _, value := range []int{-1, mcpBatchMaxConcurrency + 1} {
+		record := testMCPJobRecord(fmt.Sprintf("job-invalid-concurrency-%d", value), time.Now().UTC())
+		record.Job.Type = "batch-index"
+		record.Descriptor = mcpJobDescriptor{
+			Version:     mcpJobDescriptorVersion,
+			Type:        "batch-index",
+			UploadIDs:   []string{"upload-1"},
+			Concurrency: value,
+		}
+		if err := store.Create(record); err == nil || !strings.Contains(err.Error(), "invalid persisted batch concurrency") {
+			t.Fatalf("expected invalid concurrency %d to be rejected, got %v", value, err)
+		}
+	}
+
+	defaultRecord := testMCPJobRecord("job-default-concurrency", time.Now().UTC())
+	defaultRecord.Job.Type = "batch-index"
+	defaultRecord.Descriptor = mcpJobDescriptor{Version: mcpJobDescriptorVersion, Type: "batch-index", UploadIDs: []string{"upload-1"}}
+	if err := store.Create(defaultRecord); err != nil {
+		t.Fatalf("create default concurrency record: %v", err)
+	}
+	loaded, found, err := store.Get(defaultRecord.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load default concurrency record: found=%t err=%v", found, err)
+	}
+	if loaded.Descriptor.Concurrency != mcpBatchDefaultConcurrency {
+		t.Fatalf("expected zero concurrency to use default %d, got %d", mcpBatchDefaultConcurrency, loaded.Descriptor.Concurrency)
 	}
 }
 

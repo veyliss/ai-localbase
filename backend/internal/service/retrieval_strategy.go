@@ -265,6 +265,7 @@ func (s *AppService) collectCandidates(ctx context.Context, knowledgeBaseIDs []s
 				}},
 			}
 		}
+		filter = s.withCurrentIndexFenceFilter(knowledgeBaseID, filter, firstNonEmpty(req.DocumentID, filenameDetectedDocID))
 
 		var items []SearchResult
 		if useHybrid {
@@ -323,6 +324,7 @@ func (s *AppService) collectCandidates(ctx context.Context, knowledgeBaseIDs []s
 					KnowledgeBaseID: payloadString(item.Payload, "knowledge_base_id", knowledgeBaseID),
 					DocumentID:      payloadString(item.Payload, "document_id", ""),
 					DocumentName:    payloadString(item.Payload, "document_name", "未知文档"),
+					IndexFence:      payloadString(item.Payload, "index_fence", ""),
 					Text:            text,
 					Index:           payloadInt(item.Payload, "chunk_index"),
 					Kind:            payloadString(item.Payload, "chunk_kind", "text"),
@@ -358,6 +360,105 @@ func (s *AppService) collectCandidates(ctx context.Context, knowledgeBaseIDs []s
 		"search_mode":       ternaryString(useHybrid, "hybrid", "dense"),
 	})
 	return results, nil
+}
+
+// withCurrentIndexFenceFilter keeps Qdrant from spending the candidate budget
+// on stale generations. A knowledge base may contain documents from different
+// index generations, so an explicit document can use a simple must clause;
+// otherwise each document becomes a nested should branch.
+func (s *AppService) withCurrentIndexFenceFilter(knowledgeBaseID string, base map[string]any, targetDocumentID string) map[string]any {
+	if s == nil || s.state == nil {
+		return base
+	}
+	knowledgeBaseID = strings.TrimSpace(knowledgeBaseID)
+	targetDocumentID = strings.TrimSpace(targetDocumentID)
+	if targetDocumentID != "" {
+		fence := s.currentDocumentIndexFence(knowledgeBaseID, targetDocumentID)
+		if fence == "" {
+			return base
+		}
+		return appendIndexFenceMust(base, fence)
+	}
+
+	s.state.Mu.RLock()
+	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
+	if ok {
+		kb.Documents = append([]model.Document(nil), kb.Documents...)
+	}
+	s.state.Mu.RUnlock()
+	if !ok || len(kb.Documents) == 0 {
+		return base
+	}
+	branches := make([]map[string]any, 0, len(kb.Documents))
+	for _, document := range kb.Documents {
+		documentID := strings.TrimSpace(document.ID)
+		if documentID == "" {
+			continue
+		}
+		must := []map[string]any{{
+			"key":   "document_id",
+			"match": map[string]any{"value": documentID},
+		}}
+		if fence := strings.TrimSpace(document.IndexFence); fence != "" {
+			must = append(must, map[string]any{
+				"key":   "index_fence",
+				"match": map[string]any{"value": fence},
+			})
+		}
+		branches = append(branches, map[string]any{"must": must})
+	}
+	if len(branches) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return map[string]any{"should": branches}
+	}
+	return map[string]any{"must": []map[string]any{{"filter": base}}, "should": branches}
+}
+
+func (s *AppService) currentDocumentIndexFence(knowledgeBaseID, documentID string) string {
+	if s == nil || s.state == nil {
+		return ""
+	}
+	s.state.Mu.RLock()
+	defer s.state.Mu.RUnlock()
+	kb, ok := s.state.KnowledgeBases[strings.TrimSpace(knowledgeBaseID)]
+	if !ok {
+		return ""
+	}
+	for _, document := range kb.Documents {
+		if strings.TrimSpace(document.ID) == strings.TrimSpace(documentID) {
+			return strings.TrimSpace(document.IndexFence)
+		}
+	}
+	return ""
+}
+
+func appendIndexFenceMust(filter map[string]any, fence string) map[string]any {
+	if strings.TrimSpace(fence) == "" {
+		return filter
+	}
+	if filter == nil {
+		filter = map[string]any{}
+	}
+	must, ok := filter["must"].([]map[string]any)
+	if !ok {
+		must = nil
+	}
+	filter["must"] = append(must, map[string]any{
+		"key":   "index_fence",
+		"match": map[string]any{"value": fence},
+	})
+	return filter
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (s *AppService) collectCandidatesForQueries(ctx context.Context, knowledgeBaseIDs []string, req model.ChatCompletionRequest, queryVector []float64, queries []string, candidateTopK int, useHybrid bool, originalQuery string) ([]RetrievedChunk, error) {

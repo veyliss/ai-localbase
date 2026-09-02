@@ -928,6 +928,31 @@ func TestFilterRetrievedChunksToScopeDropsForeignAndOrphanDocuments(t *testing.T
 	}
 }
 
+func TestFilterRetrievedChunksToScopeDropsStaleIndexGeneration(t *testing.T) {
+	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-school": {
+			ID: "kb-school",
+			Documents: []model.Document{{
+				ID:         "doc-school",
+				IndexFence: "mcp:job-current:2",
+			}},
+		},
+	}}}
+	chunks := []RetrievedChunk{
+		{DocumentChunk: DocumentChunk{ID: "current", KnowledgeBaseID: "kb-school", DocumentID: "doc-school", IndexFence: "mcp:job-current:2"}},
+		{DocumentChunk: DocumentChunk{ID: "stale", KnowledgeBaseID: "kb-school", DocumentID: "doc-school", IndexFence: "mcp:job-old:1"}},
+		{DocumentChunk: DocumentChunk{ID: "legacy", KnowledgeBaseID: "kb-school", DocumentID: "doc-school"}},
+	}
+	filtered := service.filterRetrievedChunksToScope(
+		model.ChatCompletionRequest{KnowledgeBaseID: "kb-school"},
+		[]string{"kb-school"},
+		chunks,
+	)
+	if len(filtered) != 1 || filtered[0].ID != "current" {
+		t.Fatalf("expected only current index generation, got %#v", filtered)
+	}
+}
+
 func TestBuildChatContextRejectsDocumentFromAnotherKnowledgeBase(t *testing.T) {
 	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
 		"kb-school": {ID: "kb-school", Documents: []model.Document{{ID: "doc-school"}}},

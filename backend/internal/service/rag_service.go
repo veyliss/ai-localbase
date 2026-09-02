@@ -146,6 +146,7 @@ type DocumentChunk struct {
 	KnowledgeBaseID string
 	DocumentID      string
 	DocumentName    string
+	IndexFence      string
 	Text            string
 	Index           int
 	Kind            string
@@ -269,6 +270,7 @@ func (s *RagService) BuildDocumentChunks(document model.Document, text string) [
 			KnowledgeBaseID: document.KnowledgeBaseID,
 			DocumentID:      document.ID,
 			DocumentName:    document.Name,
+			IndexFence:      strings.TrimSpace(document.IndexFence),
 			Text:            part,
 			Index:           nextIndex,
 			Kind:            kind,
@@ -300,6 +302,7 @@ func buildStructuredSummaryChunks(document model.Document, text string, startInd
 			KnowledgeBaseID: document.KnowledgeBaseID,
 			DocumentID:      document.ID,
 			DocumentName:    document.Name,
+			IndexFence:      strings.TrimSpace(document.IndexFence),
 			Text:            block,
 			Index:           startIndex + i,
 			Kind:            "structured_summary",
@@ -512,6 +515,21 @@ func (r *RagService) MultiQuerySearch(
 	threshold float32,
 	embeddingConfig model.EmbeddingModelConfig,
 ) ([]RetrievedChunk, error) {
+	return r.MultiQuerySearchWithFilter(ctx, queries, collectionName, topK, threshold, embeddingConfig, nil)
+}
+
+// MultiQuerySearchWithFilter is the filtered variant used when a collection
+// contains multiple index generations. Keeping the legacy method above avoids
+// changing callers that do not need a Qdrant filter.
+func (r *RagService) MultiQuerySearchWithFilter(
+	ctx context.Context,
+	queries []string,
+	collectionName string,
+	topK int,
+	threshold float32,
+	embeddingConfig model.EmbeddingModelConfig,
+	filter map[string]any,
+) ([]RetrievedChunk, error) {
 	if r == nil {
 		return nil, fmt.Errorf("rag service is nil")
 	}
@@ -567,7 +585,6 @@ func (r *RagService) MultiQuerySearch(
 				return
 			}
 
-			filter := map[string]any{}
 			items, err := r.qdrant.Search(ctx, collectionName, vectors[0], topK, filter)
 			if err != nil {
 				errChan <- err
@@ -591,6 +608,7 @@ func (r *RagService) MultiQuerySearch(
 						KnowledgeBaseID: payloadString(item.Payload, "knowledge_base_id", collectionName),
 						DocumentID:      payloadString(item.Payload, "document_id", ""),
 						DocumentName:    payloadString(item.Payload, "document_name", "未知文档"),
+						IndexFence:      payloadString(item.Payload, "index_fence", ""),
 						Text:            text,
 						Index:           payloadInt(item.Payload, "chunk_index"),
 						Kind:            payloadString(item.Payload, "chunk_kind", "text"),

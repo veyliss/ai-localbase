@@ -5481,7 +5481,17 @@ func (s *AppService) retrieveRelevantChunksWithContext(ctx context.Context, req 
 			candidates := make([]RetrievedChunk, 0)
 			seenChunkIDs := make(map[string]struct{})
 			for _, knowledgeBaseID := range knowledgeBaseIDs {
-				results, err := s.rag.MultiQuerySearch(ctx, queries, knowledgeBaseID, params.candidateTopK, 0, embeddingConfig)
+				filter := map[string]any{}
+				if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
+					filter = map[string]any{
+						"must": []map[string]any{{
+							"key":   "document_id",
+							"match": map[string]any{"value": documentID},
+						}},
+					}
+				}
+				filter = s.withCurrentIndexFenceFilter(knowledgeBaseID, filter, req.DocumentID)
+				results, err := s.rag.MultiQuerySearchWithFilter(ctx, queries, knowledgeBaseID, params.candidateTopK, 0, embeddingConfig, filter)
 				if err != nil {
 					return nil, fmt.Errorf("multi query search qdrant collection %s: %w", knowledgeBaseID, err)
 				}
@@ -5504,7 +5514,17 @@ func (s *AppService) retrieveRelevantChunksWithContext(ctx context.Context, req 
 				expandedCandidates := make([]RetrievedChunk, 0)
 				seenChunkIDs = make(map[string]struct{})
 				for _, knowledgeBaseID := range knowledgeBaseIDs {
-					results, err := s.rag.MultiQuerySearch(ctx, queries, knowledgeBaseID, expandedCandidateTopK, 0, embeddingConfig)
+					filter := map[string]any{}
+					if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
+						filter = map[string]any{
+							"must": []map[string]any{{
+								"key":   "document_id",
+								"match": map[string]any{"value": documentID},
+							}},
+						}
+					}
+					filter = s.withCurrentIndexFenceFilter(knowledgeBaseID, filter, req.DocumentID)
+					results, err := s.rag.MultiQuerySearchWithFilter(ctx, queries, knowledgeBaseID, expandedCandidateTopK, 0, embeddingConfig, filter)
 					if err != nil {
 						continue
 					}
@@ -5611,7 +5631,7 @@ func (s *AppService) filterRetrievedChunksToScope(req model.ChatCompletionReques
 		return nil
 	}
 
-	allowedKnowledgeBases := make(map[string]map[string]struct{}, len(knowledgeBaseIDs))
+	allowedKnowledgeBases := make(map[string]map[string]string, len(knowledgeBaseIDs))
 	s.state.Mu.RLock()
 	for _, knowledgeBaseID := range knowledgeBaseIDs {
 		knowledgeBaseID = strings.TrimSpace(knowledgeBaseID)
@@ -5619,11 +5639,11 @@ func (s *AppService) filterRetrievedChunksToScope(req model.ChatCompletionReques
 		if !ok {
 			continue
 		}
-		documents := make(map[string]struct{}, len(kb.Documents))
+		documents := make(map[string]string, len(kb.Documents))
 		for _, document := range kb.Documents {
 			documentID := strings.TrimSpace(document.ID)
 			if documentID != "" {
-				documents[documentID] = struct{}{}
+				documents[documentID] = strings.TrimSpace(document.IndexFence)
 			}
 		}
 		allowedKnowledgeBases[knowledgeBaseID] = documents
@@ -5639,10 +5659,18 @@ func (s *AppService) filterRetrievedChunksToScope(req model.ChatCompletionReques
 		if !allowed || documentID == "" {
 			continue
 		}
-		if _, allowed = documents[documentID]; !allowed {
+		expectedFence, allowed := documents[documentID]
+		if !allowed {
 			continue
 		}
 		if expectedDocumentID != "" && documentID != expectedDocumentID {
+			continue
+		}
+		chunkFence := strings.TrimSpace(chunk.IndexFence)
+		if expectedFence != "" && chunkFence != expectedFence {
+			continue
+		}
+		if expectedFence == "" && chunkFence != "" {
 			continue
 		}
 		filtered = append(filtered, chunk)

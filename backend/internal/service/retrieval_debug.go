@@ -59,7 +59,17 @@ func (s *AppService) debugRetrieveVerboseWithContext(ctx context.Context, req mo
 			searchStart := time.Now()
 			seenChunkIDs := make(map[string]struct{})
 			for _, knowledgeBaseID := range knowledgeBaseIDs {
-				results, err := s.rag.MultiQuerySearch(ctx, queries, knowledgeBaseID, params.candidateTopK, 0, embeddingConfig)
+				filter := map[string]any{}
+				if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
+					filter = map[string]any{
+						"must": []map[string]any{{
+							"key":   "document_id",
+							"match": map[string]any{"value": documentID},
+						}},
+					}
+				}
+				filter = s.withCurrentIndexFenceFilter(knowledgeBaseID, filter, req.DocumentID)
+				results, err := s.rag.MultiQuerySearchWithFilter(ctx, queries, knowledgeBaseID, params.candidateTopK, 0, embeddingConfig, filter)
 				if err != nil {
 					continue
 				}

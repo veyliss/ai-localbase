@@ -30,7 +30,7 @@ try {
 }
 
 const currentBaseline = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   baselineName: process.env.BUILD_BASELINE_NAME || 'v1.5-20260901',
   capturedAt: new Date().toISOString(),
   metrics: current.metrics,
@@ -73,8 +73,8 @@ try {
   process.exit(1)
 }
 
-if (baseline.schemaVersion !== 1 || !baseline.metrics) {
-  console.error(`构建基线失败：${baselinePath} 不是受支持的 schemaVersion=1 文件`)
+if (baseline.schemaVersion !== 2 || !baseline.metrics) {
+  console.error(`构建基线失败：${baselinePath} 不是受支持的 schemaVersion=2 文件`)
   process.exit(1)
 }
 
@@ -82,6 +82,8 @@ const comparisons = [
   { key: 'entryGzipBytes', label: '入口 JavaScript gzip', maxIncrease: 0.08 },
   { key: 'initialJavaScriptGzipBytes', label: '首屏 JavaScript gzip', maxIncrease: 0.08 },
   { key: 'maxInitialChunkRawBytes', label: '最大首屏块 raw', maxIncrease: 0.08 },
+  { key: 'maxAsyncChunkRawBytes', label: '最大异步块 raw', maxIncrease: 0.12 },
+  { key: 'maxAsyncChunkGzipBytes', label: '最大异步块 gzip', maxIncrease: 0.12 },
   { key: 'maxAsyncChartRawBytes', label: '最大异步图表块 raw', maxIncrease: 0.12 },
   { key: 'maxAsyncChartGzipBytes', label: '最大异步图表块 gzip', maxIncrease: 0.12 },
 ]
@@ -113,6 +115,13 @@ const baselineAsyncCount = Number(baseline.metrics.asyncChartChunkCount || 0)
 console.log(`- 异步图表块数量：当前 ${currentAsyncCount}，基线 ${baselineAsyncCount}，变化 ${formatChange(currentAsyncCount, baselineAsyncCount)}`)
 if (baselineAsyncCount > 0 && currentAsyncCount > Math.ceil(baselineAsyncCount * 1.2)) {
   failures.push('异步图表块数量相对基线增加超过 20%')
+}
+
+const currentAllAsyncCount = current.metrics.asyncChunkCount
+const baselineAllAsyncCount = Number(baseline.metrics.asyncChunkCount || 0)
+console.log(`- 全部异步块数量：当前 ${currentAllAsyncCount}，基线 ${baselineAllAsyncCount}，变化 ${formatChange(currentAllAsyncCount, baselineAllAsyncCount)}`)
+if (baselineAllAsyncCount > 0 && currentAllAsyncCount > Math.ceil(baselineAllAsyncCount * 1.2)) {
+  failures.push('全部异步块数量相对基线增加超过 20%')
 }
 
 if (failures.length > 0) {

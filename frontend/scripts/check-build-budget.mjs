@@ -37,7 +37,7 @@ try {
   process.exit(1)
 }
 
-const { entryStats, initialJavaScript, initialChartAssets, asyncChartStats, metrics } = build
+const { entryStats, initialJavaScript, initialChartAssets, asyncStats, asyncChartStats, metrics } = build
 const failures = []
 const exceptionStats = []
 
@@ -58,7 +58,7 @@ for (const item of initialJavaScript) {
 for (const item of initialChartAssets) {
   failures.push(`图表依赖误进入首屏：${item.name}`)
 }
-for (const item of asyncChartStats) {
+for (const item of asyncStats) {
   const exception = asyncChunkExceptions.find((candidate) => candidate.pattern.test(item.name))
   if (exception) {
     exceptionStats.push({ item, exception })
@@ -66,13 +66,14 @@ for (const item of asyncChartStats) {
       failures.push(`异步图表例外 ${item.name} raw ${formatBytes(item.raw)} > ${formatBytes(exception.maxRaw)}`)
     }
   } else if (item.raw > limits.asyncChunkRaw) {
-    failures.push(`异步图表块 ${item.name} raw ${formatBytes(item.raw)} > ${formatBytes(limits.asyncChunkRaw)}`)
+    failures.push(`异步块 ${item.name} raw ${formatBytes(item.raw)} > ${formatBytes(limits.asyncChunkRaw)}`)
   }
 }
 
 console.log('构建预算检查')
 console.log(`- 入口：${entryStats.map((item) => `${item.name} ${formatBytes(item.raw)} / gzip ${formatBytes(item.gzip)}`).join(', ')}`)
 console.log(`- 首屏 JavaScript：${formatBytes(metrics.initialJavaScriptGzipBytes)} gzip，${initialJavaScript.length} 个块`)
+console.log(`- 全部异步块：${asyncStats.length} 个，最大 ${formatBytes(metrics.maxAsyncChunkRawBytes)}`)
 console.log(`- 异步图表块：${asyncChartStats.length} 个，最大 ${formatBytes(metrics.maxAsyncChartRawBytes)}`)
 for (const { item, exception } of exceptionStats) {
   console.log(`- 异步例外：${item.name} ${formatBytes(item.raw)}，上限 ${formatBytes(exception.maxRaw)}，原因：${exception.reason}`)

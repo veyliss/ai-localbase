@@ -12,21 +12,29 @@ const readFiles = (directory) => {
   })
 }
 const assetPathFromReference = (distRoot, fromAsset, reference) => {
-  if (reference.startsWith('/')) return path.resolve(distRoot, `.${reference}`)
-  if (reference.startsWith('.')) return path.resolve(path.dirname(fromAsset), reference)
+  const cleanReference = reference.replace(/[?#].*$/, '')
+  if (cleanReference.startsWith('/')) return path.resolve(distRoot, `.${cleanReference}`)
+  if (cleanReference.startsWith('.')) return path.resolve(path.dirname(fromAsset), cleanReference)
   return null
 }
 
-const collectStaticImports = (source) => {
+export const collectStaticImports = (source) => {
   const references = new Set()
-  for (const statement of source.split(';')) {
-    const staticImport = statement.match(/\bimport\s*(?!\()[\s\S]*?\bfrom\s*["']([^"']+)["']/)
-    const sideEffectImport = statement.match(/\bimport\s*["']([^"']+)["']/)
-    if (staticImport) references.add(staticImport[1])
-    if (sideEffectImport) references.add(sideEffectImport[1])
+  const patterns = [
+    /\bimport\s*(?![.(])(?:(?!\b(?:import|export)\b)[\s\S])*?\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*["']([^"']+)["']/g,
+    /\bexport\s*(?:(?!\b(?:import|export)\b)[\s\S])*?\bfrom\s*["']([^"']+)["']/g,
+  ]
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      references.add(match[1])
+    }
   }
   return [...references]
 }
+
+const cleanAssetReference = (reference) => reference.replace(/[?#].*$/, '')
+const isJavaScriptReference = (reference) => cleanAssetReference(reference).endsWith('.js')
 
 const chartPattern = /(mermaid|cytoscape|diagram|wardley|flowdiagram|sequence|gantt|architecture)/i
 
@@ -55,10 +63,10 @@ export const collectBuildMetrics = ({ projectRoot = process.cwd(), buildDir = 'd
   const html = fs.readFileSync(htmlPath, 'utf8')
   const entryReferences = [...html.matchAll(/<script[^>]+type=["']module["'][^>]+src=["']([^"']+)["']/g)]
     .map((match) => match[1])
-    .filter((reference) => reference.endsWith('.js'))
+    .filter(isJavaScriptReference)
   const preloadReferences = [...html.matchAll(/<link[^>]+rel=["']modulepreload["'][^>]+href=["']([^"']+)["']/g)]
     .map((match) => match[1])
-    .filter((reference) => reference.endsWith('.js'))
+    .filter(isJavaScriptReference)
 
   if (entryReferences.length === 0) {
     throw new Error('构建入口没有找到模块脚本')
@@ -90,13 +98,15 @@ export const collectBuildMetrics = ({ projectRoot = process.cwd(), buildDir = 'd
     item.name === path.basename(assetPathFromReference(distRoot, htmlPath, reference) || '')
   )))
   const initialJavaScript = stats.filter((item) => item.initial)
-  const asyncChartStats = stats.filter((item) => !item.initial && chartPattern.test(item.name))
+  const asyncStats = stats.filter((item) => !item.initial)
+  const asyncChartStats = asyncStats.filter((item) => chartPattern.test(item.name))
   const initialChartAssets = initialJavaScript.filter((item) => chartPattern.test(item.name))
 
   return {
     stats,
     entryStats,
     initialJavaScript,
+    asyncStats,
     initialChartAssets,
     asyncChartStats,
     metrics: {
@@ -104,6 +114,9 @@ export const collectBuildMetrics = ({ projectRoot = process.cwd(), buildDir = 'd
       initialJavaScriptRawBytes: initialJavaScript.reduce((total, item) => total + item.raw, 0),
       initialJavaScriptGzipBytes: initialJavaScript.reduce((total, item) => total + item.gzip, 0),
       maxInitialChunkRawBytes: Math.max(0, ...initialJavaScript.map((item) => item.raw)),
+      maxAsyncChunkRawBytes: Math.max(0, ...asyncStats.map((item) => item.raw)),
+      maxAsyncChunkGzipBytes: Math.max(0, ...asyncStats.map((item) => item.gzip)),
+      asyncChunkCount: asyncStats.length,
       maxAsyncChartRawBytes: Math.max(0, ...asyncChartStats.map((item) => item.raw)),
       maxAsyncChartGzipBytes: Math.max(0, ...asyncChartStats.map((item) => item.gzip)),
       asyncChartChunkCount: asyncChartStats.length,

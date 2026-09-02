@@ -364,8 +364,9 @@ func (s *AppService) collectCandidates(ctx context.Context, knowledgeBaseIDs []s
 
 // withCurrentIndexFenceFilter keeps Qdrant from spending the candidate budget
 // on stale generations. A knowledge base may contain documents from different
-// index generations, so an explicit document can use a simple must clause;
-// otherwise each document becomes a nested should branch.
+// index generations, so each document becomes a compound must/should branch.
+// Qdrant 1.13 accepts compound conditions directly; it does not accept the
+// newer-looking {"filter": {...}} wrapper as a condition.
 func (s *AppService) withCurrentIndexFenceFilter(knowledgeBaseID string, base map[string]any, targetDocumentID string) map[string]any {
 	if s == nil || s.state == nil {
 		return base
@@ -374,9 +375,6 @@ func (s *AppService) withCurrentIndexFenceFilter(knowledgeBaseID string, base ma
 	targetDocumentID = strings.TrimSpace(targetDocumentID)
 	if targetDocumentID != "" {
 		fence := s.currentDocumentIndexFence(knowledgeBaseID, targetDocumentID)
-		if fence == "" {
-			return base
-		}
 		return appendIndexFenceMust(base, fence)
 	}
 
@@ -399,13 +397,14 @@ func (s *AppService) withCurrentIndexFenceFilter(knowledgeBaseID string, base ma
 			"key":   "document_id",
 			"match": map[string]any{"value": documentID},
 		}}
-		if fence := strings.TrimSpace(document.IndexFence); fence != "" {
-			must = append(must, map[string]any{
-				"key":   "index_fence",
-				"match": map[string]any{"value": fence},
-			})
+		fence := strings.TrimSpace(document.IndexFence)
+		generationFilter := map[string]any{"must": must}
+		if fence != "" {
+			generationFilter["must"] = append(must, indexFenceMatchCondition(fence))
+		} else {
+			generationFilter["should"] = indexFenceEmptyConditions()
 		}
-		branches = append(branches, map[string]any{"must": must})
+		branches = append(branches, generationFilter)
 	}
 	if len(branches) == 0 {
 		return base
@@ -413,7 +412,10 @@ func (s *AppService) withCurrentIndexFenceFilter(knowledgeBaseID string, base ma
 	if len(base) == 0 {
 		return map[string]any{"should": branches}
 	}
-	return map[string]any{"must": []map[string]any{{"filter": base}}, "should": branches}
+	result := cloneQdrantFilter(base)
+	must := qdrantFilterConditions(result["must"])
+	result["must"] = append(must, map[string]any{"should": branches})
+	return result
 }
 
 func (s *AppService) currentDocumentIndexFence(knowledgeBaseID, documentID string) string {
@@ -435,21 +437,85 @@ func (s *AppService) currentDocumentIndexFence(knowledgeBaseID, documentID strin
 }
 
 func appendIndexFenceMust(filter map[string]any, fence string) map[string]any {
-	if strings.TrimSpace(fence) == "" {
-		return filter
+	result := cloneQdrantFilter(filter)
+	condition := indexFenceCondition(fence)
+	must := qdrantFilterConditions(result["must"])
+	result["must"] = append(must, condition)
+	return result
+}
+
+func indexFenceCondition(fence string) map[string]any {
+	if trimmed := strings.TrimSpace(fence); trimmed != "" {
+		return indexFenceMatchCondition(trimmed)
 	}
-	if filter == nil {
-		filter = map[string]any{}
-	}
-	must, ok := filter["must"].([]map[string]any)
-	if !ok {
-		must = nil
-	}
-	filter["must"] = append(must, map[string]any{
+	return map[string]any{"should": indexFenceEmptyConditions()}
+}
+
+func indexFenceMatchCondition(fence string) map[string]any {
+	return map[string]any{
 		"key":   "index_fence",
-		"match": map[string]any{"value": fence},
-	})
-	return filter
+		"match": map[string]any{"value": strings.TrimSpace(fence)},
+	}
+}
+
+func indexFenceEmptyConditions() []map[string]any {
+	return []map[string]any{
+		{"is_empty": map[string]any{"key": "index_fence"}},
+		indexFenceMatchCondition(""),
+	}
+}
+
+func qdrantFilterConditions(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return append([]map[string]any(nil), typed...)
+	case []any:
+		conditions := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if condition, ok := item.(map[string]any); ok {
+				conditions = append(conditions, condition)
+			}
+		}
+		return conditions
+	default:
+		return nil
+	}
+}
+
+func cloneQdrantFilter(filter map[string]any) map[string]any {
+	if len(filter) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(filter))
+	for key, value := range filter {
+		cloned[key] = cloneQdrantFilterValue(value)
+	}
+	return cloned
+}
+
+func cloneQdrantFilterValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		cloned := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			cloned[key] = cloneQdrantFilterValue(nested)
+		}
+		return cloned
+	case []map[string]any:
+		cloned := make([]map[string]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneQdrantFilterValue(item).(map[string]any)
+		}
+		return cloned
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneQdrantFilterValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
 }
 
 func firstNonEmpty(values ...string) string {

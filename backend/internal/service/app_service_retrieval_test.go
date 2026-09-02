@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,95 @@ import (
 
 	"ai-localbase/internal/model"
 )
+
+func TestWithCurrentIndexFenceFilterUsesValidTopLevelComposition(t *testing.T) {
+	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-filter": {
+			ID: "kb-filter",
+			Documents: []model.Document{
+				{ID: "doc-current", IndexFence: "index:current"},
+				{ID: "doc-legacy"},
+			},
+		},
+	}}}
+	base := map[string]any{
+		"must": []map[string]any{{
+			"key":   "knowledge_base_id",
+			"match": map[string]any{"value": "kb-filter"},
+		}},
+	}
+	filter := service.withCurrentIndexFenceFilter("kb-filter", base, "")
+	encoded, err := json.Marshal(filter)
+	if err != nil {
+		t.Fatalf("encode composed filter: %v", err)
+	}
+	if strings.Contains(string(encoded), `"filter"`) {
+		t.Fatalf("expected Qdrant 1.13 compound conditions without filter wrappers, got %s", encoded)
+	}
+	must, ok := filter["must"].([]map[string]any)
+	if !ok || len(must) != 2 {
+		t.Fatalf("expected base condition and generation condition, got %#v", filter["must"])
+	}
+	generationCondition, ok := must[1]["should"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected generation alternatives under a compound should condition, got %#v", must[1])
+	}
+	branches := generationCondition
+	if !ok || len(branches) != 2 {
+		t.Fatalf("expected two document generation branches, got %#v", generationCondition)
+	}
+	legacyMust, ok := branches[1]["must"].([]map[string]any)
+	if !ok || len(legacyMust) != 1 {
+		t.Fatalf("expected legacy branch must to contain the document condition, got %#v", branches[1])
+	}
+	legacyShould, ok := branches[1]["should"].([]map[string]any)
+	if !ok || len(legacyShould) != 2 {
+		t.Fatalf("expected legacy branch to accept missing and empty fences, got %#v", branches[1])
+	}
+	if _, ok := legacyShould[0]["is_empty"]; !ok {
+		t.Fatalf("expected missing-fence condition, got %#v", legacyShould)
+	}
+	if value := legacyShould[1]["match"].(map[string]any)["value"]; value != "" {
+		t.Fatalf("expected empty-string fence condition, got %#v", legacyShould[1])
+	}
+}
+
+func TestAppendIndexFenceMustUsesEmptyConditionForLegacyDocument(t *testing.T) {
+	filter := appendIndexFenceMust(map[string]any{
+		"must": []map[string]any{{"key": "document_id"}},
+	}, "")
+	must, ok := filter["must"].([]map[string]any)
+	if !ok || len(must) != 2 {
+		t.Fatalf("expected two must conditions, got %#v", filter["must"])
+	}
+	emptyShould, ok := must[1]["should"].([]map[string]any)
+	if !ok || len(emptyShould) != 2 {
+		t.Fatalf("expected missing and empty-string fence alternatives, got %#v", must[1])
+	}
+}
+
+func TestWithCurrentIndexFenceFilterScopesExplicitLegacyDocument(t *testing.T) {
+	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-filter": {
+			ID:        "kb-filter",
+			Documents: []model.Document{{ID: "doc-legacy"}},
+		},
+	}}}
+	filter := service.withCurrentIndexFenceFilter("kb-filter", map[string]any{
+		"must": []map[string]any{{
+			"key":   "document_id",
+			"match": map[string]any{"value": "doc-legacy"},
+		}},
+	}, "doc-legacy")
+	must, ok := filter["must"].([]map[string]any)
+	if !ok || len(must) != 2 {
+		t.Fatalf("expected explicit document filter to include empty-fence condition, got %#v", filter)
+	}
+	emptyShould, ok := must[1]["should"].([]map[string]any)
+	if !ok || len(emptyShould) != 2 {
+		t.Fatalf("expected explicit legacy filter to accept missing and empty-string fences, got %#v", must[1])
+	}
+}
 
 type recordingContextCompressor struct {
 	called int

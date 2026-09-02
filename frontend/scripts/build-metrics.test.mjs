@@ -23,6 +23,9 @@ describe('collectStaticImports', () => {
       export { exported } from './re-export.js'
       export*from './all.js'
       const deferred = import('./deferred.js')
+      const meta = import.meta.url
+      // import './comment.js'
+      const sourceText = 'export * from "./string.js"'
     `
 
     expect(new Set(collectStaticImports(source))).toEqual(new Set([

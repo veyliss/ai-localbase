@@ -1,6 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { gzipSync } from 'node:zlib'
+import { initSync, parse } from 'es-module-lexer'
+
+initSync()
 
 const readFiles = (directory) => {
   if (!fs.existsSync(directory)) return []
@@ -20,14 +23,12 @@ const assetPathFromReference = (distRoot, fromAsset, reference) => {
 
 export const collectStaticImports = (source) => {
   const references = new Set()
-  const patterns = [
-    /\bimport\s*(?![.(])(?:(?!\b(?:import|export)\b)[\s\S])*?\bfrom\s*["']([^"']+)["']/g,
-    /\bimport\s*["']([^"']+)["']/g,
-    /\bexport\s*(?:(?!\b(?:import|export)\b)[\s\S])*?\bfrom\s*["']([^"']+)["']/g,
-  ]
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      references.add(match[1])
+  const [imports] = parse(source)
+  for (const entry of imports) {
+    // Dynamic imports and import.meta have non-negative / -2 `d` markers;
+    // only `d === -1` represents a static import or re-export.
+    if (entry.d === -1 && entry.s >= 0 && entry.e > entry.s) {
+      references.add(source.slice(entry.s, entry.e))
     }
   }
   return [...references]

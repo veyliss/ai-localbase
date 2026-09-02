@@ -70,4 +70,7 @@ func TestIndexedContentStoreSeparatesIndexGenerations(t *testing.T) {
 	if _, found, err := store.Load(fenced); err != nil || found {
 		t.Fatalf("expected fenced generation to be deleted, found=%t err=%v", found, err)
 	}
+	if loaded, found, err := store.Load(legacy); err != nil || !found || loaded.Content != "旧代内容" {
+		t.Fatalf("expected deleting one generation to preserve legacy content, found=%t err=%v artifact=%+v", found, err, loaded)
+	}
 }

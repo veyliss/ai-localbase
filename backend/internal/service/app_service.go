@@ -2848,6 +2848,8 @@ func indexFenceForContext(ctx context.Context) string {
 func documentWithIndexFence(document model.Document, ctx context.Context) model.Document {
 	if fence := indexFenceForContext(ctx); fence != "" {
 		document.IndexFence = fence
+	} else if strings.TrimSpace(document.IndexFence) == "" {
+		document.IndexFence = newIndexFence(ctx)
 	}
 	return document
 }
@@ -4600,7 +4602,7 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 		s.state.Mu.Unlock()
 		return model.Document{}, err
 	}
-	if err := s.deleteIndexedDocumentGenerationWithContext(context.Background(), removedDocument); err != nil {
+	if err := s.deleteIndexedDocumentWithContext(context.Background(), knowledgeBaseID, documentID); err != nil {
 		log.Printf("failed to delete indexed content for document %s: %v", documentID, err)
 	}
 	return removedDocument, nil
@@ -5293,13 +5295,18 @@ func (s *AppService) upsertDocumentChunks(knowledgeBaseID string, chunks []Docum
 }
 
 func (s *AppService) upsertDocumentChunksWithContext(ctx context.Context, knowledgeBaseID string, chunks []DocumentChunk, vectors [][]float64) error {
-	if s.qdrant == nil || !s.qdrant.IsEnabled() || len(chunks) == 0 {
-		return nil
-	}
+	return s.upsertDocumentChunksWithContextForOperation(ctx, indexOperation{Managed: false, KnowledgeBaseID: strings.TrimSpace(knowledgeBaseID)}, chunks, vectors)
+}
+
+func (s *AppService) upsertDocumentChunksWithContextForOperation(ctx context.Context, operation indexOperation, chunks []DocumentChunk, vectors [][]float64) error {
 	ctx = normalizeServiceContext(ctx)
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
 		return err
 	}
+	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() || len(chunks) == 0 {
+		return nil
+	}
+	knowledgeBaseID := strings.TrimSpace(operation.KnowledgeBaseID)
 	points := make([]QdrantPoint, 0, len(chunks))
 	for index, chunk := range chunks {
 		vector := make([]float64, s.qdrantVectorSize())
@@ -5331,13 +5338,13 @@ func (s *AppService) upsertDocumentChunksWithContext(ctx context.Context, knowle
 
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 10*time.Minute)
 	defer cancel()
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
 		return err
 	}
 	if err := s.qdrant.UpsertPoints(ctx, knowledgeBaseID, points); err != nil {
 		return fmt.Errorf("upsert qdrant points: %w", err)
 	}
-	return s.ensureIndexOperationLease(ctx)
+	return s.ensureIndexOperationActive(ctx, operation)
 }
 
 func (s *AppService) replaceDocumentChunks(knowledgeBaseID, documentID string, chunks []DocumentChunk, vectors [][]float64) error {
@@ -5345,62 +5352,118 @@ func (s *AppService) replaceDocumentChunks(knowledgeBaseID, documentID string, c
 }
 
 func (s *AppService) replaceDocumentChunksWithContext(ctx context.Context, knowledgeBaseID, documentID string, chunks []DocumentChunk, vectors [][]float64) error {
-	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() {
-		return nil
+	_, err := s.replaceDocumentChunksWithContextReceipt(ctx, indexOperation{
+		KnowledgeBaseID: strings.TrimSpace(knowledgeBaseID),
+		DocumentID:      strings.TrimSpace(documentID),
+		Fence:           strings.TrimSpace(indexFenceForContext(ctx)),
+	}, chunks, vectors)
+	return err
+}
+
+func (s *AppService) replaceDocumentChunksWithContextReceipt(ctx context.Context, operation indexOperation, chunks []DocumentChunk, vectors [][]float64) (indexGenerationReceipt, error) {
+	receipt := indexGenerationReceipt{
+		KnowledgeBaseID: operation.KnowledgeBaseID,
+		DocumentID:      operation.DocumentID,
+		Fence:           strings.TrimSpace(operation.Fence),
+		PreviousFence:   strings.TrimSpace(operation.PreviousFence),
+		SupersededFence: strings.TrimSpace(operation.SupersededFence),
 	}
 	ctx = normalizeServiceContext(ctx)
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return err
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return receipt, err
+	}
+	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() {
+		return receipt, nil
 	}
 
-	if err := s.ensureKnowledgeBaseCollectionWithContext(ctx, knowledgeBaseID); err != nil {
-		return err
+	if err := s.ensureKnowledgeBaseCollectionWithContext(ctx, operation.KnowledgeBaseID); err != nil {
+		return receipt, err
 	}
 
 	ctx, cancel := context.WithTimeout(normalizeServiceContext(ctx), 10*time.Minute)
 	defer cancel()
-	indexFence := indexFenceForContext(ctx)
+	indexFence := strings.TrimSpace(operation.Fence)
 	if indexFence == "" && len(chunks) > 0 {
 		indexFence = strings.TrimSpace(chunks[0].IndexFence)
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return err
+	receipt.Fence = indexFence
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return receipt, err
 	}
-	previousPoints, err := s.qdrant.ScrollPointPayloadsByFilter(ctx, knowledgeBaseID, documentFilterForIndexFence(documentID, indexFence))
+	previousPoints, err := s.qdrant.ScrollPointPayloadsByFilter(ctx, operation.KnowledgeBaseID, documentFilter(operation.DocumentID))
 	if err != nil {
-		return fmt.Errorf("inspect existing qdrant points for document %s: %w", documentID, err)
+		return receipt, fmt.Errorf("inspect existing qdrant points for document %s: %w", operation.DocumentID, err)
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return err
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return receipt, err
 	}
-
-	if len(chunks) > 0 {
-		if err := s.upsertDocumentChunksWithContext(ctx, knowledgeBaseID, chunks, vectors); err != nil {
-			return err
+	previousPointIDs := make([]any, 0)
+	supersededPointIDs := make([]any, 0)
+	for _, point := range previousPoints {
+		pointFence := strings.TrimSpace(payloadString(point.Payload, "index_fence", ""))
+		if pointFence == strings.TrimSpace(operation.SupersededFence) && pointFence != "" && pointFence != indexFence {
+			supersededPointIDs = append(supersededPointIDs, point.ID)
+		} else if pointFence == strings.TrimSpace(operation.PreviousFence) && pointFence != indexFence {
+			previousPointIDs = append(previousPointIDs, point.ID)
 		}
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return err
+	receipt.PreviousPointIDs = uniqueIndexPointIDs(previousPointIDs)
+	receipt.SupersededPointIDs = uniqueIndexPointIDs(supersededPointIDs)
+
+	normalizedChunks := cloneDocumentChunks(chunks)
+	for index := range normalizedChunks {
+		if indexFence != "" {
+			normalizedChunks[index].IndexFence = indexFence
+		}
+		receipt.WrittenPointIDs = append(receipt.WrittenPointIDs, qdrantPointID(indexedChunkID(normalizedChunks[index])))
+	}
+	if len(normalizedChunks) > 0 {
+		if err := s.upsertDocumentChunksWithContextForOperation(ctx, operation, normalizedChunks, vectors); err != nil {
+			return receipt, err
+		}
+	}
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return receipt, err
 	}
 
-	currentIDs := make(map[string]struct{}, len(chunks))
-	for _, chunk := range chunks {
+	currentIDs := make(map[string]struct{}, len(normalizedChunks))
+	for _, chunk := range normalizedChunks {
 		currentIDs[fmt.Sprint(qdrantPointID(indexedChunkID(chunk)))] = struct{}{}
 	}
 	staleIDs := make([]any, 0)
 	for _, point := range previousPoints {
+		pointFence := strings.TrimSpace(payloadString(point.Payload, "index_fence", ""))
+		if pointFence != indexFence {
+			continue
+		}
 		pointID := fmt.Sprint(point.ID)
 		if _, exists := currentIDs[pointID]; !exists {
 			staleIDs = append(staleIDs, point.ID)
 		}
 	}
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return err
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return receipt, err
 	}
-	if err := s.qdrant.DeletePointsByIDs(ctx, knowledgeBaseID, staleIDs); err != nil {
-		return fmt.Errorf("delete stale qdrant points for document %s: %w", documentID, err)
+	receipt.WrittenPointIDs = uniqueIndexPointIDs(receipt.WrittenPointIDs, staleIDs)
+	if err := s.ensureIndexOperationActive(ctx, operation); err != nil {
+		return receipt, err
 	}
-	return s.ensureIndexOperationLease(ctx)
+	if err := s.qdrant.DeletePointsByIDs(ctx, operation.KnowledgeBaseID, staleIDs); err != nil {
+		return receipt, fmt.Errorf("delete stale qdrant points for document %s: %w", operation.DocumentID, err)
+	}
+	return receipt, s.ensureIndexOperationActive(ctx, operation)
+}
+
+func cloneDocumentChunks(chunks []DocumentChunk) []DocumentChunk {
+	if chunks == nil {
+		return nil
+	}
+	cloned := make([]DocumentChunk, len(chunks))
+	for index, chunk := range chunks {
+		cloned[index] = chunk
+		cloned[index].TableColumns = append([]string(nil), chunk.TableColumns...)
+	}
+	return cloned
 }
 
 func (s *AppService) retrieveRelevantChunks(req model.ChatCompletionRequest, queryVector []float64) ([]RetrievedChunk, error) {
@@ -5841,61 +5904,12 @@ func documentFilter(documentID string) map[string]any {
 	}
 }
 
-func documentFilterForIndexFence(documentID, indexFence string) map[string]any {
-	filter := documentFilter(documentID)
-	indexFence = strings.TrimSpace(indexFence)
-	if indexFence == "" {
-		return filter
-	}
-	must, _ := filter["must"].([]map[string]any)
-	filter["must"] = append(must, map[string]any{
-		"key":   "index_fence",
-		"match": map[string]any{"value": indexFence},
-	})
-	return filter
-}
-
-func documentSupersededIndexFilter(documentID, currentFence string) map[string]any {
-	return map[string]any{
-		"must": []map[string]any{
-			{
-				"key": "document_id",
-				"match": map[string]any{
-					"value": documentID,
-				},
-			},
-		},
-		"must_not": []map[string]any{
-			{
-				"key": "index_fence",
-				"match": map[string]any{
-					"value": currentFence,
-				},
-			},
-		},
-	}
-}
-
 func indexedChunkID(chunk DocumentChunk) string {
 	chunkID := strings.TrimSpace(chunk.ID)
 	if fence := strings.TrimSpace(chunk.IndexFence); fence != "" {
 		return fence + "|" + chunkID
 	}
 	return chunkID
-}
-
-func (s *AppService) cleanupSupersededDocumentIndexWithContext(ctx context.Context, knowledgeBaseID, documentID, currentFence string) error {
-	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() || strings.TrimSpace(currentFence) == "" {
-		return nil
-	}
-	ctx = normalizeServiceContext(ctx)
-	if err := s.ensureIndexOperationLease(ctx); err != nil {
-		return err
-	}
-	if err := s.qdrant.DeletePointsByFilter(ctx, knowledgeBaseID, documentSupersededIndexFilter(documentID, currentFence)); err != nil {
-		return fmt.Errorf("delete superseded qdrant points for document %s: %w", documentID, err)
-	}
-	return s.ensureIndexOperationLease(ctx)
 }
 
 func buildDocumentDetailResponse(s *AppService, document model.Document, content, contentSource string, chunks []DocumentChunk, focusChunkID string, options DocumentDetailOptions) model.DocumentDetailResponse {

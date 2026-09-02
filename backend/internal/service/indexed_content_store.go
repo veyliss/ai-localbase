@@ -127,23 +127,9 @@ func (s *IndexedContentStore) DeleteGeneration(knowledgeBaseID, documentID, inde
 	if s == nil || s.root == "" {
 		return nil
 	}
-	paths := []string{s.pathFor(knowledgeBaseID, documentID), s.pathForGeneration(knowledgeBaseID, documentID, indexFence)}
-	matches, err := filepath.Glob(s.generationPattern(knowledgeBaseID, documentID))
-	if err != nil {
-		return fmt.Errorf("find indexed content generations: %w", err)
-	}
-	paths = append(paths, matches...)
-	seen := make(map[string]struct{}, len(paths))
-	for _, filePath := range paths {
-		if _, exists := seen[filePath]; exists {
-			continue
-		}
-		seen[filePath] = struct{}{}
-		if err := s.deletePaths(filePath); err != nil {
-			return err
-		}
-	}
-	return nil
+	// A generation cleanup must be exact. Broad cleanup belongs exclusively to
+	// Delete, which is used after an explicit document deletion.
+	return s.deletePaths(s.pathForGeneration(knowledgeBaseID, documentID, indexFence))
 }
 
 func (s *IndexedContentStore) deleteAllGenerations(knowledgeBaseID, documentID string) error {

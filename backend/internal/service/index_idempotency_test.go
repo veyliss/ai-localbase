@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -198,6 +199,72 @@ func TestReplaceDocumentChunksDeletesStaleQdrantPoints(t *testing.T) {
 	}
 	if !strings.Contains(string(encodedFilter), "old-point") {
 		t.Fatalf("expected stale point id in delete filter, got %s", encodedFilter)
+	}
+}
+
+func TestIndexGenerationRetirementDeletesOnlyExpectedPreviousPoints(t *testing.T) {
+	var deleteBody []byte
+	qdrantServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/kb-1":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/kb-1/points/scroll":
+			_, _ = w.Write([]byte(`{"result":{"points":[
+				{"id":101,"payload":{"index_fence":"generation-old"}},
+				{"id":202,"payload":{"index_fence":"generation-newer"}},
+				{"id":303,"payload":{"index_fence":"generation-superseded"}}
+			],"next_page_offset":null}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/kb-1/points":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/kb-1/points/delete":
+			deleteBody, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.Error(w, "unexpected qdrant request", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(qdrantServer.Close)
+
+	service := &AppService{
+		qdrant: NewQdrantService(model.ServerConfig{QdrantURL: qdrantServer.URL, QdrantVectorSize: 2}),
+		state:  &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{"kb-1": {ID: "kb-1"}}},
+	}
+	receipt, err := service.replaceDocumentChunksWithContextReceipt(t.Context(), indexOperation{
+		KnowledgeBaseID: "kb-1",
+		DocumentID:      "doc-1",
+		Fence:           "generation-current",
+		PreviousFence:   "generation-old",
+		SupersededFence: "generation-superseded",
+	}, []DocumentChunk{{
+		ID:              "chunk-1",
+		KnowledgeBaseID: "kb-1",
+		DocumentID:      "doc-1",
+		DocumentName:    "notes.txt",
+		Text:            "当前内容",
+	}}, [][]float64{{1, 0}})
+	if err != nil {
+		t.Fatalf("write current generation: %v", err)
+	}
+	if len(receipt.PreviousPointIDs) != 1 || fmt.Sprint(receipt.PreviousPointIDs[0]) != "101" {
+		t.Fatalf("expected only previous generation point, got %#v", receipt.PreviousPointIDs)
+	}
+	if len(receipt.SupersededPointIDs) != 1 || fmt.Sprint(receipt.SupersededPointIDs[0]) != "303" {
+		t.Fatalf("expected only superseded generation point, got %#v", receipt.SupersededPointIDs)
+	}
+	if err := service.retirePreviousGeneration(t.Context(), receipt); err != nil {
+		t.Fatalf("retire previous generation: %v", err)
+	}
+	var deleteRequest qdrantPointDeleteRequest
+	if err := json.Unmarshal(deleteBody, &deleteRequest); err != nil {
+		t.Fatalf("decode retirement request: %v", err)
+	}
+	encoded, err := json.Marshal(deleteRequest.Filter)
+	if err != nil {
+		t.Fatalf("encode retirement filter: %v", err)
+	}
+	if !strings.Contains(string(encoded), "101") || !strings.Contains(string(encoded), "303") || strings.Contains(string(encoded), "202") || strings.Contains(string(encoded), "generation-newer") {
+		t.Fatalf("expected exact previous point deletion, got %s", encoded)
 	}
 }
 

@@ -15,7 +15,7 @@
 
 ### Qdrant collection 中的向量约束 {#qdrant-vector-constraints}
 
-同一个 Qdrant collection 中每个点的向量必须具有相同的维度，并使用同一个距离度量进行比较。
+同一个命名向量（named vector）中的向量应具有一致的维度和距离度量；同一个 Qdrant collection 可以配置多个命名向量，不同命名向量可以使用各自的配置。
 
 来源：<https://qdrant.tech/documentation/manage-data/collections/index.md>
 

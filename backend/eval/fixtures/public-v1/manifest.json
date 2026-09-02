@@ -24,7 +24,7 @@
       "document_key": "ai-tech-facts",
       "path": "ai-tech-facts.md",
       "format": "markdown",
-      "sha256": "d1f22c98d31b4cc23ca0ac66c81dfb02785a40422dcb228a6ab7c490212416cb",
+      "sha256": "ac7f6d29f5b0eaa4a50787d4772583aa0489a43c951e4cc0c69ff512d31d51d0",
       "source_urls": [
         "https://qdrant.tech/documentation/overview/what-is-qdrant/index.md",
         "https://qdrant.tech/documentation/manage-data/collections/index.md",

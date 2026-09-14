@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -42,8 +43,16 @@ func (s *AppService) ListEvalRuns(knowledgeBaseID, datasetID string) []model.Eva
 // RunEvalDataset executes one stored dataset against the current retrieval
 // boundary. It intentionally keeps the public AppService method unchanged.
 func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRequest) (model.RunEvalDatasetResponse, error) {
+	return s.RunEvalDatasetWithContext(context.Background(), datasetID, req)
+}
+
+func (s *AppService) RunEvalDatasetWithContext(ctx context.Context, datasetID string, req model.RunEvalDatasetRequest) (model.RunEvalDatasetResponse, error) {
 	if s == nil || s.state == nil {
 		return model.RunEvalDatasetResponse{}, fmt.Errorf("app service is nil")
+	}
+	ctx = normalizeServiceContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return model.RunEvalDatasetResponse{}, err
 	}
 
 	dataset, err := s.GetEvalDataset(datasetID)
@@ -70,6 +79,9 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 	skippedDisabled := 0
 	runSearchMode := ""
 	for _, item := range dataset.Items {
+		if err := ctx.Err(); err != nil {
+			return model.RunEvalDatasetResponse{}, err
+		}
 		if item.Disabled && !req.IncludeDisabled {
 			skippedDisabled++
 			continue
@@ -99,7 +111,7 @@ func (s *AppService) RunEvalDataset(datasetID string, req model.RunEvalDatasetRe
 			debugReq.KnowledgeBaseID = firstEvalSourceKnowledgeBaseID(item)
 		}
 
-		response, err := s.DebugRetrieve(debugReq)
+		response, err := s.DebugRetrieveWithContext(ctx, debugReq)
 		if runSearchMode == "" && strings.TrimSpace(response.SearchMode) != "" {
 			runSearchMode = response.SearchMode
 		}

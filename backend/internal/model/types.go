@@ -29,6 +29,13 @@ type ServerConfig struct {
 	MCPBasePath                    string
 	MCPRequestTimeoutSeconds       int
 	MCPRequestsPerMinute           int
+	APIRequestsPerMinute           int
+	APIMaxConcurrentRequests       int
+	ChatMaxConcurrentRequests      int
+	IndexMaxConcurrentRequests     int
+	EvalMaxConcurrentRequests      int
+	UploadMaxConcurrentRequests    int
+	ModelTestMaxConcurrentRequests int
 	RetrievalTopKDocument          int
 	RetrievalCandidateTopKDocument int
 	RetrievalTopKKnowledgeBase     int

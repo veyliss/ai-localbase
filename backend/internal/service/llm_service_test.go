@@ -1,14 +1,58 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-localbase/internal/model"
 )
+
+func TestStreamChatWithContextCancelsUpstreamRequest(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(started)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+
+	service := &LLMService{streamClient: server.Client()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- service.StreamChatWithContext(ctx, model.ChatCompletionRequest{
+			Messages: []model.ChatMessage{{Role: "user", Content: "hello"}},
+			Config:   model.ChatModelConfig{Provider: "openai", BaseURL: server.URL, Model: "test-model"},
+		}, func(string) error { return nil })
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream request did not stop after context cancellation")
+	}
+}
 
 func TestOllamaStreamChatPreservesChunkWhitespace(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

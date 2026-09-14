@@ -95,6 +95,13 @@ docker compose up --build
 | `STAGING_DIR` | `data/staging` | 上传暂存目录，生产 Docker 应位于 `/app/data` 持久化卷内 |
 | `MAX_UPLOAD_BYTES` | `26214400` | 单文件上传大小上限，默认 25 MiB |
 | `MAX_JSON_BODY_BYTES` | `4194304` | 非 multipart JSON 请求体上限，默认 4 MiB |
+| `API_REQUESTS_PER_MINUTE` | `120` | 高成本 HTTP 接口按主体/IP 计算的每分钟请求上限 |
+| `API_MAX_CONCURRENT_REQUESTS` | `16` | 高成本 HTTP 接口的全局并发上限 |
+| `CHAT_MAX_CONCURRENT_REQUESTS` | `4` | 单主体 Chat 并发上限 |
+| `INDEX_MAX_CONCURRENT_REQUESTS` | `2` | 单主体索引并发上限 |
+| `EVAL_MAX_CONCURRENT_REQUESTS` | `1` | 单主体评估并发上限 |
+| `UPLOAD_MAX_CONCURRENT_REQUESTS` | `4` | 单主体上传并发上限 |
+| `MODEL_TEST_MAX_CONCURRENT_REQUESTS` | `2` | 单主体模型测试并发上限 |
 | `NGINX_CLIENT_MAX_BODY_SIZE` | `32m` | Docker 前端代理请求体上限，应高于单文件上传上限 |
 | `TRUST_EXTERNAL_PROXY_HEADERS` | `false` | 是否信任受控外层代理传入的 `X-Forwarded-Proto` / `X-Forwarded-Host` |
 | `STATE_FILE` | `data/app-state.json` | 应用状态文件 |

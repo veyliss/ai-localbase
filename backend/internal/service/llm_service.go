@@ -121,16 +121,21 @@ func NewLLMService() *LLMService {
 // ── Public methods ───────────────────────────────────────────────────────────
 
 func (s *LLMService) Chat(req model.ChatCompletionRequest) (model.ChatCompletionResponse, error) {
+	return s.ChatWithContext(context.Background(), req)
+}
+
+func (s *LLMService) ChatWithContext(ctx context.Context, req model.ChatCompletionRequest) (model.ChatCompletionResponse, error) {
 	cfg, err := normalizeChatConfig(req)
 	if err != nil {
 		return model.ChatCompletionResponse{}, err
 	}
+	ctx = normalizeServiceContext(ctx)
 
 	requestTimeout := defaultChatRequestTimeout
 	if req.Think != nil && *req.Think {
 		requestTimeout = defaultStreamRequestTimeout
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
 	if cfg.Provider == "ollama" {
@@ -155,12 +160,17 @@ func (s *LLMService) Chat(req model.ChatCompletionRequest) (model.ChatCompletion
 }
 
 func (s *LLMService) StreamChat(req model.ChatCompletionRequest, onChunk func(string) error) error {
+	return s.StreamChatWithContext(context.Background(), req, onChunk)
+}
+
+func (s *LLMService) StreamChatWithContext(ctx context.Context, req model.ChatCompletionRequest, onChunk func(string) error) error {
 	cfg, err := normalizeChatConfig(req)
 	if err != nil {
 		return err
 	}
+	ctx = normalizeServiceContext(ctx)
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultStreamRequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, defaultStreamRequestTimeout)
 	defer cancel()
 
 	if cfg.Provider == "ollama" {

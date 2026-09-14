@@ -94,7 +94,7 @@ func (h *ConfigHandler) TestChatModel(c *gin.Context) {
 
 	// 调用聊天接口
 	apiKey := h.resolveChatAPIKey(req.APIKey, req.Provider, req.BaseURL)
-	response, err := llmService.Chat(model.ChatCompletionRequest{
+	response, err := llmService.ChatWithContext(c.Request.Context(), model.ChatCompletionRequest{
 		Messages: testMessages,
 		Config: model.ChatModelConfig{
 			Provider:    req.Provider,
@@ -366,7 +366,7 @@ func (h *ConfigHandler) checkChatModelHealth(ctx context.Context) ComponentHealt
 		{Role: "user", Content: "Hi"},
 	}
 
-	response, err := llmService.Chat(model.ChatCompletionRequest{
+	response, err := llmService.ChatWithContext(ctx, model.ChatCompletionRequest{
 		Messages: testMessages,
 		Config: model.ChatModelConfig{
 			Provider:    config.Chat.Provider,

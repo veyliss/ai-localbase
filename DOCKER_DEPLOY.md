@@ -80,6 +80,10 @@ docker compose -f docker-compose.prod.yml up -d
 - `MCP_JOB_STORE_FILE`：MCP 长任务 SQLite 文件，默认 `/app/data/mcp-jobs.db`，必须位于持久化数据卷内；服务重启后依靠它恢复可恢复任务
 - `MAX_UPLOAD_BYTES`：单文件上传大小上限，默认 `26214400`，即 25 MiB
 - `MAX_JSON_BODY_BYTES`：登录、Chat、配置和 MCP 等非 multipart 请求体上限，默认 `4194304`，即 4 MiB
+- `API_REQUESTS_PER_MINUTE`：高成本 HTTP 接口按主体/IP 计算的每分钟请求上限，默认 `120`
+- `API_MAX_CONCURRENT_REQUESTS`：高成本 HTTP 接口的全局并发上限，默认 `16`
+- `CHAT_MAX_CONCURRENT_REQUESTS` / `INDEX_MAX_CONCURRENT_REQUESTS`：Chat 和索引接口的单主体并发上限，默认 `4` / `2`
+- `EVAL_MAX_CONCURRENT_REQUESTS` / `UPLOAD_MAX_CONCURRENT_REQUESTS` / `MODEL_TEST_MAX_CONCURRENT_REQUESTS`：评估、上传和模型测试的单主体并发上限，默认 `1` / `4` / `2`
 - `LOG_MAX_SIZE` / `LOG_MAX_FILE`：Docker JSON 日志轮转参数，默认每个日志文件 10 MiB、保留 3 个文件
 - `QDRANT_MEMORY_LIMIT` / `QDRANT_CPU_LIMIT`：Qdrant 容器资源上限，默认 `1g` / `2.0`
 - `BACKEND_MEMORY_LIMIT` / `BACKEND_CPU_LIMIT`：后端容器资源上限，默认 `1g` / `2.0`

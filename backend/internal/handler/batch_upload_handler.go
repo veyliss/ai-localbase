@@ -87,7 +87,7 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 	start := time.Now()
 
 	// 批量索引
-	results := h.batchIndexFromStaged(knowledgeBaseID, req.UploadIDs, concurrency, owner)
+	results := h.batchIndexFromStaged(c.Request.Context(), knowledgeBaseID, req.UploadIDs, concurrency, owner)
 
 	// 统计结果
 	successful := 0
@@ -112,7 +112,7 @@ func (h *AppHandler) BatchIndexDocuments(c *gin.Context) {
 }
 
 // batchIndexFromStaged 从暂存文件批量索引
-func (h *AppHandler) batchIndexFromStaged(knowledgeBaseID string, uploadIDs []string, concurrency int, owner service.AuthPrincipal) []IndexResult {
+func (h *AppHandler) batchIndexFromStaged(ctx context.Context, knowledgeBaseID string, uploadIDs []string, concurrency int, owner service.AuthPrincipal) []IndexResult {
 	if err := service.ValidateBatchIndexInputs(uploadIDs); err != nil {
 		return []IndexResult{{Success: false, ErrorCode: "invalid_argument", Error: err.Error()}}
 	}
@@ -133,13 +133,18 @@ func (h *AppHandler) batchIndexFromStaged(knowledgeBaseID string, uploadIDs []st
 		go func() {
 			defer wg.Done()
 			for uploadID := range work {
-				resultChan <- h.indexSingleStaged(knowledgeBaseID, uploadID, owner)
+				resultChan <- h.indexSingleStaged(ctx, knowledgeBaseID, uploadID, owner)
 			}
 		}()
 	}
 	go func() {
 		for _, uploadID := range uploadIDs {
-			work <- uploadID
+			select {
+			case work <- uploadID:
+			case <-ctx.Done():
+				close(work)
+				return
+			}
 		}
 		close(work)
 	}()
@@ -158,9 +163,9 @@ func (h *AppHandler) batchIndexFromStaged(knowledgeBaseID string, uploadIDs []st
 }
 
 // indexSingleStaged 索引单个暂存文件
-func (h *AppHandler) indexSingleStaged(knowledgeBaseID, uploadID string, owner service.AuthPrincipal) IndexResult {
+func (h *AppHandler) indexSingleStaged(ctx context.Context, knowledgeBaseID, uploadID string, owner service.AuthPrincipal) IndexResult {
 	// 使用现有的 RegisterStagedUpload 方法
-	document, err := h.appService.RegisterStagedUploadAs(context.Background(), uploadID, knowledgeBaseID, "", owner)
+	document, err := h.appService.RegisterStagedUploadAs(ctx, uploadID, knowledgeBaseID, "", owner)
 
 	if err != nil {
 		code, message := service.PublicIndexFailure(err)

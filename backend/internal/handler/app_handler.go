@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"mime/multipart"
@@ -271,13 +272,13 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 		Messages:        chatMessages,
 	}
 
-	preparedReq, sources, err := h.prepareChatRequest(req)
+	preparedReq, sources, err := h.prepareChatRequestWithContext(c.Request.Context(), req)
 	if err != nil {
 		writeChatPreparationError(c, err)
 		return
 	}
 
-	response, err := h.llmService.Chat(preparedReq)
+	response, err := h.llmService.ChatWithContext(c.Request.Context(), preparedReq)
 	if err != nil {
 		writeError(c, http.StatusBadGateway, err.Error())
 		return
@@ -439,7 +440,7 @@ func (h *AppHandler) GenerateEvalDataset(c *gin.Context) {
 		return
 	}
 
-	response, err := h.appService.GenerateEvalDataset(req)
+	response, err := h.appService.GenerateEvalDatasetWithContext(c.Request.Context(), req)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
@@ -507,7 +508,7 @@ func (h *AppHandler) RunEvalDataset(c *gin.Context) {
 		return
 	}
 
-	response, err := h.appService.RunEvalDataset(c.Param("datasetId"), req)
+	response, err := h.appService.RunEvalDatasetWithContext(c.Request.Context(), c.Param("datasetId"), req)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
@@ -536,7 +537,7 @@ func (h *AppHandler) DebugRetrieve(c *gin.Context) {
 	}
 	req.KnowledgeBaseID = c.Param("id")
 
-	response, err := h.appService.DebugRetrieve(req)
+	response, err := h.appService.DebugRetrieveWithContext(c.Request.Context(), req)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
@@ -623,7 +624,7 @@ func queryFlagEnabled(value string) bool {
 }
 
 func (h *AppHandler) ReindexDocument(c *gin.Context) {
-	document, err := h.appService.ReindexDocument(c.Param("id"), c.Param("documentId"))
+	document, err := h.appService.ReindexDocumentWithContext(c.Request.Context(), c.Param("id"), c.Param("documentId"))
 	if err != nil {
 		_, message := service.PublicIndexFailure(err)
 		writeError(c, http.StatusBadRequest, message)
@@ -644,13 +645,13 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	preparedReq, sources, err := h.prepareChatRequest(req)
+	preparedReq, sources, err := h.prepareChatRequestWithContext(c.Request.Context(), req)
 	if err != nil {
 		writeChatPreparationError(c, err)
 		return
 	}
 
-	response, err := h.llmService.Chat(preparedReq)
+	response, err := h.llmService.ChatWithContext(c.Request.Context(), preparedReq)
 	if err != nil {
 		writeError(c, http.StatusBadGateway, err.Error())
 		return
@@ -700,7 +701,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		return
 	}
 
-	preparedReq, sources, err := h.prepareChatRequest(req)
+	preparedReq, sources, err := h.prepareChatRequestWithContext(c.Request.Context(), req)
 	if err != nil {
 		writeChatPreparationError(c, err)
 		return
@@ -728,13 +729,16 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 	flusher.Flush()
 
 	assistantContent := strings.Builder{}
-	streamErr := h.llmService.StreamChat(preparedReq, func(chunk string) error {
+	streamErr := h.llmService.StreamChatWithContext(c.Request.Context(), preparedReq, func(chunk string) error {
 		assistantContent.WriteString(chunk)
 		c.SSEvent("chunk", gin.H{"content": chunk})
 		flusher.Flush()
 		return nil
 	})
 	if streamErr != nil {
+		if c.Request.Context().Err() != nil {
+			return
+		}
 		c.SSEvent("error", gin.H{"error": streamErr.Error()})
 		flusher.Flush()
 		return
@@ -774,6 +778,10 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 }
 
 func (h *AppHandler) prepareChatRequest(req model.ChatCompletionRequest) (model.ChatCompletionRequest, []map[string]string, error) {
+	return h.prepareChatRequestWithContext(context.Background(), req)
+}
+
+func (h *AppHandler) prepareChatRequestWithContext(ctx context.Context, req model.ChatCompletionRequest) (model.ChatCompletionRequest, []map[string]string, error) {
 	if len(req.Messages) == 0 {
 		return model.ChatCompletionRequest{}, nil, fmt.Errorf("messages cannot be empty")
 	}
@@ -789,7 +797,7 @@ func (h *AppHandler) prepareChatRequest(req model.ChatCompletionRequest) (model.
 	contextSources := []map[string]string(nil)
 	if !skipKnowledgeRetrieval {
 		var err error
-		retrievalContext, retrievalSources, err = h.appService.BuildRetrievalContext(req)
+		retrievalContext, retrievalSources, err = h.appService.BuildRetrievalContextWithContext(ctx, req)
 		if err != nil {
 			return model.ChatCompletionRequest{}, nil, err
 		}
@@ -963,7 +971,7 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 		ContentPreview:  util.ExtractContentPreview(destination),
 	}
 
-	uploaded, err := h.appService.IndexDocument(document)
+	uploaded, err := h.appService.IndexDocumentWithContext(c.Request.Context(), document)
 	if err != nil {
 		_ = os.Remove(destination)
 		statusCode := http.StatusBadGateway

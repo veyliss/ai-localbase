@@ -24,6 +24,7 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 	if err := r.SetTrustedProxies(util.DefaultTrustedProxyCIDRs()); err != nil {
 		panic(fmt.Sprintf("configure trusted proxies: %v", err))
 	}
+	resourceLimiter := newResourceLimiter(serverConfig)
 	r.Use(requestIDMiddleware(), accessLogMiddleware(), gin.Recovery(), corsMiddleware(serverConfig.EnableAuth), requestBodyLimitMiddleware(serverConfig.MaxJSONBodyBytes))
 	if serverConfig.EnableAuth {
 		r.Use(csrfMiddleware())
@@ -46,6 +47,7 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 	if serverConfig.EnableAuth {
 		api.Use(auth.SessionMiddleware(authService))
 	}
+	api.Use(resourceLimitMiddleware(resourceLimiter))
 	{
 		api.GET("/auth/status", authHandler.Status)
 		api.POST("/auth/logout", authHandler.Logout)
@@ -102,11 +104,11 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 	// Staging is also an MCP upload transport. Session clients keep the normal
 	// upload path, while API keys only gain access when MCP is enabled.
 	if serverConfig.EnableAuth && serverConfig.EnableMCP {
-		r.POST("/api/uploads", auth.SessionOrAPIKeyMiddleware(authService, "mcp:upload"), appHandler.StageUpload)
+		r.POST("/api/uploads", auth.SessionOrAPIKeyMiddleware(authService, "mcp:upload"), resourceLimitMiddleware(resourceLimiter), appHandler.StageUpload)
 	} else if serverConfig.EnableAuth {
-		r.POST("/api/uploads", auth.SessionMiddleware(authService), appHandler.StageUpload)
+		r.POST("/api/uploads", auth.SessionMiddleware(authService), resourceLimitMiddleware(resourceLimiter), appHandler.StageUpload)
 	} else {
-		r.POST("/api/uploads", appHandler.StageUpload)
+		r.POST("/api/uploads", resourceLimitMiddleware(resourceLimiter), appHandler.StageUpload)
 	}
 	if serverConfig.EnableAuth && serverConfig.EnableMCP {
 		r.POST("/api/config/mcp/danger-confirmations", auth.SessionOrAPIKeyMiddleware(authService, "mcp:danger"), appHandler.CreateMCPDangerConfirmation)
@@ -118,15 +120,16 @@ func NewRouter(appHandler *handler.AppHandler, configHandler *handler.ConfigHand
 
 	// Upload endpoint (protected if auth enabled)
 	if serverConfig.EnableAuth {
-		r.POST("/upload", auth.SessionMiddleware(authService), appHandler.Upload)
+		r.POST("/upload", auth.SessionMiddleware(authService), resourceLimitMiddleware(resourceLimiter), appHandler.Upload)
 	} else {
-		r.POST("/upload", appHandler.Upload)
+		r.POST("/upload", resourceLimitMiddleware(resourceLimiter), appHandler.Upload)
 	}
 
 	v1 := r.Group("/v1")
 	if serverConfig.EnableAuth {
 		v1.Use(auth.SessionOrAPIKeyMiddleware(authService, "openai:chat"))
 	}
+	v1.Use(resourceLimitMiddleware(resourceLimiter))
 	{
 		v1.POST("/chat/completions", appHandler.ChatCompletions)
 		v1.POST("/chat/completions/stream", appHandler.ChatCompletionsStream)

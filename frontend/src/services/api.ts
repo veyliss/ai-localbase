@@ -197,6 +197,9 @@ export interface DocumentIndexDiagnostics {
   rawContentChars: number
   chunkCount: number
   vectorCount: number
+  vectorCountStatus: 'ok' | 'error' | 'collection_missing' | 'dimension_mismatch' | 'not_applicable' | string
+  vectorCountSource: 'actual' | 'estimated' | 'unknown' | 'not_applicable' | string
+  vectorCountErrorCode?: string
   summaryChunkCount: number
   structuredRowCount: number
   rawContentAvailable: boolean
@@ -243,10 +246,21 @@ export interface KnowledgeBaseHealthMetrics {
   emptyContentCount: number
   chunkCount: number
   vectorCount: number
+  vectorCountStatus: 'ok' | 'error' | 'collection_missing' | 'dimension_mismatch' | 'not_applicable' | string
+  vectorCountSource: 'actual' | 'estimated' | 'unknown' | 'not_applicable' | string
+  vectorCountErrorCode?: string
   summaryChunkCount: number
   structuredRowCount: number
   rawContentChars: number
   qdrantEnabled: boolean
+  qdrantStatus: 'ok' | 'error' | 'collection_missing' | 'dimension_mismatch' | 'not_applicable' | string
+  qdrantCollectionStatus?: 'present' | 'missing' | 'unavailable' | 'disabled' | string
+  qdrantCollectionExists: boolean
+  qdrantPointCount: number
+  qdrantPointCountKnown: boolean
+  expectedVectorSize?: number
+  qdrantVectorSize?: number
+  qdrantSparseEnabled: boolean
   lastIndexedAt?: string
 }
 
@@ -260,6 +274,9 @@ export interface KnowledgeBaseDocumentHealth {
   indexVersion?: number
   chunkCount: number
   vectorCount: number
+  vectorCountStatus: 'ok' | 'error' | 'collection_missing' | 'dimension_mismatch' | 'not_applicable' | string
+  vectorCountSource: 'actual' | 'estimated' | 'unknown' | 'not_applicable' | string
+  vectorCountErrorCode?: string
   summaryChunkCount: number
   structuredRowCount: number
   rawContentChars: number

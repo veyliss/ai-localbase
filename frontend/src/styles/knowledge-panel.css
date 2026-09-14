@@ -853,6 +853,30 @@
   font-size: 16px;
 }
 
+.kb-health-index-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.kb-health-index-meta span {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.kb-health-index-meta strong {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
 .kb-health-recommendations {
   display: flex;
   flex-direction: column;
@@ -867,6 +891,12 @@
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .kb-health-index-meta {
+    grid-template-columns: 1fr;
+  }
 }
 
 .kb-health-docs {

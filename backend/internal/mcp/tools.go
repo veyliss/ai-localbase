@@ -46,6 +46,7 @@ type AppServiceReader interface {
 type contextAwareAppService interface {
 	BuildRetrievalContextWithContext(ctx context.Context, req model.ChatCompletionRequest) (string, []map[string]string, error)
 	DebugRetrieveWithContext(ctx context.Context, req model.RetrievalDebugRequest) (model.RetrievalDebugResponse, error)
+	GetKnowledgeBaseHealthWithContext(ctx context.Context, knowledgeBaseID string) (model.KnowledgeBaseHealthResponse, error)
 	StageInlineUploadAs(fileName string, content []byte, source string, owner service.AuthPrincipal) (model.StagedUpload, error)
 	RegisterStagedUploadAs(ctx context.Context, uploadID, knowledgeBaseID, fileName string, owner service.AuthPrincipal) (model.Document, error)
 	StartMCPImportJobAs(req model.MCPStartImportJobRequest, owner service.AuthPrincipal) (model.MCPJob, error)
@@ -292,7 +293,9 @@ func buildKnowledgeBaseQualityInsights(health model.KnowledgeBaseHealthResponse,
 	if health.Metrics.EmptyContentCount > 0 {
 		insights = append(insights, fmt.Sprintf("存在 %d 个原文不可用文档，可能影响摘要、引用和重建索引。", health.Metrics.EmptyContentCount))
 	}
-	if health.Metrics.VectorCount == 0 && health.Metrics.DocumentCount > 0 {
+	if health.Metrics.VectorCountSource == "unknown" {
+		insights = append(insights, "当前无法确认 Qdrant 的实际向量数量，不能将未知状态视为零向量；建议检查 Qdrant 连接、鉴权和 collection。")
+	} else if health.Metrics.VectorCountSource == "actual" && health.Metrics.VectorCount == 0 && health.Metrics.IndexedCount > 0 {
 		insights = append(insights, "当前没有向量索引，RAG 检索质量会明显受限。")
 	}
 	if len(health.Recommendations) > 0 {
@@ -660,6 +663,9 @@ func buildSafeMCPDocumentDiagnostics(diagnostics model.DocumentIndexDiagnostics)
 		"rawContentChars":       diagnostics.RawContentChars,
 		"chunkCount":            diagnostics.ChunkCount,
 		"vectorCount":           diagnostics.VectorCount,
+		"vectorCountStatus":     diagnostics.VectorCountStatus,
+		"vectorCountSource":     diagnostics.VectorCountSource,
+		"vectorCountErrorCode":  diagnostics.VectorCountErrorCode,
 		"summaryChunkCount":     diagnostics.SummaryChunkCount,
 		"structuredRowCount":    diagnostics.StructuredRowCount,
 		"rawContentAvailable":   diagnostics.RawContentAvailable,
@@ -673,20 +679,23 @@ func buildSafeMCPKnowledgeBaseHealth(health model.KnowledgeBaseHealthResponse) m
 	documents := make([]map[string]any, 0, len(health.Documents))
 	for _, document := range health.Documents {
 		documents = append(documents, map[string]any{
-			"documentId":          document.DocumentID,
-			"documentName":        document.DocumentName,
-			"status":              document.Status,
-			"indexedAt":           document.IndexedAt,
-			"errorCode":           document.IndexErrorCode,
-			"indexVersion":        document.IndexVersion,
-			"chunkCount":          document.ChunkCount,
-			"vectorCount":         document.VectorCount,
-			"summaryChunkCount":   document.SummaryChunkCount,
-			"structuredRowCount":  document.StructuredRowCount,
-			"rawContentChars":     document.RawContentChars,
-			"rawContentAvailable": document.RawContentAvailable,
-			"needsReindex":        document.NeedsReindex,
-			"recommendation":      document.Recommendation,
+			"documentId":           document.DocumentID,
+			"documentName":         document.DocumentName,
+			"status":               document.Status,
+			"indexedAt":            document.IndexedAt,
+			"errorCode":            document.IndexErrorCode,
+			"indexVersion":         document.IndexVersion,
+			"chunkCount":           document.ChunkCount,
+			"vectorCount":          document.VectorCount,
+			"vectorCountStatus":    document.VectorCountStatus,
+			"vectorCountSource":    document.VectorCountSource,
+			"vectorCountErrorCode": document.VectorCountErrorCode,
+			"summaryChunkCount":    document.SummaryChunkCount,
+			"structuredRowCount":   document.StructuredRowCount,
+			"rawContentChars":      document.RawContentChars,
+			"rawContentAvailable":  document.RawContentAvailable,
+			"needsReindex":         document.NeedsReindex,
+			"recommendation":       document.Recommendation,
 		})
 	}
 
@@ -697,18 +706,29 @@ func buildSafeMCPKnowledgeBaseHealth(health model.KnowledgeBaseHealthResponse) m
 		"score":               health.Score,
 		"currentIndexVersion": health.CurrentIndexVersion,
 		"metrics": map[string]any{
-			"documentCount":      health.Metrics.DocumentCount,
-			"indexedCount":       health.Metrics.IndexedCount,
-			"processingCount":    health.Metrics.ProcessingCount,
-			"failedCount":        health.Metrics.FailedCount,
-			"emptyContentCount":  health.Metrics.EmptyContentCount,
-			"chunkCount":         health.Metrics.ChunkCount,
-			"vectorCount":        health.Metrics.VectorCount,
-			"summaryChunkCount":  health.Metrics.SummaryChunkCount,
-			"structuredRowCount": health.Metrics.StructuredRowCount,
-			"rawContentChars":    health.Metrics.RawContentChars,
-			"qdrantEnabled":      health.Metrics.QdrantEnabled,
-			"lastIndexedAt":      health.Metrics.LastIndexedAt,
+			"documentCount":          health.Metrics.DocumentCount,
+			"indexedCount":           health.Metrics.IndexedCount,
+			"processingCount":        health.Metrics.ProcessingCount,
+			"failedCount":            health.Metrics.FailedCount,
+			"emptyContentCount":      health.Metrics.EmptyContentCount,
+			"chunkCount":             health.Metrics.ChunkCount,
+			"vectorCount":            health.Metrics.VectorCount,
+			"vectorCountStatus":      health.Metrics.VectorCountStatus,
+			"vectorCountSource":      health.Metrics.VectorCountSource,
+			"vectorCountErrorCode":   health.Metrics.VectorCountErrorCode,
+			"summaryChunkCount":      health.Metrics.SummaryChunkCount,
+			"structuredRowCount":     health.Metrics.StructuredRowCount,
+			"rawContentChars":        health.Metrics.RawContentChars,
+			"qdrantEnabled":          health.Metrics.QdrantEnabled,
+			"qdrantStatus":           health.Metrics.QdrantStatus,
+			"qdrantCollectionStatus": health.Metrics.QdrantCollectionStatus,
+			"qdrantCollectionExists": health.Metrics.QdrantCollectionExists,
+			"qdrantPointCount":       health.Metrics.QdrantPointCount,
+			"qdrantPointCountKnown":  health.Metrics.QdrantPointCountKnown,
+			"expectedVectorSize":     health.Metrics.ExpectedVectorSize,
+			"qdrantVectorSize":       health.Metrics.QdrantVectorSize,
+			"qdrantSparseEnabled":    health.Metrics.QdrantSparseEnabled,
+			"lastIndexedAt":          health.Metrics.LastIndexedAt,
 		},
 		"recommendations": health.Recommendations,
 		"documents":       documents,

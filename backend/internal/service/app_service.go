@@ -4285,11 +4285,50 @@ type DocumentDetailOptions struct {
 	IncludeAllChunks   bool
 }
 
+const (
+	vectorCountSourceActual        = "actual"
+	vectorCountSourceUnknown       = "unknown"
+	vectorCountSourceNotApplicable = "not_applicable"
+
+	vectorCountStatusOK                = "ok"
+	vectorCountStatusError             = "error"
+	vectorCountStatusCollectionMissing = "collection_missing"
+	vectorCountStatusDimensionMismatch = "dimension_mismatch"
+	vectorCountStatusSparseMismatch    = "sparse_vectors_missing"
+	vectorCountStatusNotApplicable     = "not_applicable"
+)
+
+type documentVectorHealth struct {
+	Count     int
+	Status    string
+	Source    string
+	ErrorCode string
+}
+
+type knowledgeBaseQdrantHealth struct {
+	Status           string
+	CollectionStatus string
+	ErrorCode        string
+	Collection       QdrantCollectionHealth
+}
+
+func notApplicableVectorHealth() documentVectorHealth {
+	return documentVectorHealth{
+		Status: vectorCountStatusNotApplicable,
+		Source: vectorCountSourceNotApplicable,
+	}
+}
+
 func (s *AppService) GetDocumentDetail(knowledgeBaseID, documentID, focusChunkID string) (model.DocumentDetailResponse, error) {
 	return s.GetDocumentDetailWithOptions(knowledgeBaseID, documentID, focusChunkID, DocumentDetailOptions{})
 }
 
 func (s *AppService) GetDocumentDetailWithOptions(knowledgeBaseID, documentID, focusChunkID string, options DocumentDetailOptions) (model.DocumentDetailResponse, error) {
+	return s.GetDocumentDetailWithContext(context.Background(), knowledgeBaseID, documentID, focusChunkID, options)
+}
+
+func (s *AppService) GetDocumentDetailWithContext(ctx context.Context, knowledgeBaseID, documentID, focusChunkID string, options DocumentDetailOptions) (model.DocumentDetailResponse, error) {
+	ctx = normalizeServiceContext(ctx)
 	document, err := s.findDocument(knowledgeBaseID, documentID)
 	if err != nil {
 		return model.DocumentDetailResponse{}, err
@@ -4301,10 +4340,16 @@ func (s *AppService) GetDocumentDetailWithOptions(knowledgeBaseID, documentID, f
 	}
 
 	chunks := s.rag.BuildDocumentChunks(document, content)
-	return buildDocumentDetailResponse(s, document, content, contentSource, chunks, focusChunkID, options), nil
+	vectorHealth := s.documentVectorHealth(ctx, knowledgeBaseID, document, s.inspectKnowledgeBaseQdrantHealth(ctx, knowledgeBaseID))
+	return buildDocumentDetailResponse(s, document, content, contentSource, chunks, focusChunkID, options, vectorHealth), nil
 }
 
 func (s *AppService) GetKnowledgeBaseHealth(knowledgeBaseID string) (model.KnowledgeBaseHealthResponse, error) {
+	return s.GetKnowledgeBaseHealthWithContext(context.Background(), knowledgeBaseID)
+}
+
+func (s *AppService) GetKnowledgeBaseHealthWithContext(ctx context.Context, knowledgeBaseID string) (model.KnowledgeBaseHealthResponse, error) {
+	ctx = normalizeServiceContext(ctx)
 	knowledgeBaseID = strings.TrimSpace(knowledgeBaseID)
 	if knowledgeBaseID == "" {
 		return model.KnowledgeBaseHealthResponse{}, fmt.Errorf("knowledge base id is required")
@@ -4320,14 +4365,29 @@ func (s *AppService) GetKnowledgeBaseHealth(knowledgeBaseID string) (model.Knowl
 		return model.KnowledgeBaseHealthResponse{}, fmt.Errorf("knowledge base not found")
 	}
 
+	qdrantHealth := s.inspectKnowledgeBaseQdrantHealth(ctx, knowledgeBaseID)
 	metrics := model.KnowledgeBaseHealthMetrics{
-		DocumentCount: len(kb.Documents),
-		QdrantEnabled: s.qdrant != nil && s.qdrant.IsEnabled(),
+		DocumentCount:          len(kb.Documents),
+		QdrantEnabled:          s.qdrant != nil && s.qdrant.IsEnabled(),
+		QdrantStatus:           qdrantHealth.Status,
+		QdrantCollectionStatus: qdrantHealth.CollectionStatus,
+		QdrantCollectionExists: qdrantHealth.Collection.Exists,
+		QdrantPointCount:       qdrantHealth.Collection.PointCount,
+		QdrantPointCountKnown:  qdrantHealth.Collection.PointCountKnown,
+		ExpectedVectorSize:     s.qdrantVectorSize(),
+		QdrantVectorSize:       qdrantHealth.Collection.DenseVectorSize,
+		QdrantSparseEnabled:    qdrantHealth.Collection.SparseVectorConfigured,
+		VectorCountStatus:      vectorCountStatusNotApplicable,
+		VectorCountSource:      vectorCountSourceNotApplicable,
 	}
 	documents := make([]model.KnowledgeBaseDocumentHealth, 0, len(kb.Documents))
 	needsReindexCount := 0
+	indexedVectorCount := 0
+	indexedVectorChecks := 0
+	vectorCheckFailed := false
 	for _, document := range kb.Documents {
-		item := s.buildKnowledgeBaseDocumentHealth(document)
+		vectorHealth := s.documentVectorHealth(ctx, knowledgeBaseID, document, qdrantHealth)
+		item := s.buildKnowledgeBaseDocumentHealth(document, vectorHealth)
 		documents = append(documents, item)
 
 		switch document.Status {
@@ -4345,13 +4405,36 @@ func (s *AppService) GetKnowledgeBaseHealth(knowledgeBaseID string) (model.Knowl
 		if item.NeedsReindex {
 			needsReindexCount++
 		}
+		if document.Status == "indexed" && metrics.QdrantEnabled {
+			indexedVectorChecks++
+			if item.VectorCountSource == vectorCountSourceActual {
+				indexedVectorCount += item.VectorCount
+			} else {
+				vectorCheckFailed = true
+			}
+		}
 		metrics.ChunkCount += item.ChunkCount
-		metrics.VectorCount += item.VectorCount
 		metrics.SummaryChunkCount += item.SummaryChunkCount
 		metrics.StructuredRowCount += item.StructuredRowCount
 		metrics.RawContentChars += item.RawContentChars
 		if isLaterRFC3339(item.IndexedAt, metrics.LastIndexedAt) {
 			metrics.LastIndexedAt = item.IndexedAt
+		}
+	}
+	if indexedVectorChecks > 0 {
+		metrics.VectorCount = indexedVectorCount
+		if vectorCheckFailed {
+			metrics.VectorCountSource = vectorCountSourceUnknown
+			if metrics.QdrantStatus == vectorCountStatusOK {
+				metrics.VectorCountStatus = vectorCountStatusError
+				metrics.VectorCountErrorCode = "qdrant_count_failed"
+			} else {
+				metrics.VectorCountStatus = metrics.QdrantStatus
+				metrics.VectorCountErrorCode = qdrantHealth.ErrorCode
+			}
+		} else {
+			metrics.VectorCountSource = vectorCountSourceActual
+			metrics.VectorCountStatus = vectorCountStatusOK
 		}
 	}
 
@@ -4370,17 +4453,115 @@ func (s *AppService) GetKnowledgeBaseHealth(knowledgeBaseID string) (model.Knowl
 	}, nil
 }
 
-func (s *AppService) buildKnowledgeBaseDocumentHealth(document model.Document) model.KnowledgeBaseDocumentHealth {
+func (s *AppService) inspectKnowledgeBaseQdrantHealth(ctx context.Context, knowledgeBaseID string) knowledgeBaseQdrantHealth {
+	health := knowledgeBaseQdrantHealth{
+		Status:           vectorCountStatusNotApplicable,
+		CollectionStatus: "disabled",
+	}
+	if s == nil || s.qdrant == nil || !s.qdrant.IsEnabled() {
+		return health
+	}
+
+	collection, err := s.qdrant.InspectCollection(ctx, knowledgeBaseID)
+	if err != nil {
+		health.Status = vectorCountStatusError
+		health.CollectionStatus = "unavailable"
+		health.ErrorCode = qdrantHealthErrorCode(err)
+		return health
+	}
+	health.Collection = collection
+	if !collection.Exists {
+		health.Status = vectorCountStatusCollectionMissing
+		health.CollectionStatus = "missing"
+		health.ErrorCode = "qdrant_collection_missing"
+		return health
+	}
+	health.CollectionStatus = strings.TrimSpace(collection.Status)
+	if health.CollectionStatus == "" {
+		health.CollectionStatus = "present"
+	}
+	if strings.EqualFold(collection.Status, "red") {
+		health.Status = "collection_unhealthy"
+		health.ErrorCode = "qdrant_collection_unhealthy"
+		return health
+	}
+	if !collection.DenseVectorConfigured {
+		health.Status = vectorCountStatusError
+		health.ErrorCode = "qdrant_dense_vector_missing"
+		return health
+	}
+	if expected := s.qdrantVectorSize(); expected > 0 && collection.DenseVectorSize != expected {
+		health.Status = vectorCountStatusDimensionMismatch
+		health.ErrorCode = "qdrant_vector_dimension_mismatch"
+		return health
+	}
+	if s.serverConfig.EnableHybridSearch && !collection.SparseVectorConfigured {
+		health.Status = vectorCountStatusSparseMismatch
+		health.ErrorCode = "qdrant_sparse_vector_missing"
+		return health
+	}
+	health.Status = vectorCountStatusOK
+	return health
+}
+
+func (s *AppService) documentVectorHealth(ctx context.Context, knowledgeBaseID string, document model.Document, qdrantHealth knowledgeBaseQdrantHealth) documentVectorHealth {
+	if document.Status != "indexed" || qdrantHealth.Status == vectorCountStatusNotApplicable {
+		return notApplicableVectorHealth()
+	}
+	if qdrantHealth.Status != vectorCountStatusOK {
+		return documentVectorHealth{
+			Status:    qdrantHealth.Status,
+			Source:    vectorCountSourceUnknown,
+			ErrorCode: qdrantHealth.ErrorCode,
+		}
+	}
+
+	filter := s.withCurrentIndexFenceFilter(knowledgeBaseID, documentFilter(document.ID), document.ID)
+	count, err := s.qdrant.CountPointsByFilter(ctx, knowledgeBaseID, filter)
+	if err != nil {
+		return documentVectorHealth{
+			Status:    vectorCountStatusError,
+			Source:    vectorCountSourceUnknown,
+			ErrorCode: qdrantHealthErrorCode(err),
+		}
+	}
+	return documentVectorHealth{
+		Count:  count,
+		Status: vectorCountStatusOK,
+		Source: vectorCountSourceActual,
+	}
+}
+
+func qdrantHealthErrorCode(err error) string {
+	var requestErr *qdrantRequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case 401, 403:
+			return "qdrant_unauthorized"
+		case 408, 429:
+			return "qdrant_rate_limited_or_timeout"
+		case 500, 502, 503, 504:
+			return "qdrant_unavailable"
+		}
+	}
+	return "qdrant_unavailable"
+}
+
+func (s *AppService) buildKnowledgeBaseDocumentHealth(document model.Document, vectorHealth documentVectorHealth) model.KnowledgeBaseDocumentHealth {
 	errorCode := documentIndexErrorCode(document)
 	item := model.KnowledgeBaseDocumentHealth{
-		DocumentID:     document.ID,
-		DocumentName:   document.Name,
-		Status:         document.Status,
-		IndexedAt:      document.IndexedAt,
-		IndexError:     publicIndexError(errorCode),
-		IndexErrorCode: errorCode,
-		IndexVersion:   document.IndexVersion,
-		ChunkCount:     document.ChunkCount,
+		DocumentID:           document.ID,
+		DocumentName:         document.Name,
+		Status:               document.Status,
+		IndexedAt:            document.IndexedAt,
+		IndexError:           publicIndexError(errorCode),
+		IndexErrorCode:       errorCode,
+		IndexVersion:         document.IndexVersion,
+		ChunkCount:           document.ChunkCount,
+		VectorCount:          vectorHealth.Count,
+		VectorCountStatus:    vectorHealth.Status,
+		VectorCountSource:    vectorHealth.Source,
+		VectorCountErrorCode: vectorHealth.ErrorCode,
 	}
 
 	content, _, err := s.resolveDocumentContent(document)
@@ -4403,9 +4584,6 @@ func (s *AppService) buildKnowledgeBaseDocumentHealth(document model.Document) m
 		item.Recommendation = "无法读取原始文件，建议检查文件是否仍存在后重新上传。"
 	}
 
-	if s != nil && s.qdrant != nil && s.qdrant.IsEnabled() && document.Status == "indexed" {
-		item.VectorCount = item.ChunkCount
-	}
 	item.NeedsReindex = documentNeedsReindex(document, item)
 	if item.Recommendation == "" {
 		item.Recommendation = documentHealthRecommendation(document, item)
@@ -5912,7 +6090,7 @@ func indexedChunkID(chunk DocumentChunk) string {
 	return chunkID
 }
 
-func buildDocumentDetailResponse(s *AppService, document model.Document, content, contentSource string, chunks []DocumentChunk, focusChunkID string, options DocumentDetailOptions) model.DocumentDetailResponse {
+func buildDocumentDetailResponse(s *AppService, document model.Document, content, contentSource string, chunks []DocumentChunk, focusChunkID string, options DocumentDetailOptions, vectorHealth documentVectorHealth) model.DocumentDetailResponse {
 	document = publicDocument(document)
 	rawContent := strings.TrimSpace(content)
 	rawContentTruncated := false
@@ -5976,18 +6154,16 @@ func buildDocumentDetailResponse(s *AppService, document model.Document, content
 		summary = document.ContentPreview
 	}
 
-	vectorCount := 0
-	if s != nil && s.qdrant != nil && s.qdrant.IsEnabled() && document.Status == "indexed" {
-		vectorCount = len(chunks)
-	}
-
 	return model.DocumentDetailResponse{
 		KnowledgeBaseID: document.KnowledgeBaseID,
 		Document:        document,
 		Diagnostics: model.DocumentIndexDiagnostics{
 			RawContentChars:       len([]rune(content)),
 			ChunkCount:            len(chunks),
-			VectorCount:           vectorCount,
+			VectorCount:           vectorHealth.Count,
+			VectorCountStatus:     vectorHealth.Status,
+			VectorCountSource:     vectorHealth.Source,
+			VectorCountErrorCode:  vectorHealth.ErrorCode,
 			SummaryChunkCount:     summaryChunkCount,
 			StructuredRowCount:    structuredRowCount,
 			RawContentAvailable:   strings.TrimSpace(content) != "",
@@ -6021,6 +6197,9 @@ func documentNeedsReindex(document model.Document, health model.KnowledgeBaseDoc
 	if health.RawContentAvailable && health.ChunkCount == 0 {
 		return true
 	}
+	if document.Status == "indexed" && health.VectorCountSource == vectorCountSourceActual && health.VectorCount != health.ChunkCount {
+		return true
+	}
 	if !health.RawContentAvailable {
 		return true
 	}
@@ -6045,6 +6224,14 @@ func documentHealthRecommendation(document model.Document, health model.Knowledg
 		return "原文不可读或为空，建议重新上传文档。"
 	case health.ChunkCount == 0:
 		return "未生成 chunk，建议重建索引或检查文件内容。"
+	case health.VectorCountStatus == vectorCountStatusCollectionMissing:
+		return "Qdrant collection 不存在，无法确认向量索引，建议重建文档索引。"
+	case health.VectorCountStatus == vectorCountStatusDimensionMismatch:
+		return "Qdrant 向量维度与当前 Embedding 配置不一致，建议更换 collection 前缀后重建索引。"
+	case health.VectorCountSource == vectorCountSourceUnknown:
+		return "无法确认 Qdrant 向量数量，建议检查 Qdrant 连接、鉴权和 collection 状态。"
+	case health.VectorCountSource == vectorCountSourceActual && health.VectorCount != health.ChunkCount:
+		return fmt.Sprintf("Qdrant 实际向量点为 %d 个，与当前 %d 个 chunk 不一致，建议重建文档索引。", health.VectorCount, health.ChunkCount)
 	case health.SummaryChunkCount == 0 && health.StructuredRowCount > 0:
 		return "结构化行已识别但摘要块缺失，建议重建索引。"
 	case document.IndexVersion != currentIndexVersion:
@@ -6066,8 +6253,17 @@ func knowledgeBaseHealthScore(metrics model.KnowledgeBaseHealthMetrics, needsRei
 	if metrics.ChunkCount == 0 {
 		score -= 25
 	}
-	if metrics.QdrantEnabled && metrics.IndexedCount > 0 && metrics.VectorCount == 0 {
-		score -= 20
+	if metrics.QdrantEnabled && metrics.IndexedCount > 0 {
+		switch metrics.VectorCountStatus {
+		case vectorCountStatusCollectionMissing, vectorCountStatusDimensionMismatch, vectorCountStatusSparseMismatch, "collection_unhealthy":
+			score -= 25
+		case vectorCountStatusError:
+			score -= 15
+		case vectorCountStatusOK:
+			if metrics.VectorCount == 0 {
+				score -= 20
+			}
+		}
 	}
 	if score < 0 {
 		return 0
@@ -6083,6 +6279,8 @@ func knowledgeBaseHealthStatus(metricsScore int, metrics model.KnowledgeBaseHeal
 	case metrics.DocumentCount == 0:
 		return "empty"
 	case metrics.FailedCount > 0 || metricsScore < 60:
+		return "attention"
+	case metrics.QdrantEnabled && metrics.IndexedCount > 0 && metrics.VectorCountStatus != vectorCountStatusOK:
 		return "attention"
 	case metrics.ProcessingCount > 0 || needsReindexCount > 0 || metricsScore < 85:
 		return "warning"
@@ -6108,8 +6306,25 @@ func knowledgeBaseHealthRecommendations(metrics model.KnowledgeBaseHealthMetrics
 	if needsReindexCount > 0 {
 		recommendations = append(recommendations, fmt.Sprintf("%d 份文档建议重建索引。", needsReindexCount))
 	}
-	if metrics.QdrantEnabled && metrics.IndexedCount > 0 && metrics.VectorCount == 0 {
-		recommendations = append(recommendations, "Qdrant 已启用但未统计到向量，建议重建知识库索引。")
+	if metrics.QdrantEnabled && metrics.IndexedCount > 0 {
+		switch metrics.VectorCountStatus {
+		case vectorCountStatusCollectionMissing:
+			recommendations = append(recommendations, "Qdrant collection 不存在，当前向量数量无法确认，建议重建知识库索引。")
+		case vectorCountStatusDimensionMismatch:
+			recommendations = append(recommendations, fmt.Sprintf("Qdrant collection 向量维度为 %d，当前配置为 %d，建议更换 collection 前缀后重建索引。", metrics.QdrantVectorSize, metrics.ExpectedVectorSize))
+		case vectorCountStatusSparseMismatch:
+			recommendations = append(recommendations, "当前启用了混合检索，但 Qdrant collection 缺少 sparse 向量配置，建议重建 collection 后重新索引。")
+		case "collection_unhealthy":
+			recommendations = append(recommendations, "Qdrant collection 当前状态异常，建议先检查 Qdrant 服务和 collection 状态。")
+		case vectorCountStatusError:
+			recommendations = append(recommendations, "无法确认 Qdrant 实际向量数量，建议检查 Qdrant 连接、鉴权和 collection 状态。")
+		case vectorCountStatusOK:
+			if metrics.VectorCount == 0 {
+				recommendations = append(recommendations, "Qdrant 已连接但未统计到当前文档的向量点，建议重建知识库索引。")
+			} else if metrics.QdrantPointCountKnown && metrics.QdrantPointCount != metrics.VectorCount {
+				recommendations = append(recommendations, fmt.Sprintf("Qdrant collection 实际有 %d 个点，当前文档索引包含 %d 个点，可能存在旧代索引，建议检查并重建。", metrics.QdrantPointCount, metrics.VectorCount))
+			}
+		}
 	}
 	if len(recommendations) == 0 {
 		recommendations = append(recommendations, "知识库索引状态良好，可继续通过检索调试台观察命中质量。")

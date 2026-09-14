@@ -4,7 +4,7 @@ import type { KnowledgeBaseDocumentHealth } from '../../services/api'
 import AppIcon, { type AppIconName } from '../common/AppIcon'
 import { DOCUMENTS_PER_PAGE, getDocumentPage } from './documentListPagination'
 import DocumentScopePicker from './DocumentScopePicker'
-import { documentStatusLabel } from './knowledgeLabels'
+import { documentStatusLabel, vectorCountLabel } from './knowledgeLabels'
 
 interface DocumentListProps {
   documents: DocumentItem[]
@@ -284,7 +284,11 @@ const DocumentList: React.FC<DocumentListProps> = ({
                 {document.contentPreview && <p className="kb-doc-preview">{document.contentPreview}</p>}
                 <div className="kb-doc-health-row">
                   <span>{health?.rawContentAvailable ? '原文可用' : '原文缺失'}</span>
-                  <span>{health?.vectorCount ?? 0} 向量</span>
+                  <span>{health
+                    ? vectorCountLabel(health.vectorCount, health.vectorCountSource) === '未启用'
+                      ? '未启用向量'
+                      : `${vectorCountLabel(health.vectorCount, health.vectorCountSource)} 向量`
+                    : '未确认向量'}</span>
                   {typeof health?.structuredRowCount === 'number' && health.structuredRowCount > 0 && (
                     <span>{health.structuredRowCount} 数据行</span>
                   )}

@@ -1,7 +1,7 @@
 import React from 'react'
 import type { IndexedDocumentVerification, KnowledgeBaseHealthResponse } from '../../services/api'
 import AppIcon from '../common/AppIcon'
-import { healthStatusLabel } from './knowledgeLabels'
+import { healthStatusLabel, qdrantStatusLabel, vectorCountLabel, vectorCountSourceLabel } from './knowledgeLabels'
 
 interface KnowledgeHealthPanelProps {
   health?: KnowledgeBaseHealthResponse
@@ -27,6 +27,7 @@ const KnowledgeHealthPanel: React.FC<KnowledgeHealthPanelProps> = ({
   onVerifyDocument,
 }) => {
   const badge = health ? healthStatusLabel(health.status) : null
+  const metrics = health?.metrics
   const needsReindexDocuments = health?.documents.filter((item) => item.needsReindex) ?? []
   const recentIndexRuns = health?.indexHistory?.slice(0, 5) ?? []
 
@@ -110,9 +111,34 @@ const KnowledgeHealthPanel: React.FC<KnowledgeHealthPanelProps> = ({
               <dt>失败</dt><dd>{health.metrics.failedCount}</dd>
             </div>
             <div><dt>Chunks</dt><dd>{health.metrics.chunkCount}</dd></div>
-            <div><dt>向量</dt><dd>{health.metrics.vectorCount}</dd></div>
+            <div><dt>向量</dt><dd>{vectorCountLabel(health.metrics.vectorCount, health.metrics.vectorCountSource)}</dd></div>
             <div><dt>结构化行</dt><dd>{health.metrics.structuredRowCount}</dd></div>
           </dl>
+
+          <div className="kb-health-index-meta" aria-label="向量索引检查结果">
+            <span>
+              <strong>Qdrant</strong>
+              {qdrantStatusLabel(metrics?.qdrantStatus, metrics?.qdrantEnabled)}
+            </span>
+            <span>
+              <strong>向量统计</strong>
+              {vectorCountSourceLabel(metrics?.vectorCountSource)}
+            </span>
+            <span>
+              <strong>Collection 点</strong>
+              {metrics?.qdrantEnabled
+                ? metrics.qdrantCollectionExists
+                  ? `${metrics.qdrantPointCountKnown ? metrics.qdrantPointCount : '未确认'}${metrics.qdrantCollectionStatus && metrics.qdrantCollectionStatus !== 'green' ? ` · ${metrics.qdrantCollectionStatus}` : ''}`
+                  : '不存在'
+                : '未启用'}
+            </span>
+            <span>
+              <strong>维度</strong>
+              {metrics?.qdrantEnabled && metrics?.qdrantVectorSize
+                ? `${metrics.qdrantVectorSize} / ${metrics.expectedVectorSize ?? '未配置'}`
+                : '未确认'}
+            </span>
+          </div>
 
           {health.recommendations.length > 0 && (
             <div className="kb-health-recommendations">

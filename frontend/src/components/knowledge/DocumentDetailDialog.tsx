@@ -3,7 +3,7 @@ import type { DocumentDetailResponse } from '../../services/api'
 import { useModalFocusTrap } from '../../hooks/useModalFocusTrap'
 import AppIcon from '../common/AppIcon'
 import { formatDocumentPreviewText, shouldUseRawDocumentPreview } from './documentPreviewText'
-import { chunkKindLabel } from './knowledgeLabels'
+import { chunkKindLabel, vectorCountLabel, vectorCountSourceLabel } from './knowledgeLabels'
 
 interface DocumentDetailDialogProps {
   detail: DocumentDetailResponse | null
@@ -129,7 +129,8 @@ const DocumentDetailDialog: React.FC<DocumentDetailDialogProps> = ({
                   <dl className="kb-detail-facts">
                     <div><dt>原文字符</dt><dd>{detail.diagnostics.rawContentChars}</dd></div>
                     <div><dt>分块数量</dt><dd>{detail.diagnostics.chunkCount}</dd></div>
-                    <div><dt>向量数量</dt><dd>{detail.diagnostics.vectorCount}</dd></div>
+                    <div><dt>向量数量</dt><dd>{vectorCountLabel(detail.diagnostics.vectorCount, detail.diagnostics.vectorCountSource)}</dd></div>
+                    <div><dt>向量来源</dt><dd>{vectorCountSourceLabel(detail.diagnostics.vectorCountSource)}</dd></div>
                     <div><dt>摘要块</dt><dd>{detail.diagnostics.summaryChunkCount}</dd></div>
                     <div><dt>数据行块</dt><dd>{detail.diagnostics.structuredRowCount}</dd></div>
                     <div><dt>向量服务</dt><dd>{detail.diagnostics.qdrantEnabled ? '已启用' : '未启用'}</dd></div>

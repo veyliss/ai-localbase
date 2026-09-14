@@ -109,6 +109,42 @@ type qdrantScrollResponse struct {
 	} `json:"result"`
 }
 
+type qdrantCollectionInfoResponse struct {
+	Result struct {
+		Status      string `json:"status"`
+		PointsCount *int   `json:"points_count"`
+		Config      struct {
+			Params struct {
+				Vectors       json.RawMessage            `json:"vectors"`
+				SparseVectors map[string]json.RawMessage `json:"sparse_vectors"`
+			} `json:"params"`
+		} `json:"config"`
+	} `json:"result"`
+}
+
+type qdrantCountRequest struct {
+	Filter map[string]any `json:"filter,omitempty"`
+	Exact  bool           `json:"exact"`
+}
+
+type qdrantCountResponse struct {
+	Result struct {
+		Count int `json:"count"`
+	} `json:"result"`
+}
+
+// QdrantCollectionHealth contains only the collection metadata needed by the
+// knowledge-base health check. It deliberately does not include payloads.
+type QdrantCollectionHealth struct {
+	Exists                 bool
+	Status                 string
+	PointCount             int
+	PointCountKnown        bool
+	DenseVectorConfigured  bool
+	DenseVectorSize        int
+	SparseVectorConfigured bool
+}
+
 type qdrantScoredPoint struct {
 	ID      any            `json:"id"`
 	Score   float64        `json:"score"`
@@ -193,6 +229,94 @@ func (s *QdrantService) Ping(ctx context.Context) error {
 
 	_, err := s.doJSON(ctx, http.MethodGet, "/collections", nil)
 	return err
+}
+
+// InspectCollection reads lightweight collection metadata without creating the
+// collection or loading any point payloads.
+func (s *QdrantService) InspectCollection(ctx context.Context, knowledgeBaseID string) (QdrantCollectionHealth, error) {
+	if !s.IsEnabled() {
+		return QdrantCollectionHealth{}, nil
+	}
+
+	responseBody, err := s.doJSON(
+		ctx,
+		http.MethodGet,
+		"/collections/"+url.PathEscape(s.CollectionName(knowledgeBaseID)),
+		nil,
+	)
+	if err != nil {
+		if isQdrantNotFound(err) {
+			return QdrantCollectionHealth{}, nil
+		}
+		return QdrantCollectionHealth{}, err
+	}
+
+	var response qdrantCollectionInfoResponse
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return QdrantCollectionHealth{}, fmt.Errorf("decode qdrant collection info: %w", err)
+	}
+
+	denseSize, denseConfigured := parseQdrantDenseVectorSize(response.Result.Config.Params.Vectors)
+	return QdrantCollectionHealth{
+		Exists:                 true,
+		Status:                 response.Result.Status,
+		PointCount:             intValue(response.Result.PointsCount),
+		PointCountKnown:        response.Result.PointsCount != nil,
+		DenseVectorConfigured:  denseConfigured,
+		DenseVectorSize:        denseSize,
+		SparseVectorConfigured: len(response.Result.Config.Params.SparseVectors) > 0,
+	}, nil
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+// CountPointsByFilter asks Qdrant for an exact point count. Unlike scrolling,
+// this transfers no point IDs, vectors, or payloads to the application.
+func (s *QdrantService) CountPointsByFilter(ctx context.Context, knowledgeBaseID string, filter map[string]any) (int, error) {
+	if !s.IsEnabled() {
+		return 0, nil
+	}
+
+	responseBody, err := s.doJSON(
+		ctx,
+		http.MethodPost,
+		"/collections/"+url.PathEscape(s.CollectionName(knowledgeBaseID))+"/points/count",
+		qdrantCountRequest{Filter: filter, Exact: true},
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	var response qdrantCountResponse
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return 0, fmt.Errorf("decode qdrant count response: %w", err)
+	}
+	return response.Result.Count, nil
+}
+
+func parseQdrantDenseVectorSize(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, false
+	}
+
+	var named map[string]qdrantVectorConfig
+	if err := json.Unmarshal(raw, &named); err == nil {
+		if config, ok := named[qdrantDenseVectorName]; ok {
+			return config.Size, true
+		}
+		return 0, false
+	}
+
+	var unnamed qdrantVectorConfig
+	if err := json.Unmarshal(raw, &unnamed); err != nil {
+		return 0, false
+	}
+	return unnamed.Size, unnamed.Size > 0
 }
 
 func (s *QdrantService) EnsureCollection(ctx context.Context, knowledgeBaseID string) error {

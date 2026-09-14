@@ -313,6 +313,9 @@ type DocumentIndexDiagnostics struct {
 	RawContentChars       int    `json:"rawContentChars"`
 	ChunkCount            int    `json:"chunkCount"`
 	VectorCount           int    `json:"vectorCount"`
+	VectorCountStatus     string `json:"vectorCountStatus"`
+	VectorCountSource     string `json:"vectorCountSource"`
+	VectorCountErrorCode  string `json:"vectorCountErrorCode,omitempty"`
 	SummaryChunkCount     int    `json:"summaryChunkCount"`
 	StructuredRowCount    int    `json:"structuredRowCount"`
 	RawContentAvailable   bool   `json:"rawContentAvailable"`
@@ -354,36 +357,50 @@ type DocumentDetailResponse struct {
 }
 
 type KnowledgeBaseHealthMetrics struct {
-	DocumentCount      int    `json:"documentCount"`
-	IndexedCount       int    `json:"indexedCount"`
-	ProcessingCount    int    `json:"processingCount"`
-	FailedCount        int    `json:"failedCount"`
-	EmptyContentCount  int    `json:"emptyContentCount"`
-	ChunkCount         int    `json:"chunkCount"`
-	VectorCount        int    `json:"vectorCount"`
-	SummaryChunkCount  int    `json:"summaryChunkCount"`
-	StructuredRowCount int    `json:"structuredRowCount"`
-	RawContentChars    int    `json:"rawContentChars"`
-	QdrantEnabled      bool   `json:"qdrantEnabled"`
-	LastIndexedAt      string `json:"lastIndexedAt,omitempty"`
+	DocumentCount          int    `json:"documentCount"`
+	IndexedCount           int    `json:"indexedCount"`
+	ProcessingCount        int    `json:"processingCount"`
+	FailedCount            int    `json:"failedCount"`
+	EmptyContentCount      int    `json:"emptyContentCount"`
+	ChunkCount             int    `json:"chunkCount"`
+	VectorCount            int    `json:"vectorCount"`
+	VectorCountStatus      string `json:"vectorCountStatus"`
+	VectorCountSource      string `json:"vectorCountSource"`
+	VectorCountErrorCode   string `json:"vectorCountErrorCode,omitempty"`
+	SummaryChunkCount      int    `json:"summaryChunkCount"`
+	StructuredRowCount     int    `json:"structuredRowCount"`
+	RawContentChars        int    `json:"rawContentChars"`
+	QdrantEnabled          bool   `json:"qdrantEnabled"`
+	QdrantStatus           string `json:"qdrantStatus"`
+	QdrantCollectionStatus string `json:"qdrantCollectionStatus,omitempty"`
+	QdrantCollectionExists bool   `json:"qdrantCollectionExists"`
+	QdrantPointCount       int    `json:"qdrantPointCount"`
+	QdrantPointCountKnown  bool   `json:"qdrantPointCountKnown"`
+	ExpectedVectorSize     int    `json:"expectedVectorSize,omitempty"`
+	QdrantVectorSize       int    `json:"qdrantVectorSize,omitempty"`
+	QdrantSparseEnabled    bool   `json:"qdrantSparseEnabled"`
+	LastIndexedAt          string `json:"lastIndexedAt,omitempty"`
 }
 
 type KnowledgeBaseDocumentHealth struct {
-	DocumentID          string `json:"documentId"`
-	DocumentName        string `json:"documentName"`
-	Status              string `json:"status"`
-	IndexedAt           string `json:"indexedAt,omitempty"`
-	IndexError          string `json:"indexError,omitempty"`
-	IndexErrorCode      string `json:"indexErrorCode,omitempty"`
-	IndexVersion        int    `json:"indexVersion,omitempty"`
-	ChunkCount          int    `json:"chunkCount"`
-	VectorCount         int    `json:"vectorCount"`
-	SummaryChunkCount   int    `json:"summaryChunkCount"`
-	StructuredRowCount  int    `json:"structuredRowCount"`
-	RawContentChars     int    `json:"rawContentChars"`
-	RawContentAvailable bool   `json:"rawContentAvailable"`
-	NeedsReindex        bool   `json:"needsReindex"`
-	Recommendation      string `json:"recommendation,omitempty"`
+	DocumentID           string `json:"documentId"`
+	DocumentName         string `json:"documentName"`
+	Status               string `json:"status"`
+	IndexedAt            string `json:"indexedAt,omitempty"`
+	IndexError           string `json:"indexError,omitempty"`
+	IndexErrorCode       string `json:"indexErrorCode,omitempty"`
+	IndexVersion         int    `json:"indexVersion,omitempty"`
+	ChunkCount           int    `json:"chunkCount"`
+	VectorCount          int    `json:"vectorCount"`
+	VectorCountStatus    string `json:"vectorCountStatus"`
+	VectorCountSource    string `json:"vectorCountSource"`
+	VectorCountErrorCode string `json:"vectorCountErrorCode,omitempty"`
+	SummaryChunkCount    int    `json:"summaryChunkCount"`
+	StructuredRowCount   int    `json:"structuredRowCount"`
+	RawContentChars      int    `json:"rawContentChars"`
+	RawContentAvailable  bool   `json:"rawContentAvailable"`
+	NeedsReindex         bool   `json:"needsReindex"`
+	Recommendation       string `json:"recommendation,omitempty"`
 }
 
 type KnowledgeBaseHealthResponse struct {

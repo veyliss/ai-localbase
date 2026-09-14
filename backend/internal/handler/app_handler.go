@@ -382,7 +382,7 @@ func (h *AppHandler) DeleteKnowledgeBase(c *gin.Context) {
 }
 
 func (h *AppHandler) GetKnowledgeBaseHealth(c *gin.Context) {
-	health, err := h.appService.GetKnowledgeBaseHealth(c.Param("id"))
+	health, err := h.appService.GetKnowledgeBaseHealthWithContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeError(c, http.StatusNotFound, err.Error())
 		return
@@ -595,7 +595,8 @@ func (h *AppHandler) DeleteDocument(c *gin.Context) {
 }
 
 func (h *AppHandler) GetDocumentDetail(c *gin.Context) {
-	detail, err := h.appService.GetDocumentDetailWithOptions(
+	detail, err := h.appService.GetDocumentDetailWithContext(
+		c.Request.Context(),
 		c.Param("id"),
 		c.Param("documentId"),
 		c.Query("focusChunkId"),
@@ -976,7 +977,7 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 			c.JSON(statusCode, model.APIError{Error: model.ErrorDetail{
 				Code:      "duplicate_document",
 				Message:   "相同内容的文档已存在",
-				RequestID:  c.GetString("requestId"),
+				RequestID: c.GetString("requestId"),
 			}})
 			return
 		}

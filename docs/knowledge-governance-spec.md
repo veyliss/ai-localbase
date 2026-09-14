@@ -47,7 +47,18 @@
 
 错误详情只用于本地持久化和日志关联；健康接口、前端和 MCP 只返回错误码及脱敏后的通用提示。
 
-## 4. 索引运行生命周期
+## 4. Qdrant 健康统计
+
+健康检查不会通过读取全部 Payload 来推断向量数量，而是读取目标 collection 的元数据，并使用按知识库、文档和当前索引代际过滤的精确 Count 请求。
+
+- `vectorCountSource=actual`：Qdrant 已返回当前文档实际点数。
+- `vectorCountSource=unknown`：collection 不存在、维度不匹配、鉴权失败、连接失败或 Count 失败；此时 `vectorCount=0` 只是占位，不能解释为零向量。
+- `vectorCountSource=estimated`：兼容状态，表示估算值；新健康检查不使用估算值替代实际 Count。
+- `vectorCountSource=not_applicable`：文档未索引或未启用 Qdrant。
+
+健康结果还会返回 collection 是否存在、collection 点数、当前配置维度、collection 维度和 sparse 向量配置。Collection 点数与当前文档实际点数不一致时，通常意味着存在旧索引代际或残留点，应检查索引代际后再重建，不应直接把差值当作有效文档向量。
+
+## 5. 索引运行生命周期
 
 1. 上传或重建开始时创建运行上下文，记录 `trigger`、文档和开始时间。
 2. 在写入 Qdrant 前校验原文存在性和 checksum；批量重建先完成全部原文预检。
@@ -57,7 +68,7 @@
 
 当前版本的批量重建在首个索引失败时停止并记录失败运行；后续任务队列和逐文档重试属于下一阶段。
 
-## 5. 迁移规则
+## 6. 迁移规则
 
 - 缺失知识库 ID 时使用 `knowledgeBases` map key。
 - 缺失 `createdAt` 时写入当前 UTC 时间，缺失 `updatedAt` 时回填 `createdAt`。
@@ -66,7 +77,7 @@
 - 缺失文档 `indexErrorCode` 但存在旧错误文本时，按兼容规则分类并替换为脱敏消息。
 - 不在启动迁移阶段读取所有原文计算 checksum；checksum 在文档索引或重建时补齐。
 
-## 6. 对外接口
+## 7. 对外接口
 
 - `GET /api/knowledge-bases/:id/health`：健康摘要、文档诊断和最近运行记录。
 - `GET /api/knowledge-bases/:id/index-history`：分页前的最近运行记录接口，当前返回最多 50 条。

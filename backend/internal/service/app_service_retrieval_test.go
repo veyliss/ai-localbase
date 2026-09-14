@@ -1201,6 +1201,227 @@ func TestGetKnowledgeBaseHealthReportsStructuredMetrics(t *testing.T) {
 	}
 }
 
+func TestGetKnowledgeBaseHealthReportsActualQdrantPointCounts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(path, []byte("这是当前索引代际的文档内容。"), 0o644); err != nil {
+		t.Fatalf("write document fixture: %v", err)
+	}
+
+	var countFilter map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/kb_kb-health":
+			_, _ = w.Write([]byte(`{"result":{"status":"green","points_count":1,"config":{"params":{"vectors":{"dense":{"size":768,"distance":"Cosine"}},"sparse_vectors":{}}}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/kb_kb-health/points/count":
+			var request qdrantCountRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode count request: %v", err)
+			}
+			countFilter = request.Filter
+			_, _ = w.Write([]byte(`{"result":{"count":1}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	config := model.ServerConfig{
+		QdrantURL:              server.URL,
+		QdrantCollectionPrefix: "kb_",
+		QdrantVectorSize:       768,
+		QdrantTimeoutSeconds:   1,
+	}
+	service := NewAppService(
+		NewQdrantService(config),
+		&AppStateStore{path: ""},
+		nil,
+		config,
+	)
+	service.state = &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-health": {
+			ID:   "kb-health",
+			Name: "准确性测试知识库",
+			Documents: []model.Document{{
+				ID:              "doc-health",
+				KnowledgeBaseID: "kb-health",
+				Name:            "source.txt",
+				Path:            path,
+				Status:          "indexed",
+				IndexedAt:       time.Now().UTC().Format(time.RFC3339),
+				IndexVersion:    currentIndexVersion,
+				IndexFence:      "index:current",
+			}},
+		},
+	}}
+
+	health, err := service.GetKnowledgeBaseHealth("kb-health")
+	if err != nil {
+		t.Fatalf("get knowledge base health: %v", err)
+	}
+	if health.Metrics.VectorCount != 1 || health.Metrics.VectorCountStatus != "ok" || health.Metrics.VectorCountSource != "actual" {
+		t.Fatalf("expected actual vector count, got metrics=%+v", health.Metrics)
+	}
+	if health.Metrics.QdrantStatus != "ok" || health.Metrics.QdrantVectorSize != 768 || !health.Metrics.QdrantCollectionExists {
+		t.Fatalf("unexpected qdrant metadata: %+v", health.Metrics)
+	}
+	if len(health.Documents) != 1 || health.Documents[0].VectorCount != 1 || health.Documents[0].VectorCountSource != "actual" || health.Documents[0].NeedsReindex {
+		t.Fatalf("unexpected document vector health: %+v", health.Documents)
+	}
+	encodedFilter, err := json.Marshal(countFilter)
+	if err != nil || !strings.Contains(string(encodedFilter), "index:current") {
+		t.Fatalf("expected count filter to use current index fence, got %s (err=%v)", encodedFilter, err)
+	}
+}
+
+func TestGetKnowledgeBaseHealthFlagsActualVectorChunkMismatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(path, []byte("当前索引应该包含一个文档片段。"), 0o644); err != nil {
+		t.Fatalf("write document fixture: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"result":{"status":"green","points_count":0,"config":{"params":{"vectors":{"dense":{"size":768,"distance":"Cosine"}}}}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"result":{"count":0}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	config := model.ServerConfig{QdrantURL: server.URL, QdrantVectorSize: 768, QdrantTimeoutSeconds: 1}
+	appService := NewAppService(NewQdrantService(config), nil, nil, config)
+	appService.state = &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-health": {
+			ID: "kb-health",
+			Documents: []model.Document{{
+				ID: "doc-health", KnowledgeBaseID: "kb-health", Name: "source.txt", Path: path,
+				Status: "indexed", IndexedAt: time.Now().UTC().Format(time.RFC3339), IndexVersion: currentIndexVersion,
+			}},
+		},
+	}}
+
+	health, err := appService.GetKnowledgeBaseHealth("kb-health")
+	if err != nil {
+		t.Fatalf("get knowledge base health: %v", err)
+	}
+	if health.Metrics.VectorCountStatus != "ok" || health.Metrics.VectorCountSource != "actual" || health.Metrics.VectorCount != 0 {
+		t.Fatalf("expected confirmed zero vector count, got metrics=%+v", health.Metrics)
+	}
+	if len(health.Documents) != 1 || !health.Documents[0].NeedsReindex || !strings.Contains(health.Documents[0].Recommendation, "不一致") {
+		t.Fatalf("expected actual vector/chunk mismatch recommendation, got documents=%+v", health.Documents)
+	}
+}
+
+func TestGetKnowledgeBaseHealthDoesNotTreatQdrantFailuresAsZeroVectors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.txt")
+	if err := os.WriteFile(path, []byte("这是需要校验的文档内容。"), 0o644); err != nil {
+		t.Fatalf("write document fixture: %v", err)
+	}
+
+	tests := []struct {
+		name            string
+		status          int
+		collectionBody  string
+		countBody       string
+		expectQdrant    string
+		expectVector    string
+		expectSource    string
+		expectErrorCode string
+	}{
+		{
+			name:            "collection missing",
+			status:          http.StatusNotFound,
+			expectQdrant:    "collection_missing",
+			expectVector:    "collection_missing",
+			expectSource:    "unknown",
+			expectErrorCode: "qdrant_collection_missing",
+		},
+		{
+			name:            "authentication failure",
+			status:          http.StatusUnauthorized,
+			expectQdrant:    "error",
+			expectVector:    "error",
+			expectSource:    "unknown",
+			expectErrorCode: "qdrant_unauthorized",
+		},
+		{
+			name:            "dimension mismatch",
+			status:          http.StatusOK,
+			collectionBody:  `{"result":{"status":"green","points_count":1,"config":{"params":{"vectors":{"dense":{"size":1024,"distance":"Cosine"}}}}}}`,
+			expectQdrant:    "dimension_mismatch",
+			expectVector:    "dimension_mismatch",
+			expectSource:    "unknown",
+			expectErrorCode: "qdrant_vector_dimension_mismatch",
+		},
+		{
+			name:            "count failure",
+			status:          http.StatusOK,
+			collectionBody:  `{"result":{"status":"green","points_count":1,"config":{"params":{"vectors":{"dense":{"size":768,"distance":"Cosine"}}}}}}`,
+			countBody:       `{"error":"count unavailable"}`,
+			expectQdrant:    "ok",
+			expectVector:    "error",
+			expectSource:    "unknown",
+			expectErrorCode: "qdrant_count_failed",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					if test.status != http.StatusOK {
+						w.WriteHeader(test.status)
+						_, _ = w.Write([]byte(`{"status":"failure"}`))
+						return
+					}
+					_, _ = w.Write([]byte(test.collectionBody))
+					return
+				}
+				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/points/count") {
+					w.WriteHeader(http.StatusInternalServerError)
+					if test.countBody != "" {
+						_, _ = w.Write([]byte(test.countBody))
+					}
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer server.Close()
+
+			config := model.ServerConfig{QdrantURL: server.URL, QdrantVectorSize: 768, QdrantTimeoutSeconds: 1}
+			appService := NewAppService(NewQdrantService(config), nil, nil, config)
+			appService.state = &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+				"kb-health": {
+					ID: "kb-health",
+					Documents: []model.Document{{
+						ID: "doc-health", KnowledgeBaseID: "kb-health", Name: "source.txt", Path: path,
+						Status: "indexed", IndexedAt: time.Now().UTC().Format(time.RFC3339), IndexVersion: currentIndexVersion,
+					}},
+				},
+			}}
+
+			health, err := appService.GetKnowledgeBaseHealth("kb-health")
+			if err != nil {
+				t.Fatalf("get knowledge base health: %v", err)
+			}
+			if health.Metrics.QdrantStatus != test.expectQdrant || health.Metrics.VectorCountStatus != test.expectVector || health.Metrics.VectorCountSource != test.expectSource {
+				t.Fatalf("unexpected health state: metrics=%+v", health.Metrics)
+			}
+			if health.Metrics.VectorCount != 0 || health.Status != "attention" {
+				t.Fatalf("expected unknown/error vector state without a fabricated count, got metrics=%+v status=%s", health.Metrics, health.Status)
+			}
+			if test.expectErrorCode != "" && health.Metrics.VectorCountErrorCode != test.expectErrorCode {
+				t.Fatalf("expected error code %q, got %q", test.expectErrorCode, health.Metrics.VectorCountErrorCode)
+			}
+		})
+	}
+}
+
 func TestDocumentHealthRequiresReindexAfterIndexRuleChange(t *testing.T) {
 	document := model.Document{
 		Status:       "indexed",

@@ -73,6 +73,79 @@ func TestQdrantServiceScrollPointPayloadsPreservesLargeNumericIDs(t *testing.T) 
 	}
 }
 
+func TestQdrantServiceInspectsCollectionAndCountsPointsWithoutScrolling(t *testing.T) {
+	var countRequest qdrantCountRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/kb-1":
+			_, _ = w.Write([]byte(`{"result":{"status":"green","points_count":5,"config":{"params":{"vectors":{"dense":{"size":768,"distance":"Cosine"}},"sparse_vectors":{"sparse":{}}}}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/collections/kb-1/points/count":
+			if err := json.NewDecoder(r.Body).Decode(&countRequest); err != nil {
+				t.Fatalf("decode count request: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"result":{"count":3}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	qdrant := NewQdrantService(model.ServerConfig{QdrantURL: server.URL, QdrantVectorSize: 768})
+	collection, err := qdrant.InspectCollection(t.Context(), "kb-1")
+	if err != nil {
+		t.Fatalf("inspect collection: %v", err)
+	}
+	if !collection.Exists || collection.Status != "green" || collection.PointCount != 5 || collection.DenseVectorSize != 768 || !collection.SparseVectorConfigured {
+		t.Fatalf("unexpected collection health: %+v", collection)
+	}
+
+	count, err := qdrant.CountPointsByFilter(t.Context(), "kb-1", map[string]any{
+		"must": []map[string]any{{"key": "document_id"}},
+	})
+	if err != nil {
+		t.Fatalf("count points: %v", err)
+	}
+	if count != 3 || !countRequest.Exact || len(countRequest.Filter) == 0 {
+		t.Fatalf("unexpected count result or request: count=%d request=%+v", count, countRequest)
+	}
+}
+
+func TestQdrantServiceInspectCollectionTreatsNotFoundAsMissing(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+
+	qdrant := NewQdrantService(model.ServerConfig{QdrantURL: server.URL})
+	collection, err := qdrant.InspectCollection(t.Context(), "missing")
+	if err != nil {
+		t.Fatalf("expected missing collection to be reported without transport error: %v", err)
+	}
+	if collection.Exists {
+		t.Fatalf("expected collection to be missing, got %+v", collection)
+	}
+}
+
+func TestParseQdrantDenseVectorSizeSupportsNamedAndLegacyCollections(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		size int
+		ok   bool
+	}{
+		{name: "named", raw: `{"dense":{"size":1024,"distance":"Cosine"}}`, size: 1024, ok: true},
+		{name: "legacy", raw: `{"size":768,"distance":"Cosine"}`, size: 768, ok: true},
+		{name: "missing", raw: `{"sparse":{"size":1}}`, size: 0, ok: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			size, ok := parseQdrantDenseVectorSize(json.RawMessage(test.raw))
+			if size != test.size || ok != test.ok {
+				t.Fatalf("expected size=%d ok=%t, got size=%d ok=%t", test.size, test.ok, size, ok)
+			}
+		})
+	}
+}
+
 func TestMigrateQdrantPayloadsReembedsAndPreservesPayload(t *testing.T) {
 	const largePointID = "18446744073709551614"
 

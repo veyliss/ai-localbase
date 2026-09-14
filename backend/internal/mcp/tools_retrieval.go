@@ -281,12 +281,16 @@ func newRetrievalTools(appService AppServiceReader) []ToolDefinition {
 			ReadOnly:        true,
 			PermissionLevel: ToolPermissionReadOnly,
 			Handler: func(ctx context.Context, args map[string]any) (ToolCallResult, error) {
-				_ = ctx
 				knowledgeBaseID, err := requiredStringArg(args, "knowledgeBaseId")
 				if err != nil {
 					return ToolCallResult{}, err
 				}
-				health, err := appService.GetKnowledgeBaseHealth(knowledgeBaseID)
+				var health model.KnowledgeBaseHealthResponse
+				if contextAware, ok := contextAwareService(appService); ok {
+					health, err = contextAware.GetKnowledgeBaseHealthWithContext(ctx, knowledgeBaseID)
+				} else {
+					health, err = appService.GetKnowledgeBaseHealth(knowledgeBaseID)
+				}
 				if err != nil {
 					return ToolCallResult{}, err
 				}

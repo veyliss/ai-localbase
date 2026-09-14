@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25.1-alpine3.22 AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ ARG APP_VERSION=dev
 RUN go build -ldflags "-X ai-localbase/internal/version.Value=${APP_VERSION}" -o main . && \
     go build -o migrate-qdrant-vectors ./eval/cmd/migrate_qdrant_vectors
 
-FROM alpine:latest
+FROM alpine:3.22.1
 
 RUN apk --no-cache add ca-certificates curl su-exec \
     && addgroup -S -g 10001 app \

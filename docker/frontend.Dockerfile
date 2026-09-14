@@ -1,4 +1,4 @@
-FROM node:20.19-alpine AS builder
+FROM node:20.19.5-alpine3.22 AS builder
 
 WORKDIR /app
 
@@ -13,7 +13,7 @@ COPY frontend/ .
 RUN npm run build
 
 
-FROM nginx:alpine
+FROM nginx:1.29.1-alpine3.22
 
 ENV NGINX_CLIENT_MAX_BODY_SIZE=32m
 ENV NGINX_BACKEND_PORT=8080

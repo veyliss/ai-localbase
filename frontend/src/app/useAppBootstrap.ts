@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   API_BASE_PATH,
+  fetchAuthBootstrap,
   fetchBackendHealth,
   fetchConversationDetail,
   fetchInitialAppData,
@@ -72,12 +73,8 @@ export const useAppBootstrap = ({
 
     const checkAuth = async () => {
       try {
-        const health = await fetchBackendHealth()
-        if (!health) {
-          throw new Error('health check unavailable')
-        }
-        const authEnabled = health.config?.auth_enabled === 'true'
-        if (!authEnabled) {
+        const authBootstrap = await fetchAuthBootstrap()
+        if (!authBootstrap.auth_enabled) {
           setAuthRequired(false)
           return
         }

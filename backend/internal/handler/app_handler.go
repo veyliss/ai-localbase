@@ -44,18 +44,11 @@ func (h *AppHandler) Root(c *gin.Context) {
 }
 
 func (h *AppHandler) Health(c *gin.Context) {
-	c.JSON(http.StatusOK, model.HealthResponse{
-		Status: "ok",
-		Name:   "ai-localbase-backend",
-		Config: h.appService.GetHealthConfigMap(h.serverConfig),
-	})
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (h *AppHandler) Liveness(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "alive",
-		"name":   "ai-localbase-backend",
-	})
+	c.JSON(http.StatusOK, gin.H{"status": "alive"})
 }
 
 func (h *AppHandler) GetJobStatus(c *gin.Context) {
@@ -983,7 +976,7 @@ func (h *AppHandler) handleUpload(c *gin.Context, candidateKnowledgeBaseID strin
 			c.JSON(statusCode, model.APIError{Error: model.ErrorDetail{
 				Code:      "duplicate_document",
 				Message:   "相同内容的文档已存在",
-				RequestID: strings.TrimSpace(c.GetHeader("X-Request-Id")),
+				RequestID:  c.GetString("requestId"),
 			}})
 			return
 		}
@@ -1156,10 +1149,7 @@ func firstAssistantChoice(response model.ChatCompletionResponse) *model.ChatMess
 }
 
 func writeError(c *gin.Context, statusCode int, message string) {
-	requestID := strings.TrimSpace(c.GetHeader("X-Request-Id"))
-	if requestID == "" {
-		requestID = strings.TrimSpace(c.GetString("requestId"))
-	}
+	requestID := strings.TrimSpace(c.GetString("requestId"))
 
 	c.JSON(statusCode, model.APIError{
 		Error: model.ErrorDetail{

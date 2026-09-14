@@ -213,10 +213,7 @@ func isLocalDevelopmentOrigin(origin string) bool {
 
 func requestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		requestID := strings.TrimSpace(c.GetHeader("X-Request-Id"))
-		if requestID == "" {
-			requestID = util.NextRequestID()
-		}
+		requestID := util.NormalizeRequestID(c.GetHeader("X-Request-Id"))
 
 		c.Set("requestId", requestID)
 		c.Header("X-Request-Id", requestID)
@@ -227,12 +224,7 @@ func requestIDMiddleware() gin.HandlerFunc {
 func accessLogMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startedAt := time.Now()
-		requestID := strings.TrimSpace(c.GetHeader("X-Request-Id"))
-		if requestID == "" {
-			if value, ok := c.Get("requestId"); ok {
-				requestID, _ = value.(string)
-			}
-		}
+		requestID := c.GetString("requestId")
 
 		c.Next()
 

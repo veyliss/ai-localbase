@@ -28,6 +28,34 @@ func NextRequestID() string {
 	return NextID("req")
 }
 
+const maxRequestIDLength = 128
+
+// NormalizeRequestID keeps client correlation values bounded and safe to use
+// in response headers and structured log fields.
+func NormalizeRequestID(value string) string {
+	value = strings.TrimSpace(value)
+	if IsValidRequestID(value) {
+		return value
+	}
+	return NextRequestID()
+}
+
+func IsValidRequestID(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > maxRequestIDLength {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '-' && character != '_' && character != '.' && character != ':' {
+			return false
+		}
+	}
+	return true
+}
+
 func NowUnixNano() int64 {
 	return time.Now().UnixNano()
 }

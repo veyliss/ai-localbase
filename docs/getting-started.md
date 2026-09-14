@@ -173,7 +173,9 @@ ENABLE_AUTH=true AUTH_PASSWORD=your-secure-password AI_LOCALBASE_IMAGE_TAG=v1.4.
 ### 基础接口
 
 - `GET /`：服务首页
-- `GET /health`：健康检查
+- `GET /health`：最小健康探针，仅返回服务状态
+- `GET /livez`：最小存活探针
+- `GET /readyz`：最小就绪探针，异常时通过 HTTP 状态码表示未就绪
 - `POST /upload`：通用上传入口
 
 ### 应用接口

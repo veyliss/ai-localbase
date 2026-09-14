@@ -79,7 +79,9 @@ ai-localbase/
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/health` | 健康检查，返回 Qdrant 状态和配置概要 |
+| GET | `/health` | 最小健康探针；详细诊断使用认证后的 `/api/config/health-summary` |
+| GET | `/livez` | 最小存活探针 |
+| GET | `/readyz` | 最小就绪探针 |
 | GET | `/api/config` | 获取 Chat + Embedding 配置 |
 | PUT | `/api/config` | 更新 Chat + Embedding 配置 |
 | GET | `/api/knowledge-bases` | 列出所有知识库 |

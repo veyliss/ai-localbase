@@ -3,6 +3,7 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,5 +101,43 @@ func TestResourceTimeoutsArePositiveForProtectedClasses(t *testing.T) {
 		if timeout := resourceTimeout(class); timeout <= 0 || timeout > 10*time.Minute {
 			t.Fatalf("unexpected timeout for %s: %s", class, timeout)
 		}
+	}
+}
+
+func TestRequestIDMiddlewareRejectsUnsafeClientValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(requestIDMiddleware())
+	router.GET("/probe", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "control character", value: "trace\ncorrelation"},
+		{name: "unsupported character", value: "trace/correlation"},
+		{name: "too long", value: strings.Repeat("x", 129)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/probe", nil)
+			req.Header.Set("X-Request-Id", test.value)
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+			requestID := resp.Header().Get("X-Request-Id")
+			if requestID == test.value || !strings.HasPrefix(requestID, "req-") {
+				t.Fatalf("expected generated safe request id, got %q", requestID)
+			}
+		})
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/probe", nil)
+	req.Header.Set("X-Request-Id", "trace-mcp-11")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+	if got := resp.Header().Get("X-Request-Id"); got != "trace-mcp-11" {
+		t.Fatalf("expected safe client request id to be preserved, got %q", got)
 	}
 }

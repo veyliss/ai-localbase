@@ -127,16 +127,7 @@ func ensureMCPRequestID(c *gin.Context) string {
 }
 
 func isValidMCPRequestID(requestID string) bool {
-	requestID = strings.TrimSpace(requestID)
-	if requestID == "" || len(requestID) > 128 {
-		return false
-	}
-	for _, character := range requestID {
-		if character < 0x21 || character == 0x7f {
-			return false
-		}
-	}
-	return true
+	return util.IsValidRequestID(requestID)
 }
 
 func setMCPContractHeaders(c *gin.Context, contractVersion string) {
@@ -597,7 +588,11 @@ func requestIDFromContext(c *gin.Context) string {
 			return requestID
 		}
 	}
-	return strings.TrimSpace(c.GetHeader("X-Request-Id"))
+	requestID := strings.TrimSpace(c.GetHeader("X-Request-Id"))
+	if util.IsValidRequestID(requestID) {
+		return requestID
+	}
+	return ""
 }
 
 func (s *Server) toolDescriptors() []map[string]any {

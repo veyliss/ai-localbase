@@ -63,8 +63,7 @@ type HealthSummaryResponse struct {
 }
 
 type ReadinessResponse struct {
-	Status string                     `json:"status"`
-	Checks map[string]ComponentHealth `json:"checks"`
+	Status string `json:"status"`
 }
 
 type ComponentHealth struct {
@@ -273,7 +272,7 @@ func (h *ConfigHandler) Readiness(c *gin.Context) {
 	checks := map[string]ComponentHealth{}
 	if h == nil || h.appService == nil {
 		checks["backend"] = ComponentHealth{Status: "error", ErrorMessage: "application service is unavailable"}
-		c.JSON(http.StatusServiceUnavailable, ReadinessResponse{Status: "not_ready", Checks: checks})
+		c.JSON(http.StatusServiceUnavailable, ReadinessResponse{Status: "not_ready"})
 		return
 	}
 
@@ -292,7 +291,7 @@ func (h *ConfigHandler) Readiness(c *gin.Context) {
 		status = "ready"
 		statusCode = http.StatusOK
 	}
-	c.JSON(statusCode, ReadinessResponse{Status: status, Checks: checks})
+	c.JSON(statusCode, ReadinessResponse{Status: status})
 }
 
 func (h *ConfigHandler) checkUploadStagingHealth() ComponentHealth {

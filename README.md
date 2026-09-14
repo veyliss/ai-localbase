@@ -95,6 +95,7 @@ Docker 自托管建议设置：
 - `QDRANT_BIND_ADDRESS=127.0.0.1`：默认只允许宿主机本机访问 Qdrant 端口，避免服务器部署时暴露向量库。
 - `MAX_UPLOAD_BYTES=26214400`：默认单文件上传上限为 25 MiB，可按资源情况调大。
 - `NGINX_CLIENT_MAX_BODY_SIZE=32m`：Docker 前端代理请求体上限，需要高于单文件上传上限以容纳 multipart 开销。
+- `/health`、`/livez` 和 `/readyz` 仅提供最小探针响应；登录后可在 Settings 查看详细健康诊断。
 - `API_REQUESTS_PER_MINUTE=120`：Chat、检索、评估、索引、上传和模型测试等高成本接口的主体/IP 每分钟请求上限。
 - `API_MAX_CONCURRENT_REQUESTS=16`：上述高成本接口的全局并发上限；各类别还可通过对应的 `*_MAX_CONCURRENT_REQUESTS` 单独调整。
 

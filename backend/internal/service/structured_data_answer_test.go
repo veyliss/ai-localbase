@@ -33,6 +33,22 @@ func TestQueryStructuredDataPreview(t *testing.T) {
 	}
 }
 
+func TestQueryStructuredDataRejectsDocumentOutsideKnowledgeBase(t *testing.T) {
+	service := newStructuredQueryTestService(t)
+	service.state.Mu.Lock()
+	service.state.KnowledgeBases["kb-other"] = model.KnowledgeBase{ID: "kb-other", Name: "其他知识库"}
+	service.state.Mu.Unlock()
+
+	_, _, ok, err := service.QueryStructuredData(model.ChatCompletionRequest{
+		KnowledgeBaseID: "kb-other",
+		DocumentID:      "doc-users",
+		Messages:        []model.ChatMessage{{Role: "user", Content: "展示数据表格"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "document does not belong to knowledge base") {
+		t.Fatalf("expected cross-knowledge-base document rejection, ok=%v err=%v", ok, err)
+	}
+}
+
 func TestLooksLikeStructuredDataQueryRequiresTableSignal(t *testing.T) {
 	if looksLikeStructuredDataQuery("列出主要角色") {
 		t.Fatal("expected ordinary document list question not to trigger structured data handling")

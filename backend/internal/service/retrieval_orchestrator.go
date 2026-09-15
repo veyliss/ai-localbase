@@ -141,6 +141,9 @@ func (o *RetrievalOrchestrator) evaluateRaw(ctx context.Context, req model.ChatC
 	if service == nil {
 		return nil, fmt.Errorf("app service is nil")
 	}
+	if err := service.validateKnowledgeScope(req.KnowledgeBaseID, req.DocumentID); err != nil {
+		return nil, err
+	}
 	startedAt := time.Now()
 	query := latestUserMessage(req.Messages)
 	if strings.TrimSpace(query) == "" {

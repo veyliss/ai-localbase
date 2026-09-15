@@ -618,7 +618,7 @@ func TestBuildEvalRunMetrics(t *testing.T) {
 
 func TestEvalCaseEvidenceMetricsSeparateRelevantAndIrrelevantChunks(t *testing.T) {
 	item := model.EvalGroundTruthCase{
-		Question:      "示例机构的成立时间是什么？",
+		Question:       "示例机构的成立时间是什么？",
 		AnswerSnippets: []string{"成立于 1893 年"},
 		SourceDocuments: []model.EvalSourceDocument{{
 			DocumentID: "doc-1",
@@ -740,5 +740,21 @@ func TestListEvalRunsAndDeleteDatasetCleanup(t *testing.T) {
 	}
 	if len(service.ListEvalRuns("kb-2", "")) != 1 {
 		t.Fatalf("expected unrelated runs preserved")
+	}
+}
+
+func TestEvalDatasetDocumentsRejectsAmbiguousDocumentID(t *testing.T) {
+	service := &AppService{state: &model.AppState{
+		KnowledgeBases: map[string]model.KnowledgeBase{
+			"kb-1": {ID: "kb-1", Documents: []model.Document{{ID: "doc-duplicate", KnowledgeBaseID: "kb-1", Path: "/tmp/one.txt"}}},
+			"kb-2": {ID: "kb-2", Documents: []model.Document{{ID: "doc-duplicate", KnowledgeBaseID: "kb-2", Path: "/tmp/two.txt"}}},
+		},
+		EvalDatasets: map[string]model.EvalDataset{},
+		EvalRuns:     map[string]model.RunEvalDatasetResponse{},
+	}}
+
+	_, err := service.evalDatasetDocuments(model.GenerateEvalDatasetRequest{DocumentID: "doc-duplicate"})
+	if err == nil || !strings.Contains(err.Error(), "document id is ambiguous") {
+		t.Fatalf("expected ambiguous document rejection, got %v", err)
 	}
 }

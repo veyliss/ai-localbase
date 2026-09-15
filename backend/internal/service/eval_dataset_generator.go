@@ -817,6 +817,9 @@ func (s *AppService) saveEvalDataset(dataset model.EvalDataset) error {
 func (s *AppService) evalDatasetDocuments(req model.GenerateEvalDatasetRequest) ([]model.Document, error) {
 	knowledgeBaseID := strings.TrimSpace(req.KnowledgeBaseID)
 	documentID := strings.TrimSpace(req.DocumentID)
+	if err := s.validateKnowledgeScope(knowledgeBaseID, documentID); err != nil {
+		return nil, err
+	}
 
 	s.state.Mu.RLock()
 	defer s.state.Mu.RUnlock()
@@ -902,6 +905,9 @@ func (s *AppService) resolveEvalCandidateScope(req model.AddEvalDatasetCandidate
 	if knowledgeBaseID == "" {
 		return "", "", 0, "", fmt.Errorf("knowledge base id is required")
 	}
+	if err := s.validateKnowledgeScope(knowledgeBaseID, documentID); err != nil {
+		return "", "", 0, "", err
+	}
 
 	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
 	if !ok {
@@ -918,6 +924,19 @@ func (s *AppService) resolveEvalCandidateScope(req model.AddEvalDatasetCandidate
 		}
 		if documentName == "" {
 			return "", "", 0, "", fmt.Errorf("document not found")
+		}
+	}
+	for _, source := range item.SourceDocuments {
+		sourceKnowledgeBaseID := strings.TrimSpace(source.KnowledgeBaseID)
+		sourceDocumentID := strings.TrimSpace(source.DocumentID)
+		if sourceKnowledgeBaseID == "" && sourceDocumentID == "" {
+			continue
+		}
+		if sourceKnowledgeBaseID != "" && sourceKnowledgeBaseID != knowledgeBaseID {
+			return "", "", 0, "", fmt.Errorf("source document does not belong to knowledge base")
+		}
+		if err := s.validateKnowledgeScope(knowledgeBaseID, sourceDocumentID); err != nil {
+			return "", "", 0, "", err
 		}
 	}
 

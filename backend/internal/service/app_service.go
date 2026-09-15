@@ -1579,6 +1579,8 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 	var wg sync.WaitGroup
 	workerCount := minInt(concurrency, len(pendingUploadIDs))
 	work := make(chan string)
+	workerCtx, stopWorkers := context.WithCancel(ctx)
+	defer stopWorkers()
 	for index := 0; index < workerCount; index++ {
 		wg.Add(1)
 		go func() {
@@ -1586,7 +1588,7 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 			for {
 				var id string
 				select {
-				case <-ctx.Done():
+				case <-workerCtx.Done():
 					return
 				case nextID, ok := <-work:
 					if !ok {
@@ -1595,7 +1597,7 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 					id = nextID
 				}
 				item := itemByUploadID[id]
-				if ctx.Err() != nil {
+				if workerCtx.Err() != nil {
 					item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
 					if item.Status == mcpJobItemCancelled {
 						s.persistMCPBatchItemWithLease(item, lease)
@@ -1609,10 +1611,14 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 					item.Error = "任务租约已变更，当前 Worker 未获得写入权限。"
 					item.Retryable = true
 					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
-					return
+					// The durable lease is fenced. Stop dispatching new work, but let
+					// the other workers finish their current item and let the
+					// aggregator account for every remaining upload.
+					stopWorkers()
+					continue
 				}
 				leaseOwner := s.mcpStagingLeaseOwnerForLease(jobID, lease)
-				document, err := s.registerStagedUploadAsForJob(ctx, id, knowledgeBaseID, "", owner, jobID, leaseOwner, item.Checksum)
+				document, err := s.registerStagedUploadAsForJob(workerCtx, id, knowledgeBaseID, "", owner, jobID, leaseOwner, item.Checksum)
 				if err != nil {
 					var duplicateErr *DuplicateDocumentError
 					if errors.As(err, &duplicateErr) {
@@ -1624,7 +1630,7 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 							item.Retryable = false
 							s.persistMCPBatchItemWithLease(item, lease)
 							results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, duplicate), ok: true}
-							return
+							continue
 						}
 					}
 					// If indexing committed before the process crashed, the staging
@@ -1640,7 +1646,7 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 						item.Retryable = false
 						s.persistMCPBatchItemWithLease(item, lease)
 						results <- result{uploadID: id, item: item, value: mcpBatchSuccessResult(id, item, completedDocument), ok: true}
-						return
+						continue
 					}
 					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 						item = mcpBatchCancelledItem(item, s.isMCPJobsShuttingDown())
@@ -1648,14 +1654,14 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 							s.persistMCPBatchItemWithLease(item, lease)
 						}
 						results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
-						return
+						continue
 					}
 					item.Status = mcpJobItemFailed
 					item.ErrorCode, item.Error = PublicIndexFailure(err)
 					item.Retryable = mcpBatchItemRetryable(item.ErrorCode)
 					s.persistMCPBatchItemWithLease(item, lease)
 					results <- result{uploadID: id, item: item, value: mcpBatchFailureResult(id, item)}
-					return
+					continue
 				}
 				item.Status = mcpJobItemSucceeded
 				item.DocumentID = document.ID
@@ -1673,7 +1679,7 @@ func (s *AppService) runBatchIndexJobWithLease(ctx context.Context, jobID, knowl
 		for _, uploadID := range pendingUploadIDs {
 			select {
 			case work <- uploadID:
-			case <-ctx.Done():
+			case <-workerCtx.Done():
 				return
 			}
 		}

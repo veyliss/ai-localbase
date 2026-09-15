@@ -83,6 +83,9 @@ type structuredRowMatch struct {
 }
 
 func (s *AppService) QueryStructuredData(req model.ChatCompletionRequest) (StructuredDataQueryResult, []map[string]string, bool, error) {
+	if err := s.validateKnowledgeScope(req.KnowledgeBaseID, req.DocumentID); err != nil {
+		return StructuredDataQueryResult{}, nil, false, err
+	}
 	query := latestUserMessage(req.Messages)
 	if !looksLikeStructuredDataQuery(query) {
 		return StructuredDataQueryResult{}, nil, false, nil
@@ -163,6 +166,18 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 	defer s.state.Mu.RUnlock()
 
 	if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
+		if knowledgeBaseID := strings.TrimSpace(req.KnowledgeBaseID); knowledgeBaseID != "" {
+			kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
+			if !ok {
+				return nil
+			}
+			for _, document := range kb.Documents {
+				if document.ID == documentID && isStructuredDocument(document) {
+					return []model.Document{document}
+				}
+			}
+			return nil
+		}
 		for _, kb := range s.state.KnowledgeBases {
 			for _, document := range kb.Documents {
 				if document.ID == documentID && isStructuredDocument(document) {

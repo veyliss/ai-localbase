@@ -852,7 +852,11 @@ func TestCollectCandidatesPreservesQdrantScoreAndChannels(t *testing.T) {
 
 	service := &AppService{
 		qdrant: NewQdrantService(model.ServerConfig{QdrantURL: server.URL, QdrantVectorSize: 2}),
-		state:  &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{}},
+		state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+			"kb-1": {ID: "kb-1", Documents: []model.Document{{
+				ID: "doc-1", KnowledgeBaseID: "kb-1", Status: "indexed",
+			}}},
+		}},
 	}
 	candidates, err := service.collectCandidates(
 		t.Context(),
@@ -889,7 +893,11 @@ func TestCollectCandidatesPropagatesContextCancellation(t *testing.T) {
 
 	service := &AppService{
 		qdrant: NewQdrantService(model.ServerConfig{QdrantURL: server.URL, QdrantVectorSize: 2}),
-		state:  &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{}},
+		state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+			"kb-1": {ID: "kb-1", Documents: []model.Document{{
+				ID: "doc-1", KnowledgeBaseID: "kb-1", Status: "indexed",
+			}}},
+		}},
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -1040,6 +1048,35 @@ func TestFilterRetrievedChunksToScopeDropsStaleIndexGeneration(t *testing.T) {
 	)
 	if len(filtered) != 1 || filtered[0].ID != "current" {
 		t.Fatalf("expected only current index generation, got %#v", filtered)
+	}
+}
+
+func TestFilterRetrievedChunksToScopeDropsUnavailableDocuments(t *testing.T) {
+	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-school": {
+			ID: "kb-school",
+			Documents: []model.Document{
+				{ID: "doc-ready", KnowledgeBaseID: "kb-school", Status: "indexed"},
+				{ID: "doc-processing", KnowledgeBaseID: "kb-school", Status: "processing"},
+				{ID: "doc-failed", KnowledgeBaseID: "kb-school", Status: "failed"},
+				{ID: "doc-deleting", KnowledgeBaseID: "kb-school", Status: "indexed", DeletionPending: true},
+			},
+		},
+	}}}
+	chunks := []RetrievedChunk{
+		{DocumentChunk: DocumentChunk{ID: "ready", KnowledgeBaseID: "kb-school", DocumentID: "doc-ready"}},
+		{DocumentChunk: DocumentChunk{ID: "processing", KnowledgeBaseID: "kb-school", DocumentID: "doc-processing"}},
+		{DocumentChunk: DocumentChunk{ID: "failed", KnowledgeBaseID: "kb-school", DocumentID: "doc-failed"}},
+		{DocumentChunk: DocumentChunk{ID: "deleting", KnowledgeBaseID: "kb-school", DocumentID: "doc-deleting"}},
+	}
+
+	filtered := service.filterRetrievedChunksToScope(
+		model.ChatCompletionRequest{KnowledgeBaseID: "kb-school"},
+		[]string{"kb-school"},
+		chunks,
+	)
+	if len(filtered) != 1 || filtered[0].DocumentID != "doc-ready" {
+		t.Fatalf("expected only ready document to remain retrievable, got %#v", filtered)
 	}
 }
 

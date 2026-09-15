@@ -172,7 +172,7 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 				return nil
 			}
 			for _, document := range kb.Documents {
-				if document.ID == documentID && isStructuredDocument(document) {
+				if document.ID == documentID && isStructuredDocument(document) && isRetrievableDocument(document) {
 					return []model.Document{document}
 				}
 			}
@@ -180,7 +180,7 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 		}
 		for _, kb := range s.state.KnowledgeBases {
 			for _, document := range kb.Documents {
-				if document.ID == documentID && isStructuredDocument(document) {
+				if document.ID == documentID && isStructuredDocument(document) && isRetrievableDocument(document) {
 					return []model.Document{document}
 				}
 			}
@@ -209,7 +209,7 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 func structuredDocumentsFromKnowledgeBase(kb model.KnowledgeBase) []model.Document {
 	documents := make([]model.Document, 0)
 	for _, document := range kb.Documents {
-		if isStructuredDocument(document) {
+		if isStructuredDocument(document) && isRetrievableDocument(document) {
 			documents = append(documents, document)
 		}
 	}

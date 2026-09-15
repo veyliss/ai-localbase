@@ -95,6 +95,10 @@ func (s *AppService) beginIndexOperation(ctx context.Context, document model.Doc
 		if strings.TrimSpace(current.ID) != op.DocumentID {
 			continue
 		}
+		if current.DeletionPending {
+			s.state.Mu.Unlock()
+			return indexOperation{}, ErrDocumentDeletionPending
+		}
 		if current.Version != op.ExpectedVersion || strings.TrimSpace(current.IndexFence) != op.PreviousFence {
 			s.state.Mu.Unlock()
 			return indexOperation{}, ErrIndexOperationSuperseded
@@ -508,6 +512,12 @@ func (s *AppService) abortIndexGeneration(ctx context.Context, receipt indexGene
 			firstErr = err
 		}
 	}
+	if firstErr != nil {
+		s.queueIndexCleanupTask(generationCleanupTask(receipt))
+		if strings.TrimSpace(receipt.SupersededFence) != "" && receipt.SupersededFence != receipt.Fence {
+			s.queueIndexCleanupTask(generationCleanupTaskFor(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.SupersededFence, receipt.SupersededPointIDs))
+		}
+	}
 	_ = ctx
 	return firstErr
 }
@@ -533,6 +543,14 @@ func (s *AppService) retirePreviousGeneration(ctx context.Context, receipt index
 	if s.indexedContentStore != nil && (strings.TrimSpace(receipt.SupersededFence) != "" || len(receipt.SupersededPointIDs) > 0) && receipt.SupersededFence != receipt.PreviousFence {
 		if err := s.indexedContentStore.DeleteGeneration(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.SupersededFence); err != nil && firstErr == nil {
 			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		if strings.TrimSpace(receipt.PreviousFence) != "" || len(receipt.PreviousPointIDs) > 0 {
+			s.queueIndexCleanupTask(generationCleanupTaskFor(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.PreviousFence, receipt.PreviousPointIDs))
+		}
+		if strings.TrimSpace(receipt.SupersededFence) != "" || len(receipt.SupersededPointIDs) > 0 {
+			s.queueIndexCleanupTask(generationCleanupTaskFor(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.SupersededFence, receipt.SupersededPointIDs))
 		}
 	}
 	_ = ctx

@@ -82,6 +82,8 @@ func run() error {
 	}()
 	stopUploadStagingCleanup := startUploadStagingCleanup(appService)
 	defer stopUploadStagingCleanup()
+	stopIndexCleanup := startIndexCleanup(appService)
+	defer stopIndexCleanup()
 	stopMCPJobMaintenance := startMCPJobMaintenance(appService)
 	defer stopMCPJobMaintenance()
 	authService, err := service.NewAuthService(appService, serverConfig)
@@ -142,6 +144,46 @@ func run() error {
 		return fmt.Errorf("failed to start server: %w", listenErr)
 	}
 	return nil
+}
+
+func startIndexCleanup(appService *service.AppService) func() {
+	if appService == nil {
+		return func() {}
+	}
+	if processed, err := appService.RetryPendingIndexCleanup(); err != nil {
+		log.Printf("failed to retry index cleanup at startup: %v", err)
+	} else if processed > 0 {
+		log.Printf("completed %d pending index cleanup task(s) at startup", processed)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if processed, err := appService.RetryPendingIndexCleanup(); err != nil {
+					log.Printf("failed to retry index cleanup: %v", err)
+				} else if processed > 0 {
+					log.Printf("completed %d pending index cleanup task(s)", processed)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		select {
+		case <-stop:
+		default:
+			close(stop)
+		}
+		<-done
+	}
 }
 
 func validateAuthConfig(serverConfig model.ServerConfig) error {

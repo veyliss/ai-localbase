@@ -247,6 +247,9 @@ func (s *AppService) collectCandidates(ctx context.Context, knowledgeBaseIDs []s
 	}
 
 	for _, knowledgeBaseID := range knowledgeBaseIDs {
+		if !s.hasRetrievableDocuments(knowledgeBaseID, firstNonEmpty(req.DocumentID, filenameDetectedDocID)) {
+			continue
+		}
 		kbStartedAt := time.Now()
 		filter := map[string]any{}
 		if strings.TrimSpace(req.DocumentID) != "" {
@@ -390,7 +393,7 @@ func (s *AppService) withCurrentIndexFenceFilter(knowledgeBaseID string, base ma
 	branches := make([]map[string]any, 0, len(kb.Documents))
 	for _, document := range kb.Documents {
 		documentID := strings.TrimSpace(document.ID)
-		if documentID == "" {
+		if documentID == "" || !isRetrievableDocument(document) {
 			continue
 		}
 		must := []map[string]any{{
@@ -638,10 +641,12 @@ func extractFilenamesFromQuery(query string) []string {
 // findDocumentByFilename 根据文件名查找文档 ID
 // 支持多种匹配策略：精确匹配、部分匹配、扩展名匹配
 func (s *AppService) findDocumentByFilename(knowledgeBaseID string, filename string) string {
-	if s.state == nil || strings.TrimSpace(filename) == "" {
+	if s == nil || s.state == nil || strings.TrimSpace(filename) == "" {
 		return ""
 	}
 
+	s.state.Mu.RLock()
+	defer s.state.Mu.RUnlock()
 	kb, exists := s.state.KnowledgeBases[knowledgeBaseID]
 	if !exists {
 		return ""

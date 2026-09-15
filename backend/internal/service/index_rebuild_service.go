@@ -28,6 +28,9 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	if existing, found, findErr := s.findDocumentByID(document.KnowledgeBaseID, document.ID); findErr != nil {
 		return model.Document{}, findErr
 	} else if found {
+		if existing.DeletionPending {
+			return model.Document{}, ErrDocumentDeletionPending
+		}
 		if strings.EqualFold(strings.TrimSpace(existing.Checksum), strings.TrimSpace(document.Checksum)) || strings.TrimSpace(document.Checksum) == "" {
 			return existing, nil
 		}
@@ -44,6 +47,9 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 	if existing, found, findErr := s.findDocumentByID(document.KnowledgeBaseID, document.ID); findErr != nil {
 		return model.Document{}, findErr
 	} else if found {
+		if existing.DeletionPending {
+			return model.Document{}, ErrDocumentDeletionPending
+		}
 		if strings.EqualFold(strings.TrimSpace(existing.Checksum), strings.TrimSpace(document.Checksum)) || strings.TrimSpace(document.Checksum) == "" {
 			return existing, nil
 		}

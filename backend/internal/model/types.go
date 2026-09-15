@@ -54,12 +54,31 @@ type ServerConfig struct {
 }
 
 type AppState struct {
-	Mu             sync.RWMutex
-	Config         AppConfig
-	KnowledgeBases map[string]KnowledgeBase
-	EvalDatasets   map[string]EvalDataset
-	EvalRuns       map[string]RunEvalDatasetResponse
-	Auth           AuthState
+	Mu                sync.RWMutex
+	Config            AppConfig
+	KnowledgeBases    map[string]KnowledgeBase
+	EvalDatasets      map[string]EvalDataset
+	EvalRuns          map[string]RunEvalDatasetResponse
+	IndexCleanupTasks []IndexCleanupTask
+	Auth              AuthState
+}
+
+// IndexCleanupTask is an internal, durable outbox entry for external index
+// data. It is never returned by an API response.
+type IndexCleanupTask struct {
+	ID              string   `json:"id"`
+	Type            string   `json:"type"`
+	KnowledgeBaseID string   `json:"knowledgeBaseId"`
+	DocumentID      string   `json:"documentId,omitempty"`
+	IndexFence      string   `json:"indexFence,omitempty"`
+	DocumentIDs     []string `json:"documentIds,omitempty"`
+	PointIDs        []any    `json:"pointIds,omitempty"`
+	SourcePaths     []string `json:"sourcePaths,omitempty"`
+	Attempts        int      `json:"attempts"`
+	CreatedAt       string   `json:"createdAt"`
+	UpdatedAt       string   `json:"updatedAt"`
+	NextAttemptAt   string   `json:"nextAttemptAt,omitempty"`
+	LastError       string   `json:"lastError,omitempty"`
 }
 
 type AuthState struct {
@@ -279,6 +298,7 @@ type Document struct {
 	IndexErrorCode          string `json:"indexErrorCode,omitempty"`
 	IndexRunID              string `json:"indexRunId,omitempty"`
 	IndexVersion            int    `json:"indexVersion,omitempty"`
+	DeletionPending         bool   `json:"deletionPending,omitempty"`
 	IndexedContentAvailable bool   `json:"indexedContentAvailable,omitempty"`
 	IndexedContentChars     int    `json:"indexedContentChars,omitempty"`
 	IndexedTablesCount      int    `json:"indexedTablesCount,omitempty"`

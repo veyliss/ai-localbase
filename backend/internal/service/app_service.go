@@ -139,6 +139,7 @@ type AppService struct {
 	serverConfig          model.ServerConfig
 	staging               *UploadStagingService
 	stateSaveMu           sync.Mutex
+	indexCleanupMu        sync.Mutex
 	reranker              SemanticReranker
 	queryRewriter         QueryRewriter
 	semanticCache         *SemanticCache
@@ -354,11 +355,12 @@ func NewAppServiceWithJobStore(qdrant *QdrantService, store *AppStateStore, chat
 			log.Printf("failed to load app state: %v", err)
 		} else if loadedState != nil {
 			service.state = &model.AppState{
-				Config:         loadedState.Config,
-				KnowledgeBases: loadedState.KnowledgeBases,
-				EvalDatasets:   loadedState.EvalDatasets,
-				EvalRuns:       loadedState.EvalRuns,
-				Auth:           loadedState.Auth,
+				Config:            loadedState.Config,
+				KnowledgeBases:    loadedState.KnowledgeBases,
+				EvalDatasets:      loadedState.EvalDatasets,
+				EvalRuns:          loadedState.EvalRuns,
+				IndexCleanupTasks: cloneIndexCleanupTasks(loadedState.IndexCleanupTasks),
+				Auth:              loadedState.Auth,
 			}
 			if service.state.KnowledgeBases == nil {
 				service.state.KnowledgeBases = map[string]model.KnowledgeBase{}
@@ -418,11 +420,12 @@ func (s *AppService) saveState() error {
 
 	s.state.Mu.RLock()
 	state := persistentAppState{
-		Config:         s.state.Config,
-		KnowledgeBases: cloneKnowledgeBases(s.state.KnowledgeBases),
-		EvalDatasets:   cloneEvalDatasets(s.state.EvalDatasets),
-		EvalRuns:       cloneEvalRuns(s.state.EvalRuns),
-		Auth:           cloneAuthState(s.state.Auth),
+		Config:            s.state.Config,
+		KnowledgeBases:    cloneKnowledgeBases(s.state.KnowledgeBases),
+		EvalDatasets:      cloneEvalDatasets(s.state.EvalDatasets),
+		EvalRuns:          cloneEvalRuns(s.state.EvalRuns),
+		IndexCleanupTasks: cloneIndexCleanupTasks(s.state.IndexCleanupTasks),
+		Auth:              cloneAuthState(s.state.Auth),
 	}
 	s.state.Mu.RUnlock()
 
@@ -1917,6 +1920,39 @@ func isIndexedDocumentStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// isRetrievableDocument keeps legacy state files with an empty status usable,
+// while ensuring explicitly processing, failed, or deleting documents never
+// contribute half-written or stale vectors to a chat answer.
+func isRetrievableDocument(document model.Document) bool {
+	return !document.DeletionPending && (strings.TrimSpace(document.Status) == "" || isIndexedDocumentStatus(document.Status))
+}
+
+func (s *AppService) hasRetrievableDocuments(knowledgeBaseID, targetDocumentID string) bool {
+	if s == nil || s.state == nil {
+		return false
+	}
+	knowledgeBaseID = strings.TrimSpace(knowledgeBaseID)
+	targetDocumentID = strings.TrimSpace(targetDocumentID)
+	s.state.Mu.RLock()
+	defer s.state.Mu.RUnlock()
+	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
+	if !ok {
+		return false
+	}
+	for _, document := range kb.Documents {
+		if targetDocumentID != "" && strings.TrimSpace(document.ID) != targetDocumentID {
+			continue
+		}
+		if isRetrievableDocument(document) {
+			return true
+		}
+		if targetDocumentID != "" {
+			return false
+		}
+	}
+	return false
 }
 
 func mcpBatchSuccessResult(uploadID string, item mcpJobItem, document model.Document) map[string]any {
@@ -4180,22 +4216,51 @@ func (s *AppService) CreateKnowledgeBase(req model.KnowledgeBaseInput) (model.Kn
 		UpdatedAt:           time.Now().UTC().Format(time.RFC3339),
 		CurrentIndexVersion: currentIndexVersion,
 	}
+	cleanupTask := newIndexCleanupTask(indexCleanupTypeCollection, knowledgeBase.ID)
+	qdrantEnabled := s.qdrant != nil && s.qdrant.IsEnabled()
+	if qdrantEnabled {
+		// Persist the cleanup intent before creating the external collection. A
+		// crash between these two operations leaves a durable, harmless delete
+		// task instead of an untracked Qdrant collection.
+		s.state.Mu.Lock()
+		s.state.IndexCleanupTasks = appendIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask)
+		s.state.Mu.Unlock()
+		if err := s.saveState(); err != nil {
+			s.state.Mu.Lock()
+			s.state.IndexCleanupTasks, _ = removeIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask.ID)
+			s.state.Mu.Unlock()
+			return model.KnowledgeBase{}, err
+		}
+	}
+
+	if err := s.ensureKnowledgeBaseCollection(knowledgeBase.ID); err != nil {
+		if qdrantEnabled {
+			if cleanupErr := s.executeIndexCleanupTask(cleanupTask); cleanupErr != nil {
+				s.recordIndexCleanupFailure(cleanupTask.ID, cleanupErr, time.Now().UTC())
+			} else if cleanupErr := s.removeIndexCleanupTask(cleanupTask.ID); cleanupErr != nil {
+				log.Printf("failed to remove knowledge base creation cleanup task %s: %v", cleanupTask.ID, cleanupErr)
+			}
+		}
+		return model.KnowledgeBase{}, err
+	}
 
 	s.state.Mu.Lock()
 	s.state.KnowledgeBases[knowledgeBase.ID] = knowledgeBase
+	if qdrantEnabled {
+		s.state.IndexCleanupTasks, _ = removeIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask.ID)
+	}
 	s.state.Mu.Unlock()
 
 	if err := s.saveState(); err != nil {
 		s.state.Mu.Lock()
 		delete(s.state.KnowledgeBases, knowledgeBase.ID)
+		if qdrantEnabled {
+			s.state.IndexCleanupTasks = appendIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask)
+		}
 		s.state.Mu.Unlock()
-		return model.KnowledgeBase{}, err
-	}
-
-	if err := s.ensureKnowledgeBaseCollection(knowledgeBase.ID); err != nil {
-		s.state.Mu.Lock()
-		delete(s.state.KnowledgeBases, knowledgeBase.ID)
-		s.state.Mu.Unlock()
+		// Keep the already persisted outbox entry when possible. The external
+		// collection can then be removed after restart even if this write failed.
+		_ = s.saveState()
 		return model.KnowledgeBase{}, err
 	}
 
@@ -4231,6 +4296,14 @@ func (s *AppService) DeleteKnowledgeBase(id string) (int, error) {
 			delete(s.state.EvalRuns, runID)
 		}
 	}
+	cleanupTask := newIndexCleanupTask(indexCleanupTypeKnowledgeBase, id)
+	cleanupTask.DocumentIDs = make([]string, 0, len(removedKnowledgeBase.Documents))
+	cleanupTask.SourcePaths = make([]string, 0, len(removedKnowledgeBase.Documents))
+	for _, document := range removedKnowledgeBase.Documents {
+		cleanupTask.DocumentIDs = append(cleanupTask.DocumentIDs, strings.TrimSpace(document.ID))
+		cleanupTask.SourcePaths = append(cleanupTask.SourcePaths, strings.TrimSpace(document.Path))
+	}
+	s.state.IndexCleanupTasks = appendIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask)
 	remaining := len(s.state.KnowledgeBases)
 	s.state.Mu.Unlock()
 
@@ -4243,18 +4316,17 @@ func (s *AppService) DeleteKnowledgeBase(id string) (int, error) {
 		for runID, run := range removedEvalRuns {
 			s.state.EvalRuns[runID] = run
 		}
+		s.state.IndexCleanupTasks, _ = removeIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask.ID)
 		s.state.Mu.Unlock()
 		return remaining, err
 	}
 
-	collectionErr := s.deleteKnowledgeBaseCollection(id)
-	for _, document := range removedKnowledgeBase.Documents {
-		if err := s.deleteIndexedDocument(id, document.ID); err != nil {
-			log.Printf("failed to delete indexed content for document %s: %v", document.ID, err)
-		}
+	if err := s.executeIndexCleanupTask(cleanupTask); err != nil {
+		s.recordIndexCleanupFailure(cleanupTask.ID, err, time.Now().UTC())
+		return remaining, err
 	}
-	if collectionErr != nil {
-		return remaining, collectionErr
+	if err := s.removeIndexCleanupTask(cleanupTask.ID); err != nil {
+		return remaining, err
 	}
 
 	return remaining, nil
@@ -4739,18 +4811,14 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 		return model.Document{}, err
 	}
 	removedDocument = enrichDocumentGovernance(removedDocument)
+	if removedDocument.DeletionPending {
+		return removedDocument, ErrDocumentDeletionPending
+	}
 	reservation, err := s.reserveDocumentIndex(context.Background(), removedDocument)
 	if err != nil {
 		return model.Document{}, err
 	}
 	defer reservation()
-
-	// Remove external index state first. If Qdrant is unavailable, keep the
-	// document visible and retryable instead of leaving an orphaned searchable
-	// document after its metadata has been deleted.
-	if err := s.deleteDocumentChunks(knowledgeBaseID, documentID); err != nil {
-		return model.Document{}, &IndexCleanupError{Err: err}
-	}
 
 	s.state.Mu.Lock()
 	kb, ok := s.state.KnowledgeBases[knowledgeBaseID]
@@ -4759,35 +4827,47 @@ func (s *AppService) DeleteDocument(knowledgeBaseID, documentID string) (model.D
 		return model.Document{}, fmt.Errorf("knowledge base not found")
 	}
 
-	filtered := make([]model.Document, 0, len(kb.Documents))
-	removed := false
-	for _, document := range kb.Documents {
+	documentIndex := -1
+	for index, document := range kb.Documents {
 		if document.ID == documentID {
-			removed = true
-			continue
+			documentIndex = index
+			break
 		}
-		filtered = append(filtered, document)
 	}
-
-	if !removed {
+	if documentIndex < 0 {
 		s.state.Mu.Unlock()
 		return model.Document{}, fmt.Errorf("document not found")
 	}
 
-	originalDocuments := kb.Documents
-	kb.Documents = filtered
+	originalDocuments := append([]model.Document(nil), kb.Documents...)
+	markedDocument := kb.Documents[documentIndex]
+	markedDocument.DeletionPending = true
+	kb.Documents[documentIndex] = markedDocument
 	s.state.KnowledgeBases[knowledgeBaseID] = kb
+	cleanupTask := newIndexCleanupTask(indexCleanupTypeDocument, knowledgeBaseID)
+	cleanupTask.DocumentID = documentID
+	cleanupTask.SourcePaths = []string{strings.TrimSpace(removedDocument.Path)}
+	s.state.IndexCleanupTasks = appendIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask)
 	s.state.Mu.Unlock()
 
 	if err := s.saveState(); err != nil {
 		s.state.Mu.Lock()
 		kb.Documents = originalDocuments
 		s.state.KnowledgeBases[knowledgeBaseID] = kb
+		s.state.IndexCleanupTasks, _ = removeIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask.ID)
 		s.state.Mu.Unlock()
 		return model.Document{}, err
 	}
-	if err := s.deleteIndexedDocumentWithContext(context.Background(), knowledgeBaseID, documentID); err != nil {
-		log.Printf("failed to delete indexed content for document %s: %v", documentID, err)
+
+	if err := s.executeIndexCleanupTask(cleanupTask); err != nil {
+		s.recordIndexCleanupFailure(cleanupTask.ID, err, time.Now().UTC())
+		removedDocument.DeletionPending = true
+		return removedDocument, &IndexCleanupError{Err: err}
+	}
+
+	if err := s.finalizeDocumentCleanup(cleanupTask); err != nil {
+		s.recordIndexCleanupFailure(cleanupTask.ID, err, time.Now().UTC())
+		return removedDocument, &IndexCleanupError{Err: err}
 	}
 	return removedDocument, nil
 }
@@ -5728,6 +5808,9 @@ func (s *AppService) retrieveRelevantChunksWithContext(ctx context.Context, req 
 			candidates := make([]RetrievedChunk, 0)
 			seenChunkIDs := make(map[string]struct{})
 			for _, knowledgeBaseID := range knowledgeBaseIDs {
+				if !s.hasRetrievableDocuments(knowledgeBaseID, req.DocumentID) {
+					continue
+				}
 				filter := map[string]any{}
 				if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
 					filter = map[string]any{
@@ -5761,6 +5844,9 @@ func (s *AppService) retrieveRelevantChunksWithContext(ctx context.Context, req 
 				expandedCandidates := make([]RetrievedChunk, 0)
 				seenChunkIDs = make(map[string]struct{})
 				for _, knowledgeBaseID := range knowledgeBaseIDs {
+					if !s.hasRetrievableDocuments(knowledgeBaseID, req.DocumentID) {
+						continue
+					}
 					filter := map[string]any{}
 					if documentID := strings.TrimSpace(req.DocumentID); documentID != "" {
 						filter = map[string]any{
@@ -5889,7 +5975,7 @@ func (s *AppService) filterRetrievedChunksToScope(req model.ChatCompletionReques
 		documents := make(map[string]string, len(kb.Documents))
 		for _, document := range kb.Documents {
 			documentID := strings.TrimSpace(document.ID)
-			if documentID != "" {
+			if documentID != "" && isRetrievableDocument(document) {
 				documents[documentID] = strings.TrimSpace(document.IndexFence)
 			}
 		}

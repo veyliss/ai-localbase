@@ -1623,13 +1623,19 @@ function AppContent() {
       return '聊天接口调用失败，请检查后端服务是否启动。'
     }
 
-    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string) => {
+    const withTimeout = async <T,>(
+      promise: Promise<T>,
+      timeoutMs: number,
+      timeoutMessage: string,
+      onTimeout?: () => void,
+    ) => {
       let timer = 0
       try {
         return await Promise.race([
           promise,
           new Promise<T>((_, reject) => {
             timer = window.setTimeout(() => {
+              onTimeout?.()
               reject(new Error(timeoutMessage))
             }, timeoutMs)
           }),
@@ -1655,6 +1661,7 @@ function AppContent() {
         }),
         FALLBACK_REQUEST_TIMEOUT_MS,
         'fallback-request-timeout',
+        () => controller.abort(),
       )
 
       if (!fallbackResponse.ok) {

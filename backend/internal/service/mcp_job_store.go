@@ -896,9 +896,70 @@ func (s *MCPJobStore) PruneWithCount(keep int) (int, error) {
 	return int(deleted), nil
 }
 
-// CancelItems marks unfinished children terminal before the parent lease is
-// cleared. This keeps an explicit user cancellation from being mistaken for
-// a crash recovery on the next process start.
+// Cancel atomically marks the parent and all unfinished children terminal.
+// The parent lease CAS is evaluated in the same transaction as the child
+// update, so a crash cannot leave a cancellable parent with cancelled items.
+// When updated is true, the database transition has committed. An error may
+// still report a post-commit file-protection failure and must not be treated as
+// a failed cancellation by callers.
+func (s *MCPJobStore) Cancel(record mcpJobStoreRecord, expectedLeaseOwner string, expectedAttempt int) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("mcp job store is nil")
+	}
+	if strings.TrimSpace(record.Job.ID) == "" {
+		return false, fmt.Errorf("mcp job id is required")
+	}
+	record.Descriptor = normalizeMCPJobDescriptor(record.Descriptor, record.Job.Type)
+	values, err := mcpJobStoreValues(record)
+	if err != nil {
+		return false, fmt.Errorf("prepare cancelled mcp job: %w", err)
+	}
+	nowValue := s.nowUTC().Format(time.RFC3339Nano)
+	values = append(values[1:], record.Job.ID, strings.TrimSpace(expectedLeaseOwner), expectedAttempt, nowValue)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin cancel mcp job: %w", err)
+	}
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+	result, err := tx.Exec(`UPDATE mcp_jobs SET
+		type = ?, status = ?, progress = ?, summary = ?, result_json = ?, error = ?, error_code = ?,
+		warnings_json = ?, retryable = ?, retry_count = ?, parent_job_id = ?, created_at = ?, updated_at = ?,
+		completed_at = ?, owner_user_id = ?, owner_api_key_id = ?, descriptor_json = ?, resumable = ?,
+		recovery_state = ?, attempt = ?, lease_owner = ?, lease_expires_at = ?, last_heartbeat_at = ?, next_action = ?
+		WHERE id = ? AND status IN ('queued', 'running') AND lease_owner = ? AND attempt = ?
+		AND (lease_owner = '' OR lease_expires_at > ?)`, values...)
+	if err != nil {
+		rollback()
+		return false, fmt.Errorf("cancel mcp job: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		rollback()
+		return false, fmt.Errorf("inspect cancelled mcp job: %w", err)
+	}
+	if affected != 1 {
+		rollback()
+		return false, nil
+	}
+	if _, err := tx.Exec(`UPDATE mcp_job_items SET
+		status = 'cancelled', error = ?, error_code = 'cancelled', retryable = 0, updated_at = ?
+		WHERE job_id = ? AND status IN ('pending', 'running')`, "任务已取消。", nowValue, strings.TrimSpace(record.Job.ID)); err != nil {
+		rollback()
+		return false, fmt.Errorf("cancel mcp job items: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit cancelled mcp job: %w", err)
+	}
+	if err := s.protectFilesAfterWrite("cancel mcp job"); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+// CancelItems is retained for package compatibility. New cancellation paths
+// must use Cancel so the parent and child transitions stay atomic.
 func (s *MCPJobStore) CancelItems(jobID, expectedLeaseOwner string, expectedAttempt int) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("mcp job store is nil")

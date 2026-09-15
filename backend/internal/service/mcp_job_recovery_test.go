@@ -584,6 +584,13 @@ func TestMCPJobServiceGracefulShutdownReleasesLeaseForNextRestart(t *testing.T) 
 	if record.Descriptor.UploadID != descriptor.UploadID {
 		t.Fatalf("expected descriptor to survive shutdown, got %+v", record.Descriptor)
 	}
+	cancelled, err := service.CancelMCPJobAs(job.ID, AuthPrincipal{AuthType: "session", UserID: job.OwnerUserID})
+	if err != nil {
+		t.Fatalf("cancel queued job after lease release: %v", err)
+	}
+	if cancelled.Status != "cancelled" {
+		t.Fatalf("expected released queued job to be cancellable, got %+v", cancelled)
+	}
 }
 
 func TestMCPJobServiceWaitsBeforeClosingStoreAfterShutdownTimeout(t *testing.T) {
@@ -796,6 +803,89 @@ func TestMCPJobServiceExplicitCancellationIsNotRecoverable(t *testing.T) {
 	loaded := waitForMCPJobStatus(t, restarted, job.ID, owner, "cancelled")
 	if loaded.Resumable || loaded.Status != "cancelled" {
 		t.Fatalf("expected cancelled job to remain terminal after restart, got %+v", loaded)
+	}
+}
+
+func TestMCPJobServiceCancellationReleasesMatchingStagingLease(t *testing.T) {
+	root := t.TempDir()
+	config := durableMCPTestConfig(root)
+	store, err := NewMCPJobStore(filepath.Join(root, "mcp-jobs.db"))
+	if err != nil {
+		t.Fatalf("create job store: %v", err)
+	}
+	service := NewAppServiceWithJobStore(nil, NewAppStateStore(config.StateFile), nil, config, store)
+	defer func() {
+		if err := service.ShutdownJobs(context.Background()); err != nil {
+			t.Errorf("shutdown service: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Errorf("close job store: %v", err)
+		}
+	}()
+
+	owner := AuthPrincipal{AuthType: "session", UserID: "user-cancel-staging"}
+	staged, err := service.StageInlineUploadAs("cancel-source.txt", []byte("source"), "test", owner)
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+	job := model.MCPJob{
+		ID:          "job-cancel-staging",
+		Type:        "import",
+		Status:      "queued",
+		Summary:     "等待执行",
+		Retryable:   true,
+		Resumable:   true,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		OwnerUserID: owner.UserID,
+	}
+	_, cancel := context.WithCancel(context.Background())
+	ok, err := service.registerMCPJobWithDescriptor(job, cancel, nil, mcpJobDescriptor{
+		Version:         mcpJobDescriptorVersion,
+		Type:            "import",
+		KnowledgeBaseID: "kb-1",
+		FileName:        staged.FileName,
+		UploadID:        staged.ID,
+	})
+	if err != nil || !ok {
+		t.Fatalf("register job: ok=%t err=%v", ok, err)
+	}
+	service.mcpJobWG.Done()
+
+	lease, ok := service.currentMCPJobLease(job.ID)
+	if !ok {
+		t.Fatal("expected durable job lease")
+	}
+	stagingOwner := service.mcpStagingLeaseOwnerForLease(job.ID, lease)
+	claimed, err := service.staging.ClaimWithLeaseAs(staged.ID, owner, stagingOwner, mcpJobLeaseDuration)
+	if err != nil {
+		t.Fatalf("claim staged upload: %v", err)
+	}
+	service.trackMCPStagingLeaseForJob(job.ID, staged.ID, stagingOwner, claimed.ProcessingAttempt, lease.Attempt)
+
+	cancelled, err := service.CancelMCPJobAs(job.ID, owner)
+	if err != nil {
+		t.Fatalf("cancel job: %v", err)
+	}
+	if cancelled.Status != "cancelled" {
+		t.Fatalf("expected cancelled job, got %+v", cancelled)
+	}
+	persisted, found, err := store.Get(job.ID)
+	if err != nil || !found {
+		t.Fatalf("read cancelled job: found=%t err=%v", found, err)
+	}
+	if persisted.Job.Status != "cancelled" || persisted.LeaseOwner != "" || persisted.LeaseExpiresAt != "" {
+		t.Fatalf("expected cancelled job lease to be cleared, got %+v", persisted)
+	}
+	released, err := service.staging.Get(staged.ID)
+	if err != nil {
+		t.Fatalf("read released staged upload: %v", err)
+	}
+	if released.Status != stagedUploadStatusStaged || released.ProcessingOwner != "" {
+		t.Fatalf("expected matching staging lease to be released, got %+v", released)
+	}
+	if _, err := service.staging.ClaimWithLeaseAs(staged.ID, owner, "next-worker", time.Minute); err != nil {
+		t.Fatalf("expected next worker to claim released upload: %v", err)
 	}
 }
 

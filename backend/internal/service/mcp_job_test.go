@@ -140,6 +140,47 @@ func TestMCPJobRenewsTrackedStagingLease(t *testing.T) {
 	}
 }
 
+func TestMCPJobWorkerLeaseLossReleasesOldStagingLease(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	service := NewAppService(nil, nil, nil, model.ServerConfig{StagingDir: t.TempDir()})
+	service.mcpJobStore = store
+	service.mcpJobMu.Lock()
+	service.mcpJobLeases["job-lease-loss"] = mcpJobLease{Owner: "old-worker", Attempt: 1}
+	service.mcpJobMu.Unlock()
+
+	staged, err := service.staging.StageBytes("lease-loss.md", []byte("lease loss content"), "test")
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+	leaseOwner := service.mcpStagingLeaseOwnerForLease("job-lease-loss", mcpJobLease{Owner: "old-worker", Attempt: 1})
+	claimed, err := service.staging.ClaimWithLeaseAs(staged.ID, AuthPrincipal{}, leaseOwner, mcpJobLeaseDuration)
+	if err != nil {
+		t.Fatalf("claim staged upload: %v", err)
+	}
+	service.trackMCPStagingLeaseForJob("job-lease-loss", staged.ID, leaseOwner, claimed.ProcessingAttempt, 1)
+	if err := store.Close(); err != nil {
+		t.Fatalf("close job store to simulate lease loss: %v", err)
+	}
+
+	service.runMCPJobWorkerWithHeartbeatInterval("job-lease-loss", context.Background(), func(ctx context.Context) {
+		<-ctx.Done()
+	}, time.Millisecond)
+
+	released, err := service.staging.Get(staged.ID)
+	if err != nil {
+		t.Fatalf("read released staged upload: %v", err)
+	}
+	if released.Status != stagedUploadStatusStaged || released.ProcessingOwner != "" {
+		t.Fatalf("expected old worker staging lease to be released, got %+v", released)
+	}
+	service.mcpJobMu.Lock()
+	_, tracked := service.mcpJobStagingLeases["job-lease-loss"][staged.ID]
+	service.mcpJobMu.Unlock()
+	if tracked {
+		t.Fatal("expected released staging lease to be removed from tracking")
+	}
+}
+
 func TestCancelMCPJobAddsBestEffortWarning(t *testing.T) {
 	service := &AppService{
 		mcpJobs: map[string]model.MCPJob{

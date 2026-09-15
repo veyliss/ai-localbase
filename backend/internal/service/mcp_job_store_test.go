@@ -362,6 +362,97 @@ func TestMCPJobStoreClaimHonorsLeaseAndRejectsStaleUpdate(t *testing.T) {
 	}
 }
 
+func TestMCPJobStoreCancelAtomicallyUpdatesParentAndPendingChildren(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	record := testMCPJobRecord("job-cancel-atomic", now)
+	if err := store.Create(record); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if err := store.CreateItems(record.Job.ID, []mcpJobItem{
+		{UploadID: "pending", FileName: "pending.txt", Status: mcpJobItemPending, Retryable: true},
+		{UploadID: "running", FileName: "running.txt", Status: mcpJobItemRunning, Retryable: true},
+		{UploadID: "succeeded", FileName: "succeeded.txt", Status: mcpJobItemSucceeded, Retryable: false},
+	}); err != nil {
+		t.Fatalf("create job items: %v", err)
+	}
+	cancelRecord := record
+	cancelRecord.Job.Status = "cancelled"
+	cancelRecord.Job.Summary = "任务已取消。"
+	cancelRecord.Job.Retryable = false
+	cancelRecord.Job.Resumable = false
+	cancelRecord.Job.CompletedAt = now.Format(time.RFC3339Nano)
+	cancelRecord.Job.UpdatedAt = cancelRecord.Job.CompletedAt
+	updated, err := store.Cancel(cancelRecord, "", 0)
+	if err != nil || !updated {
+		t.Fatalf("cancel job: updated=%t err=%v", updated, err)
+	}
+	loaded, found, err := store.Get(record.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load cancelled job: found=%t err=%v", found, err)
+	}
+	if loaded.Job.Status != "cancelled" || loaded.Job.Resumable || loaded.Job.Retryable || loaded.LeaseOwner != "" || loaded.LeaseExpiresAt != "" {
+		t.Fatalf("expected terminal cancelled parent, got %+v", loaded.Job)
+	}
+	items, err := store.ListItems(record.Job.ID)
+	if err != nil {
+		t.Fatalf("list cancelled job items: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected three job items, got %+v", items)
+	}
+	for _, item := range items {
+		switch item.UploadID {
+		case "pending", "running":
+			if item.Status != mcpJobItemCancelled || item.ErrorCode != "cancelled" || item.Retryable {
+				t.Fatalf("expected unfinished item %q to be cancelled, got %+v", item.UploadID, item)
+			}
+		case "succeeded":
+			if item.Status != mcpJobItemSucceeded {
+				t.Fatalf("expected completed item to remain unchanged, got %+v", item)
+			}
+		}
+	}
+}
+
+func TestMCPJobStoreCancelRejectsStaleLeaseWithoutChangingChildren(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	record := testMCPJobRecord("job-cancel-stale", now)
+	if err := store.Create(record); err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	if err := store.CreateItems(record.Job.ID, []mcpJobItem{{UploadID: "pending", Status: mcpJobItemPending, Retryable: true}}); err != nil {
+		t.Fatalf("create job item: %v", err)
+	}
+	claimed, ok, err := store.Claim(record.Job.ID, "current-worker", time.Minute, now)
+	if err != nil || !ok {
+		t.Fatalf("claim job: ok=%t err=%v", ok, err)
+	}
+
+	updated, err := store.Cancel(record, "stale-worker", claimed.Job.Attempt)
+	if err != nil {
+		t.Fatalf("cancel with stale lease: %v", err)
+	}
+	if updated {
+		t.Fatal("expected stale cancellation to be rejected")
+	}
+	loaded, found, err := store.Get(record.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load job after stale cancellation: found=%t err=%v", found, err)
+	}
+	if loaded.Job.Status != "queued" || loaded.LeaseOwner != "current-worker" {
+		t.Fatalf("expected current worker lease to remain intact, got %+v", loaded)
+	}
+	items, err := store.ListItems(record.Job.ID)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("list job item after stale cancellation: len=%d err=%v", len(items), err)
+	}
+	if items[0].Status != mcpJobItemPending {
+		t.Fatalf("expected child item to remain pending, got %+v", items[0])
+	}
+}
+
 func TestMCPJobStoreRecoverableClaimAllowsOnlyOneWorker(t *testing.T) {
 	store := newTestMCPJobStore(t)
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)

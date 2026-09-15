@@ -2796,11 +2796,19 @@ func (s *AppService) startMCPJobFromDescriptor(descriptor mcpJobDescriptor, owne
 }
 
 func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func(context.Context)) {
+	s.runMCPJobWorkerWithHeartbeatInterval(jobID, ctx, run, mcpJobHeartbeatInterval)
+}
+
+func (s *AppService) runMCPJobWorkerWithHeartbeatInterval(jobID string, ctx context.Context, run func(context.Context), heartbeatInterval time.Duration) {
 	if s == nil || run == nil {
 		return
 	}
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = mcpJobHeartbeatInterval
+	}
 	workerCtx := normalizeServiceContext(ctx)
 	lease, hasLease := s.currentMCPJobLease(jobID)
+	leaseLost := false
 	if hasLease {
 		// The token is captured once. A later recovery attempt may replace the
 		// jobID entry in mcpJobLeases, but it must never change this worker's
@@ -2812,12 +2820,13 @@ func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(mcpJobHeartbeatInterval)
+		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				if hasLease && (!s.renewMCPJobLeaseForLease(jobID, lease) || !s.renewMCPJobStagingLeasesForLease(jobID, lease)) {
+					leaseLost = true
 					cancel()
 					return
 				}
@@ -2835,6 +2844,12 @@ func (s *AppService) runMCPJobWorker(jobID string, ctx context.Context, run func
 		} else {
 			s.releaseMCPJobLease(jobID)
 		}
+	} else if leaseLost {
+		// A stale worker cannot release the durable job lease after takeover, but
+		// it can still release the staged uploads fenced to its own lease. This
+		// prevents a lost worker from holding sources until lease expiry while
+		// preserving any upload already claimed by the new worker.
+		s.releaseMCPJobStagingLeasesForLease(jobID, lease)
 	}
 }
 
@@ -3358,6 +3373,7 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		return model.MCPJob{}, fmt.Errorf("job is not owned by this principal")
 	}
 	cancel := s.mcpJobCancels[jobID]
+	lease := mcpJobLease{}
 	if job.Status == "queued" || job.Status == "running" {
 		job.Status = "cancelled"
 		job.Summary = "任务已取消。"
@@ -3366,16 +3382,35 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		job.Warnings = appendMCPJobWarning(job.Warnings, mcpJobCancelWarning)
 		job.UpdatedAt = util.NowRFC3339()
 		job.CompletedAt = job.UpdatedAt
-		lease := mcpJobLease{}
 		if s.mcpJobStore != nil {
 			lease = s.mcpJobLeases[jobID]
-			if err := s.mcpJobStore.CancelItems(jobID, lease.Owner, lease.Attempt); err != nil {
+			expectedAttempt := lease.Attempt
+			if expectedAttempt <= 0 {
+				// A queued job released during graceful shutdown has no in-memory
+				// lease, but its attempt remains the CAS token in SQLite.
+				expectedAttempt = job.Attempt
+			}
+			record := mcpJobStoreRecord{
+				Job:        job,
+				Descriptor: s.mcpJobDescriptors[jobID],
+			}
+			updated, cancelErr := s.mcpJobStore.Cancel(record, lease.Owner, expectedAttempt)
+			if !updated {
 				s.recordMCPJobPersistenceFailure()
 				s.mcpJobMu.Unlock()
-				return model.MCPJob{}, fmt.Errorf("persist cancelled MCP job items failed")
+				if cancelErr != nil {
+					return model.MCPJob{}, fmt.Errorf("persist cancelled MCP job failed")
+				}
+				return model.MCPJob{}, fmt.Errorf("MCP job is no longer cancellable")
 			}
-		}
-		if !s.persistMCPJobLocked(job, true) {
+			if cancelErr != nil {
+				// The database transition has committed. File permission repair is
+				// operationally important, but must not make a successful cancel look
+				// like a failed request that callers may retry.
+				log.Printf("MCP job %s cancelled but post-commit protection failed: %v", jobID, cancelErr)
+				s.recordMCPJobPersistenceFailure()
+			}
+		} else if !s.persistMCPJobLocked(job, true) {
 			s.mcpJobMu.Unlock()
 			return model.MCPJob{}, fmt.Errorf("persist cancelled MCP job failed")
 		}
@@ -3387,11 +3422,16 @@ func (s *AppService) CancelMCPJobAs(jobID string, owner AuthPrincipal) (model.MC
 		s.mcpJobs[jobID] = job
 		delete(s.mcpJobCancels, jobID)
 		delete(s.mcpJobLeases, jobID)
-		delete(s.mcpJobStagingLeases, jobID)
 	}
 	s.mcpJobMu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if job.Status == "cancelled" {
+		s.releaseMCPJobStagingLeasesForLease(jobID, lease)
+		s.mcpJobMu.Lock()
+		delete(s.mcpJobStagingLeases, jobID)
+		s.mcpJobMu.Unlock()
 	}
 	return publicMCPJob(job), nil
 }
@@ -3698,6 +3738,7 @@ func (s *AppService) releaseMCPJobStagingLeasesForLease(jobID string, expectedLe
 		if err := s.staging.ReleaseWithLeaseAttempt(uploadID, lease.Owner, lease.Attempt); err != nil && !isMCPStagingLeaseCompletionError(err) {
 			log.Printf("failed to release staged upload lease %s for MCP job %s: %v", uploadID, jobID, err)
 		}
+		s.forgetMCPStagingLeaseForJob(jobID, uploadID, lease.Owner, lease.Attempt, lease.JobAttempt)
 	}
 }
 

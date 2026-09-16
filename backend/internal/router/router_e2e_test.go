@@ -1465,6 +1465,44 @@ func TestDirectConversationStillCallsConfiguredModel(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsSendsEmptyEvidenceBoundaryToModel(t *testing.T) {
+	var receivedChatRequest []byte
+	modelHandler := func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/chat/completions" || r.URL.Path == "/api/chat" {
+			receivedChatRequest = append([]byte(nil), body...)
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		handleModelAPI(w, r)
+	}
+
+	engine, _, cleanup := newTestRouterWithModelHandler(t, nil, modelHandler)
+	defer cleanup()
+
+	resp := performJSONRequest(t, engine, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"conversationId": "conv-empty-evidence-1",
+		"model":          "chat-test-model",
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "请回答一个当前知识库没有资料的问题",
+		}},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	requestText := string(receivedChatRequest)
+	for _, required := range []string{
+		"当前请求处于知识库问答模式",
+		"本次检索没有返回任何可用的文档片段",
+		"不得使用常识、预训练知识或推测补充答案",
+	} {
+		if !strings.Contains(requestText, required) {
+			t.Fatalf("expected model request to include empty evidence boundary %q, got %s", required, requestText)
+		}
+	}
+}
+
 func TestChatCompletionsRejectsConversationKnowledgeBaseChange(t *testing.T) {
 	engine, _, cleanup := newTestRouter(t)
 	defer cleanup()

@@ -44,7 +44,7 @@ func TestFilterOperationalChatMessages(t *testing.T) {
 func TestBuildChatSystemPromptDoesNotInjectQuestionSpecificAnswers(t *testing.T) {
 	prompt := buildChatSystemPrompt([]string{
 		"检索命中的文档片段：\n字段：姓名、职称\n数据行数：4",
-	}, false)
+	}, false, true, true)
 
 	for _, forbidden := range []string{
 		"表格计数回答要求",
@@ -72,6 +72,36 @@ func TestBuildChatSystemPromptDoesNotInjectQuestionSpecificAnswers(t *testing.T)
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("expected grounded prompt rule %q, got %s", required, prompt)
+		}
+	}
+}
+
+func TestBuildChatSystemPromptConstrainsEmptyKnowledgeRetrieval(t *testing.T) {
+	prompt := buildChatSystemPrompt(nil, false, true, false)
+
+	for _, required := range []string{
+		"当前请求处于知识库问答模式",
+		"只根据 KNOWLEDGE_CONTEXT 回答",
+		"本次检索没有返回任何可用的文档片段",
+		"不得使用常识、预训练知识或推测补充答案",
+		"不得猜测文件名、页码、证据 ID 或引用位置",
+	} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("expected empty retrieval rule %q, got %s", required, prompt)
+		}
+	}
+}
+
+func TestBuildChatSystemPromptLeavesDirectConversationUngrounded(t *testing.T) {
+	prompt := buildChatSystemPrompt(nil, false, false, false)
+
+	for _, forbidden := range []string{
+		"当前请求处于知识库问答模式",
+		"本次检索没有返回任何可用的文档片段",
+		"不得使用常识、预训练知识或推测补充答案",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("direct conversation should not receive knowledge-only rule %q: %s", forbidden, prompt)
 		}
 	}
 }

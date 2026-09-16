@@ -294,6 +294,10 @@ func TestMCPJobOwnerIsolation(t *testing.T) {
 				Status:      "succeeded",
 				OwnerUserID: "root-user",
 			},
+			"job-unbound": {
+				ID:     "job-unbound",
+				Status: "succeeded",
+			},
 		},
 	}
 
@@ -305,6 +309,16 @@ func TestMCPJobOwnerIsolation(t *testing.T) {
 	}
 	if jobs := service.ListRecentMCPJobsAs(20, AuthPrincipal{AuthType: "session", UserID: "root-user"}); len(jobs) != 1 || jobs[0].ID != "job-session" {
 		t.Fatalf("expected session owner to see only session jobs, got %+v", jobs)
+	}
+	legacy := AuthPrincipal{AuthType: "compatible_token"}
+	if _, err := service.GetMCPJobStatusAs("job-api-key", legacy); err == nil {
+		t.Fatal("expected legacy token to be denied another API key's job")
+	}
+	if _, err := service.GetMCPJobStatusAs("job-session", legacy); err == nil {
+		t.Fatal("expected legacy token to be denied a session-owned job")
+	}
+	if _, err := service.GetMCPJobStatusAs("job-unbound", legacy); err != nil {
+		t.Fatalf("expected legacy token to read an unbound historical job: %v", err)
 	}
 }
 

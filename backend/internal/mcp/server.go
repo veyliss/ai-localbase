@@ -995,7 +995,10 @@ func (s *Server) authenticate(c *gin.Context) (authContext, bool) {
 		return authContext{}, false
 	}
 
-	return authContext{Mode: authModeCompatibleToken}, true
+	return authContext{
+		Mode:      authModeCompatibleToken,
+		Principal: service.AuthPrincipal{AuthType: authModeCompatibleToken},
+	}, true
 }
 
 func (s *Server) rejectMCPAuth(c *gin.Context, status int, message string) {
@@ -1009,6 +1012,13 @@ func (s *Server) rejectMCPAuth(c *gin.Context, status int, message string) {
 
 func (s *Server) authorizeScopes(c *gin.Context, authCtx authContext, requiredScopes ...string) bool {
 	if authCtx.Mode == authModeCompatibleToken {
+		for _, scope := range requiredScopes {
+			if strings.TrimSpace(scope) != scopeMCPRead {
+				s.recordMCPEvent(c, authCtx, "mcp_scope_denied", "legacy mcp token is read-only")
+				writeMCPHTTPError(c, http.StatusForbidden, MCPErrorPermissionDenied, "legacy mcp token is read-only; use an API key with the required mcp scope")
+				return false
+			}
+		}
 		return true
 	}
 	if authCtx.Mode != authModeAPIKey {

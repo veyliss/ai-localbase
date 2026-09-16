@@ -1073,6 +1073,12 @@ func stagedUploadOwnerMatches(item model.StagedUpload, owner AuthPrincipal) bool
 	if hasScope(owner.Scopes, "mcp:admin") {
 		return true
 	}
+	if strings.EqualFold(strings.TrimSpace(owner.AuthType), "compatible_token") {
+		// Legacy MCP tokens are read-only and cannot claim or register staged
+		// uploads. Keep this explicit so an empty user ID is never treated as an
+		// anonymous owner by an authenticated request.
+		return false
+	}
 	if strings.TrimSpace(owner.APIKeyID) != "" {
 		return strings.TrimSpace(item.OwnerAPIKeyID) == strings.TrimSpace(owner.APIKeyID)
 	}

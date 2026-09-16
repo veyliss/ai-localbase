@@ -3469,6 +3469,11 @@ func mcpJobOwnerMatches(job model.MCPJob, owner AuthPrincipal) bool {
 	if hasScope(owner.Scopes, "mcp:admin") {
 		return true
 	}
+	if strings.EqualFold(strings.TrimSpace(owner.AuthType), "compatible_token") {
+		// The legacy token has no durable user or API-key identity. It may only
+		// read jobs created before principal binding, never another user's job.
+		return strings.TrimSpace(job.OwnerUserID) == "" && strings.TrimSpace(job.OwnerAPIKeyID) == ""
+	}
 	if owner.AuthType == "api_key" {
 		return strings.TrimSpace(job.OwnerAPIKeyID) != "" && strings.TrimSpace(job.OwnerAPIKeyID) == strings.TrimSpace(owner.APIKeyID)
 	}

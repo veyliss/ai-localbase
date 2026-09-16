@@ -63,6 +63,40 @@ func TestMCPRejectsEmptyCompatibleToken(t *testing.T) {
 	}
 }
 
+func TestMCPCompatibleTokenIsReadOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	called := false
+	registry := NewToolRegistry(ToolDefinition{
+		Name:            "write_fixture",
+		Description:     "write fixture",
+		InputSchema:     emptyObjectSchema(),
+		PermissionLevel: ToolPermissionWrite,
+		Handler: func(context.Context, map[string]any) (ToolCallResult, error) {
+			called = true
+			return NewTextResult("written", nil), nil
+		},
+	})
+	server := NewServer(registry, staticTokenProvider{config: model.AppConfig{
+		MCP: model.MCPConfig{Token: "legacy-token"},
+	}}, nil, model.ServerConfig{
+		EnableAuth:           true,
+		EnableMCP:            true,
+		EnableMCPLegacyToken: true,
+	})
+	router := gin.New()
+	server.RegisterRoutes(router.Group("/mcp"))
+
+	response := performProtocolRequestWithHeaders(router, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_fixture","arguments":{}}}`, "application/json", "application/json", map[string]string{
+		"Authorization": "Bearer legacy-token",
+	})
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "legacy mcp token is read-only") {
+		t.Fatalf("expected legacy token write to be rejected, got status=%d body=%s", response.Code, response.Body.String())
+	}
+	if called {
+		t.Fatal("expected legacy token rejection before invoking the write tool")
+	}
+}
+
 func newProtocolTestServer() (*Server, *gin.Engine) {
 	registry := NewToolRegistry(ToolDefinition{
 		Name:            "list_knowledge_bases",

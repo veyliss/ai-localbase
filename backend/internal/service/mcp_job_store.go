@@ -813,6 +813,10 @@ func mcpJobOwnerFilter(owner AuthPrincipal) (string, []any) {
 	if strings.TrimSpace(owner.AuthType) == "" || hasScope(owner.Scopes, "mcp:admin") {
 		return "1 = 1", nil
 	}
+	if strings.EqualFold(strings.TrimSpace(owner.AuthType), "compatible_token") {
+		// Legacy tokens are intentionally limited to unbound historical jobs.
+		return "owner_api_key_id = '' AND owner_user_id = ''", nil
+	}
 	if owner.AuthType == "api_key" {
 		apiKeyID := strings.TrimSpace(owner.APIKeyID)
 		if apiKeyID == "" {

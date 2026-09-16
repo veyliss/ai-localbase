@@ -265,6 +265,7 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 		KnowledgeScope:  conversation.KnowledgeScope,
 		Messages:        chatMessages,
 	}
+	req = normalizeChatRequest(req)
 
 	preparedReq, sources, err := h.prepareChatRequestWithContext(c.Request.Context(), req)
 	if err != nil {
@@ -302,11 +303,11 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 
 	if assistantMessage != nil {
 		updatedConversation, saveErr := h.appService.SaveConversation(model.SaveConversationRequest{
-			ID:              conversationID,
+			ID:              req.ConversationID,
 			Title:           conversation.Title,
-			KnowledgeBaseID: conversation.KnowledgeBaseID,
-			DocumentID:      conversation.DocumentID,
-			KnowledgeScope:  conversation.KnowledgeScope,
+			KnowledgeBaseID: req.KnowledgeBaseID,
+			DocumentID:      req.DocumentID,
+			KnowledgeScope:  req.KnowledgeScope,
 			Messages:        buildStoredConversationMessages(chatMessages, assistantMessage.Content, response.Metadata),
 		})
 		if saveErr != nil {
@@ -642,6 +643,7 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid chat request body")
 		return
 	}
+	req = normalizeChatRequest(req)
 
 	preparedReq, sources, err := h.prepareChatRequestWithContext(c.Request.Context(), req)
 	if err != nil {
@@ -701,6 +703,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "invalid chat request body")
 		return
 	}
+	req = normalizeChatRequest(req)
 
 	preparedReq, sources, err := h.prepareChatRequestWithContext(c.Request.Context(), req)
 	if err != nil {
@@ -786,7 +789,19 @@ func (h *AppHandler) prepareChatRequest(req model.ChatCompletionRequest) (model.
 	return h.prepareChatRequestWithContext(context.Background(), req)
 }
 
+func normalizeChatRequest(req model.ChatCompletionRequest) model.ChatCompletionRequest {
+	req.ConversationID = strings.TrimSpace(req.ConversationID)
+	req.KnowledgeBaseID = strings.TrimSpace(req.KnowledgeBaseID)
+	req.DocumentID = strings.TrimSpace(req.DocumentID)
+	req.KnowledgeScope = strings.TrimSpace(req.KnowledgeScope)
+	req.RetrievalMode = strings.TrimSpace(req.RetrievalMode)
+	req.RerankStrategy = strings.TrimSpace(req.RerankStrategy)
+	return req
+}
+
 func (h *AppHandler) prepareChatRequestWithContext(ctx context.Context, req model.ChatCompletionRequest) (model.ChatCompletionRequest, []map[string]string, error) {
+	req = normalizeChatRequest(req)
+
 	if len(req.Messages) == 0 {
 		return model.ChatCompletionRequest{}, nil, fmt.Errorf("messages cannot be empty")
 	}

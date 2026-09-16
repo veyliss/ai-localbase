@@ -2118,6 +2118,66 @@ Redis 支持过期时间设置，适合用作会话缓存或临时数据存储�
 	}
 }
 
+func TestChatCompletionsNormalizesKnowledgeScopeIdentifiers(t *testing.T) {
+	engine, modelBaseURL, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	listResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list knowledge bases: status=%d body=%s", listResp.Code, listResp.Body.String())
+	}
+	var kbList struct {
+		Items []model.KnowledgeBase `json:"items"`
+	}
+	decodeJSONResponse(t, listResp.Body.Bytes(), &kbList)
+	if len(kbList.Items) == 0 {
+		t.Fatal("expected default knowledge base")
+	}
+	knowledgeBaseID := kbList.Items[0].ID
+
+	uploadResp := performMultipartUpload(
+		t,
+		engine,
+		http.MethodPost,
+		fmt.Sprintf("/api/knowledge-bases/%s/documents", knowledgeBaseID),
+		"scope-normalization.md",
+		"# 范围规范化\n\nRedis 支持高性能缓存和持久化。",
+	)
+	if uploadResp.Code != http.StatusOK {
+		t.Fatalf("upload document: status=%d body=%s", uploadResp.Code, uploadResp.Body.String())
+	}
+	var uploadResult model.UploadResponse
+	decodeJSONResponse(t, uploadResp.Body.Bytes(), &uploadResult)
+
+	resp := performJSONRequest(t, engine, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"conversationId":  " conv-scope-normalization ",
+		"knowledgeBaseId": " " + knowledgeBaseID + " ",
+		"documentId":      " " + uploadResult.Uploaded.ID + " ",
+		"knowledgeScope":  " selected ",
+		"config": map[string]any{
+			"provider": "ollama",
+			"baseUrl":  modelBaseURL,
+			"model":    "chat-test-model",
+		},
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "请说明 Redis 的核心特点",
+		}},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	var chatResult model.ChatCompletionResponse
+	decodeJSONResponse(t, resp.Body.Bytes(), &chatResult)
+	if got := chatResult.Metadata["knowledgeBaseId"]; got != knowledgeBaseID {
+		t.Fatalf("expected normalized knowledge base id %q, got %#v", knowledgeBaseID, got)
+	}
+	if got := chatResult.Metadata["documentId"]; got != uploadResult.Uploaded.ID {
+		t.Fatalf("expected normalized document id %q, got %#v", uploadResult.Uploaded.ID, got)
+	}
+}
+
 func TestRouterStructuredCSVCountQuestionUsesCondensedAnswerRules(t *testing.T) {
 	engine, modelBaseURL, cleanup := newTestRouter(t)
 	defer cleanup()

@@ -4,8 +4,10 @@ import type {
   Conversation,
   DocumentItem,
   KnowledgeBase,
+  KnowledgeScope,
   MCPConfig,
 } from '../App'
+import { normalizeKnowledgeScope } from '../app/appHelpers'
 import { filterCitationMetadata } from '../components/chat/citationSources'
 
 export const API_BASE_PATH = ''
@@ -155,6 +157,7 @@ export interface BackendConversationListItem {
   title: string
   knowledgeBaseId: string
   documentId: string
+  knowledgeScope?: KnowledgeScope
   scopeVersion?: number
   createdAt: string
   updatedAt: string
@@ -170,6 +173,7 @@ export interface BackendConversation {
   title: string
   knowledgeBaseId: string
   documentId: string
+  knowledgeScope?: KnowledgeScope
   scopeVersion?: number
   createdAt: string
   updatedAt: string
@@ -651,6 +655,11 @@ export const normalizeConversation = (conversation: BackendConversation): Conver
   title: conversation.title,
   knowledgeBaseId: conversation.knowledgeBaseId ?? '',
   documentId: conversation.documentId ?? '',
+  knowledgeScope: normalizeKnowledgeScope(
+    conversation.knowledgeScope,
+    conversation.knowledgeBaseId ?? '',
+    conversation.documentId ?? '',
+  ),
   scopeVersion: conversation.scopeVersion ?? 0,
   createdAt: conversation.createdAt,
   updatedAt: conversation.updatedAt,
@@ -780,6 +789,7 @@ export const serializeConversation = (conversation: Conversation, title = conver
   title,
   knowledgeBaseId: conversation.knowledgeBaseId,
   documentId: conversation.documentId,
+  knowledgeScope: conversation.knowledgeScope,
   messages: conversation.messages.map((message) => ({
     id: message.id,
     role: message.role,

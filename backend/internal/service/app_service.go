@@ -4968,6 +4968,14 @@ func (s *AppService) ServerConfig() model.ServerConfig {
 }
 
 func (s *AppService) BuildChatContext(req model.ChatCompletionRequest, relevantDocumentIDs []string) (string, []map[string]string, error) {
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil {
+		return "", nil, err
+	}
+	if knowledgeScope == KnowledgeScopeNone {
+		return "", nil, nil
+	}
+
 	s.state.Mu.RLock()
 	defer s.state.Mu.RUnlock()
 
@@ -5062,7 +5070,7 @@ func (s *AppService) BuildChatContext(req model.ChatCompletionRequest, relevantD
 	}
 	sort.Strings(kbNames)
 
-	return "当前未限定知识库范围，系统将默认使用全部知识库作为后续检索候选。当前知识库包括：" + strings.Join(kbNames, "、"), nil, nil
+	return "当前已显式限定为全部知识库检索。当前知识库包括：" + strings.Join(kbNames, "、"), nil, nil
 }
 
 func (s *AppService) ensureKnowledgeBaseCollection(knowledgeBaseID string) error {
@@ -5211,16 +5219,29 @@ func (s *AppService) SaveConversation(req model.SaveConversationRequest) (*model
 	if err := s.validateKnowledgeScope(req.KnowledgeBaseID, req.DocumentID); err != nil {
 		return nil, err
 	}
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil {
+		return nil, err
+	}
 	existing, err := s.chatHistory.GetConversation(conversationID)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil && !conversationScopesEqual(existing.KnowledgeBaseID, existing.DocumentID, req.KnowledgeBaseID, req.DocumentID) {
+	if existing != nil && !conversationScopesEqual(
+		existing.KnowledgeScope,
+		existing.KnowledgeBaseID,
+		existing.DocumentID,
+		knowledgeScope,
+		req.KnowledgeBaseID,
+		req.DocumentID,
+	) {
 		return nil, fmt.Errorf(
-			"%w: existing knowledgeBaseId=%q documentId=%q, requested knowledgeBaseId=%q documentId=%q",
+			"%w: existing knowledgeScope=%q knowledgeBaseId=%q documentId=%q, requested knowledgeScope=%q knowledgeBaseId=%q documentId=%q",
 			ErrConversationScopeMismatch,
+			existing.KnowledgeScope,
 			existing.KnowledgeBaseID,
 			existing.DocumentID,
+			knowledgeScope,
 			strings.TrimSpace(req.KnowledgeBaseID),
 			strings.TrimSpace(req.DocumentID),
 		)
@@ -5239,6 +5260,7 @@ func (s *AppService) SaveConversation(req model.SaveConversationRequest) (*model
 		Title:           strings.TrimSpace(req.Title),
 		KnowledgeBaseID: strings.TrimSpace(req.KnowledgeBaseID),
 		DocumentID:      strings.TrimSpace(req.DocumentID),
+		KnowledgeScope:  knowledgeScope,
 		ScopeVersion:    conversationScopeVersion,
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
@@ -5260,6 +5282,10 @@ func (s *AppService) ValidateChatRequestScope(req model.ChatCompletionRequest) e
 	if err := s.validateKnowledgeScope(req.KnowledgeBaseID, req.DocumentID); err != nil {
 		return err
 	}
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil {
+		return err
+	}
 	conversationID := strings.TrimSpace(req.ConversationID)
 	if conversationID == "" || s.chatHistory == nil {
 		return nil
@@ -5274,9 +5300,16 @@ func (s *AppService) ValidateChatRequestScope(req model.ChatCompletionRequest) e
 	if existing.ScopeVersion < conversationScopeVersion {
 		return fmt.Errorf("%w: create a new conversation before continuing", ErrConversationScopeUpgradeNeeded)
 	}
-	if !conversationScopesEqual(existing.KnowledgeBaseID, existing.DocumentID, req.KnowledgeBaseID, req.DocumentID) {
+	if !conversationScopesEqual(
+		existing.KnowledgeScope,
+		existing.KnowledgeBaseID,
+		existing.DocumentID,
+		knowledgeScope,
+		req.KnowledgeBaseID,
+		req.DocumentID,
+	) {
 		return fmt.Errorf(
-			"%w: create a new conversation before changing knowledgeBaseId or documentId",
+			"%w: create a new conversation before changing knowledgeScope, knowledgeBaseId, or documentId",
 			ErrConversationScopeMismatch,
 		)
 	}
@@ -5328,8 +5361,13 @@ func (s *AppService) validateKnowledgeScope(knowledgeBaseID, documentID string) 
 	return nil
 }
 
-func conversationScopesEqual(leftKnowledgeBaseID, leftDocumentID, rightKnowledgeBaseID, rightDocumentID string) bool {
-	return strings.TrimSpace(leftKnowledgeBaseID) == strings.TrimSpace(rightKnowledgeBaseID) &&
+func conversationScopesEqual(
+	leftKnowledgeScope, leftKnowledgeBaseID, leftDocumentID,
+	rightKnowledgeScope, rightKnowledgeBaseID, rightDocumentID string,
+) bool {
+	return normalizeStoredKnowledgeScope(leftKnowledgeScope, leftKnowledgeBaseID, leftDocumentID) ==
+		normalizeStoredKnowledgeScope(rightKnowledgeScope, rightKnowledgeBaseID, rightDocumentID) &&
+		strings.TrimSpace(leftKnowledgeBaseID) == strings.TrimSpace(rightKnowledgeBaseID) &&
 		strings.TrimSpace(leftDocumentID) == strings.TrimSpace(rightDocumentID)
 }
 
@@ -5784,6 +5822,9 @@ func (s *AppService) retrieveRelevantChunksWithContext(ctx context.Context, req 
 	if err != nil {
 		return nil, err
 	}
+	if len(knowledgeBaseIDs) == 0 {
+		return nil, nil
+	}
 	cacheScope := s.retrievalCacheScope(req, knowledgeBaseIDs)
 
 	query := latestUserMessage(req.Messages)
@@ -5989,8 +6030,10 @@ func (s *AppService) retrievalCacheScope(req model.ChatCompletionRequest, knowle
 	ids := append([]string(nil), knowledgeBaseIDs...)
 	sort.Strings(ids)
 	cfg := s.retrievalConfigForRequest(req)
+	knowledgeScope, _ := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
 	return fmt.Sprintf(
-		"kb=%s|doc=%s|mode=%s|rerank=%s|rewrite=%t|variants=%d",
+		"scope=%s|kb=%s|doc=%s|mode=%s|rerank=%s|rewrite=%t|variants=%d",
+		knowledgeScope,
 		strings.Join(ids, ","),
 		strings.TrimSpace(req.DocumentID),
 		s.resolvedRetrievalSearchMode(req),
@@ -6062,10 +6105,21 @@ func (s *AppService) filterRetrievedChunksToScope(req model.ChatCompletionReques
 }
 
 func (s *AppService) resolveRetrievalKnowledgeBaseIDs(req model.ChatCompletionRequest) ([]string, error) {
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil {
+		return nil, err
+	}
+	if knowledgeScope == KnowledgeScopeNone {
+		return nil, nil
+	}
+	if s == nil || s.state == nil {
+		return nil, fmt.Errorf("app service is nil")
+	}
+
 	s.state.Mu.RLock()
 	defer s.state.Mu.RUnlock()
 
-	if strings.TrimSpace(req.KnowledgeBaseID) != "" {
+	if knowledgeScope == KnowledgeScopeSelected && strings.TrimSpace(req.KnowledgeBaseID) != "" {
 		kb, ok := s.state.KnowledgeBases[req.KnowledgeBaseID]
 		if !ok {
 			return nil, fmt.Errorf("knowledge base not found")
@@ -6085,7 +6139,7 @@ func (s *AppService) resolveRetrievalKnowledgeBaseIDs(req model.ChatCompletionRe
 		return []string{req.KnowledgeBaseID}, nil
 	}
 
-	if strings.TrimSpace(req.DocumentID) != "" {
+	if knowledgeScope == KnowledgeScopeSelected && strings.TrimSpace(req.DocumentID) != "" {
 		matchedKnowledgeBaseID := ""
 		for _, kb := range s.state.KnowledgeBases {
 			for _, document := range kb.Documents {

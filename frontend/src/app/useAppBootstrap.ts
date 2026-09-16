@@ -6,7 +6,7 @@ import {
   fetchConversationDetail,
   fetchInitialAppData,
 } from '../services/api'
-import { createEmptyConversation } from './appHelpers'
+import { createEmptyConversation, normalizeKnowledgeScope } from './appHelpers'
 import { normalizeAppConfig } from './appConfig'
 import type { AppConfig, Conversation, KnowledgeBase } from '../App'
 
@@ -156,6 +156,11 @@ export const useAppBootstrap = ({
               title: conversation.title,
               knowledgeBaseId: conversation.knowledgeBaseId,
               documentId: conversation.documentId,
+              knowledgeScope: normalizeKnowledgeScope(
+                conversation.knowledgeScope,
+                conversation.knowledgeBaseId,
+                conversation.documentId,
+              ),
               scopeVersion: conversation.scopeVersion ?? 0,
               createdAt: conversation.createdAt,
               updatedAt: conversation.updatedAt,
@@ -167,7 +172,10 @@ export const useAppBootstrap = ({
             }
 
             if (firstConversation.scopeVersion < 1) {
-              const safeConversation = createEmptyConversation(firstConversation.knowledgeBaseId)
+              const safeConversation = createEmptyConversation(
+                firstConversation.knowledgeBaseId,
+                firstConversation.documentId,
+              )
               setConversations([safeConversation, firstConversation, ...restConversations])
               setActiveConversationId(safeConversation.id)
               setSelectedKnowledgeBaseId(safeConversation.knowledgeBaseId || null)

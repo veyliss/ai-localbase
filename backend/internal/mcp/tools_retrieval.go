@@ -31,6 +31,7 @@ func newRetrievalTools(appService AppServiceReader) []ToolDefinition {
 				}
 				contextText, sources, err := buildRetrievalContextWithContext(appService, ctx, model.ChatCompletionRequest{
 					KnowledgeBaseID: knowledgeBaseID,
+					KnowledgeScope:  "selected",
 					Messages: []model.ChatMessage{{
 						Role:    "user",
 						Content: query,
@@ -67,7 +68,8 @@ func newRetrievalTools(appService AppServiceReader) []ToolDefinition {
 					return ToolCallResult{}, err
 				}
 				contextText, sources, err := buildRetrievalContextWithContext(appService, ctx, model.ChatCompletionRequest{
-					DocumentID: documentID,
+					DocumentID:     documentID,
+					KnowledgeScope: "selected",
 					Messages: []model.ChatMessage{{
 						Role:    "user",
 						Content: query,
@@ -111,6 +113,7 @@ func newRetrievalTools(appService AppServiceReader) []ToolDefinition {
 				result, sources, ok, err := appService.QueryStructuredData(model.ChatCompletionRequest{
 					KnowledgeBaseID: knowledgeBaseID,
 					DocumentID:      documentID,
+					KnowledgeScope:  "selected",
 					Messages: []model.ChatMessage{{
 						Role:    "user",
 						Content: query,
@@ -212,6 +215,7 @@ func newRetrievalTools(appService AppServiceReader) []ToolDefinition {
 				chatReq := model.ChatCompletionRequest{
 					KnowledgeBaseID: knowledgeBaseID,
 					DocumentID:      documentID,
+					KnowledgeScope:  "selected",
 					Messages: []model.ChatMessage{{
 						Role:    "user",
 						Content: query,

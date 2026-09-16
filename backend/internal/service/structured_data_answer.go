@@ -86,6 +86,13 @@ func (s *AppService) QueryStructuredData(req model.ChatCompletionRequest) (Struc
 	if err := s.validateKnowledgeScope(req.KnowledgeBaseID, req.DocumentID); err != nil {
 		return StructuredDataQueryResult{}, nil, false, err
 	}
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil {
+		return StructuredDataQueryResult{}, nil, false, err
+	}
+	if knowledgeScope == KnowledgeScopeNone {
+		return StructuredDataQueryResult{}, nil, false, nil
+	}
 	query := latestUserMessage(req.Messages)
 	if !looksLikeStructuredDataQuery(query) {
 		return StructuredDataQueryResult{}, nil, false, nil
@@ -161,6 +168,10 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 	if s == nil || s.state == nil {
 		return nil
 	}
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil || knowledgeScope == KnowledgeScopeNone {
+		return nil
+	}
 
 	s.state.Mu.RLock()
 	defer s.state.Mu.RUnlock()
@@ -194,6 +205,10 @@ func (s *AppService) resolveStructuredTableDocuments(req model.ChatCompletionReq
 			return nil
 		}
 		return structuredDocumentsFromKnowledgeBase(kb)
+	}
+
+	if knowledgeScope != KnowledgeScopeAll {
+		return nil
 	}
 
 	var documents []model.Document

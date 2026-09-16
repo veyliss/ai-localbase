@@ -500,6 +500,7 @@ type ChatCompletionRequest struct {
 	Messages                []ChatMessage        `json:"messages"`
 	KnowledgeBaseID         string               `json:"knowledgeBaseId"`
 	DocumentID              string               `json:"documentId"`
+	KnowledgeScope          string               `json:"knowledgeScope,omitempty"`
 	RetrievalMode           string               `json:"retrievalMode,omitempty"`
 	RerankStrategy          string               `json:"rerankStrategy,omitempty"`
 	EnableQueryRewrite      *bool                `json:"enableQueryRewrite,omitempty"`
@@ -544,6 +545,7 @@ type Conversation struct {
 	Title           string              `json:"title"`
 	KnowledgeBaseID string              `json:"knowledgeBaseId"`
 	DocumentID      string              `json:"documentId"`
+	KnowledgeScope  string              `json:"knowledgeScope"`
 	ScopeVersion    int                 `json:"scopeVersion"`
 	CreatedAt       string              `json:"createdAt"`
 	UpdatedAt       string              `json:"updatedAt"`
@@ -563,6 +565,7 @@ type ConversationListItem struct {
 	Title           string `json:"title"`
 	KnowledgeBaseID string `json:"knowledgeBaseId"`
 	DocumentID      string `json:"documentId"`
+	KnowledgeScope  string `json:"knowledgeScope"`
 	ScopeVersion    int    `json:"scopeVersion"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt"`
@@ -574,6 +577,7 @@ type SaveConversationRequest struct {
 	Title           string              `json:"title"`
 	KnowledgeBaseID string              `json:"knowledgeBaseId"`
 	DocumentID      string              `json:"documentId"`
+	KnowledgeScope  string              `json:"knowledgeScope,omitempty"`
 	Messages        []StoredChatMessage `json:"messages"`
 }
 

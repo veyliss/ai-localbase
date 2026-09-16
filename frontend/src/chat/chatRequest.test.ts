@@ -9,6 +9,7 @@ describe('chat request boundary', () => {
       think: false,
       knowledgeBaseId: 'kb-1',
       documentId: '',
+      knowledgeScope: 'selected',
       retrievalMode: 'dense',
       config: {
         provider: 'ollama',
@@ -36,6 +37,7 @@ describe('chat request boundary', () => {
 
     expect(request.messages).toEqual([{ role: 'user', content: '问题' }])
     expect(request.conversationId).toBe('conversation-1')
+    expect(request.knowledgeScope).toBe('selected')
     expect(request.config.model).toBe('llama3.2')
   })
 })

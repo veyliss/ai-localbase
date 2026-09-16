@@ -262,6 +262,7 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 		ConversationID:  conversationID,
 		KnowledgeBaseID: conversation.KnowledgeBaseID,
 		DocumentID:      conversation.DocumentID,
+		KnowledgeScope:  conversation.KnowledgeScope,
 		Messages:        chatMessages,
 	}
 
@@ -270,6 +271,7 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 		writeChatPreparationError(c, err)
 		return
 	}
+	req.KnowledgeScope = preparedReq.KnowledgeScope
 
 	response, err := h.llmService.ChatWithContext(c.Request.Context(), preparedReq)
 	if err != nil {
@@ -295,6 +297,7 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 	response.Metadata["sources"] = sources
 	response.Metadata["knowledgeBaseId"] = req.KnowledgeBaseID
 	response.Metadata["documentId"] = req.DocumentID
+	response.Metadata["knowledgeScope"] = req.KnowledgeScope
 	response.Metadata["toolUse"] = buildToolUseMetadata(sources)
 
 	if assistantMessage != nil {
@@ -303,6 +306,7 @@ func (h *AppHandler) RegenerateMessage(c *gin.Context) {
 			Title:           conversation.Title,
 			KnowledgeBaseID: conversation.KnowledgeBaseID,
 			DocumentID:      conversation.DocumentID,
+			KnowledgeScope:  conversation.KnowledgeScope,
 			Messages:        buildStoredConversationMessages(chatMessages, assistantMessage.Content, response.Metadata),
 		})
 		if saveErr != nil {
@@ -644,6 +648,7 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 		writeChatPreparationError(c, err)
 		return
 	}
+	req.KnowledgeScope = preparedReq.KnowledgeScope
 
 	response, err := h.llmService.ChatWithContext(c.Request.Context(), preparedReq)
 	if err != nil {
@@ -669,6 +674,7 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 	response.Metadata["sources"] = sources
 	response.Metadata["knowledgeBaseId"] = req.KnowledgeBaseID
 	response.Metadata["documentId"] = req.DocumentID
+	response.Metadata["knowledgeScope"] = req.KnowledgeScope
 	response.Metadata["toolUse"] = buildToolUseMetadata(sources)
 
 	if assistantMessage != nil {
@@ -677,6 +683,7 @@ func (h *AppHandler) ChatCompletions(c *gin.Context) {
 			Title:           "",
 			KnowledgeBaseID: req.KnowledgeBaseID,
 			DocumentID:      req.DocumentID,
+			KnowledgeScope:  req.KnowledgeScope,
 			Messages:        buildStoredConversationMessages(req.Messages, assistantMessage.Content, response.Metadata),
 		})
 		if saveErr != nil {
@@ -700,6 +707,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		writeChatPreparationError(c, err)
 		return
 	}
+	req.KnowledgeScope = preparedReq.KnowledgeScope
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
@@ -717,6 +725,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		"sources":         []map[string]string{},
 		"knowledgeBaseId": req.KnowledgeBaseID,
 		"documentId":      req.DocumentID,
+		"knowledgeScope":  req.KnowledgeScope,
 		"toolUse":         []model.ToolUseMetadata{},
 	}
 	c.SSEvent("meta", initialMeta)
@@ -751,6 +760,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		"sources":         sources,
 		"knowledgeBaseId": req.KnowledgeBaseID,
 		"documentId":      req.DocumentID,
+		"knowledgeScope":  req.KnowledgeScope,
 		"toolUse":         buildToolUseMetadata(sources),
 		"citationSupport": citationSupport,
 	}
@@ -759,6 +769,7 @@ func (h *AppHandler) ChatCompletionsStream(c *gin.Context) {
 		Title:           "",
 		KnowledgeBaseID: req.KnowledgeBaseID,
 		DocumentID:      req.DocumentID,
+		KnowledgeScope:  req.KnowledgeScope,
 		Messages:        buildStoredConversationMessages(req.Messages, fullAssistantContent, responseMetadata),
 	})
 	if saveErr != nil {
@@ -782,14 +793,20 @@ func (h *AppHandler) prepareChatRequestWithContext(ctx context.Context, req mode
 	if err := h.appService.ValidateChatRequestScope(req); err != nil {
 		return model.ChatCompletionRequest{}, nil, err
 	}
+	knowledgeScope, err := h.appService.ResolveKnowledgeScope(req)
+	if err != nil {
+		return model.ChatCompletionRequest{}, nil, err
+	}
+	req.KnowledgeScope = knowledgeScope
 
 	latestQuestion := latestUserQuestion(req.Messages)
 	skipKnowledgeRetrieval := isDirectConversationMessage(latestQuestion)
+	useKnowledgeRetrieval := !skipKnowledgeRetrieval && knowledgeScope != service.KnowledgeScopeNone
 	retrievalContext := ""
 	retrievalSources := []map[string]string(nil)
 	contextSummary := ""
 	contextSources := []map[string]string(nil)
-	if !skipKnowledgeRetrieval {
+	if useKnowledgeRetrieval {
 		var err error
 		retrievalContext, retrievalSources, err = h.appService.BuildRetrievalContextWithContext(ctx, req)
 		if err != nil {
@@ -814,7 +831,7 @@ func (h *AppHandler) prepareChatRequestWithContext(ctx context.Context, req mode
 	preparedReq.Config = applyKnowledgeGenerationPolicy(
 		h.appService.CurrentChatConfig(),
 		h.appService.KnowledgeTemperature(),
-		!skipKnowledgeRetrieval,
+		useKnowledgeRetrieval,
 	)
 	preparedReq.Config.ContextMessageLimit = h.appService.ContextMessageLimit()
 	preparedReq.Messages = h.appService.TrimChatMessages(filterOperationalChatMessages(req.Messages))
@@ -825,7 +842,7 @@ func (h *AppHandler) prepareChatRequestWithContext(ctx context.Context, req mode
 		Content: buildChatSystemPrompt(
 			contextParts,
 			isDiagramRequest,
-			!skipKnowledgeRetrieval,
+			useKnowledgeRetrieval,
 			strings.TrimSpace(retrievalContext) != "",
 		),
 	}}, preparedReq.Messages...)

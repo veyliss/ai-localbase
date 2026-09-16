@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createEmptyConversation, normalizeChatMetadata } from './appHelpers'
+import {
+  createEmptyConversation,
+  inferKnowledgeScope,
+  normalizeChatMetadata,
+  normalizeKnowledgeScope,
+} from './appHelpers'
 
 describe('app helpers', () => {
   it('creates a local conversation with a stable initial shape', () => {
@@ -8,7 +13,15 @@ describe('app helpers', () => {
     expect(conversation.id).toBeTruthy()
     expect(conversation.knowledgeBaseId).toBe('kb-1')
     expect(conversation.documentId).toBe('doc-1')
+    expect(conversation.knowledgeScope).toBe('selected')
     expect(conversation.localOnly).toBe(true)
+  })
+
+  it('does not infer a full knowledge-base search from an empty selection', () => {
+    expect(inferKnowledgeScope()).toBe('none')
+    expect(normalizeKnowledgeScope(undefined)).toBe('none')
+    expect(normalizeKnowledgeScope('all')).toBe('all')
+    expect(normalizeKnowledgeScope('all', 'kb-1')).toBe('selected')
   })
 
   it('keeps citation support metadata while filtering incomplete sources', () => {

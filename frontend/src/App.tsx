@@ -1,5 +1,10 @@
 import './App.css'
-import { createEmptyConversation, createId, normalizeChatMetadata } from './app/appHelpers'
+import {
+  createEmptyConversation,
+  createId,
+  inferKnowledgeScope,
+  normalizeChatMetadata,
+} from './app/appHelpers'
 import { createDefaultAppConfig, normalizeAppConfig } from './app/appConfig'
 import { buildChatRequestBody } from './chat/chatRequest'
 import ChatArea from './components/ChatArea'
@@ -73,6 +78,8 @@ export interface ChatMessageMetadata {
   citationSupport?: CitationSupportMetadata
 }
 
+export type KnowledgeScope = 'none' | 'selected' | 'all'
+
 export interface CitationClaimSupport {
   text: string
   supported: boolean
@@ -133,6 +140,7 @@ export interface Conversation {
   title: string
   knowledgeBaseId: string
   documentId: string
+  knowledgeScope: KnowledgeScope
   scopeVersion: number
   messages: ChatMessage[]
   createdAt: string
@@ -366,9 +374,11 @@ const conversationMatchesScope = (
   conversation: Conversation,
   knowledgeBaseId: string,
   documentId: string,
+  knowledgeScope = inferKnowledgeScope(knowledgeBaseId, documentId),
 ) => (
   conversation.knowledgeBaseId === knowledgeBaseId &&
-  conversation.documentId === documentId
+  conversation.documentId === documentId &&
+  conversation.knowledgeScope === knowledgeScope
 )
 
 class ConversationScopeConflictError extends Error {}
@@ -551,7 +561,12 @@ function AppContent() {
     if (activeConversation?.localOnly && activeConversation.messages.length === 0) {
       setConversations((prev) => prev.map((conversation) => (
         conversation.id === activeConversation.id
-          ? { ...conversation, knowledgeBaseId, documentId }
+          ? {
+              ...conversation,
+              knowledgeBaseId,
+              documentId,
+              knowledgeScope: inferKnowledgeScope(knowledgeBaseId, documentId),
+            }
           : conversation
       )))
       return
@@ -1484,6 +1499,9 @@ function AppContent() {
       activeConversation,
       selectedScope.knowledgeBaseId,
       selectedScope.documentId,
+      selectedScope.knowledgeBaseId || selectedScope.documentId
+        ? inferKnowledgeScope(selectedScope.knowledgeBaseId, selectedScope.documentId)
+        : activeConversation.knowledgeScope,
     )) {
       activateConversationScope(selectedScope.knowledgeBaseId, selectedScope.documentId)
       return false
@@ -1539,6 +1557,7 @@ function AppContent() {
       think: chatMode === 'think',
       knowledgeBaseId: activeConversation.knowledgeBaseId,
       documentId: activeConversation.documentId,
+      knowledgeScope: activeConversation.knowledgeScope,
       retrievalMode: config.retrieval.defaultSearchMode,
       config: {
         ...config.chat,

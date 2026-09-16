@@ -1,4 +1,10 @@
-import type { ChatConfig, ChatMessage, EmbeddingConfig, RetrievalConfig } from '../App'
+import type {
+  ChatConfig,
+  ChatMessage,
+  EmbeddingConfig,
+  KnowledgeScope,
+  RetrievalConfig,
+} from '../App'
 
 export interface ChatRequestBody {
   conversationId: string
@@ -6,6 +12,7 @@ export interface ChatRequestBody {
   think: boolean
   knowledgeBaseId: string
   documentId: string
+  knowledgeScope: KnowledgeScope
   retrievalMode: RetrievalConfig['defaultSearchMode']
   config: ChatConfig
   embedding: EmbeddingConfig
@@ -21,6 +28,7 @@ export const buildChatRequestBody = (input: {
   think: boolean
   knowledgeBaseId: string
   documentId: string
+  knowledgeScope: KnowledgeScope
   retrievalMode: RetrievalConfig['defaultSearchMode']
   config: ChatConfig
   embedding: EmbeddingConfig
@@ -31,6 +39,7 @@ export const buildChatRequestBody = (input: {
   think: input.think,
   knowledgeBaseId: input.knowledgeBaseId,
   documentId: input.documentId,
+  knowledgeScope: input.knowledgeScope,
   retrievalMode: input.retrievalMode,
   config: input.config,
   embedding: input.embedding,

@@ -57,6 +57,9 @@ func TestSQLiteChatHistoryStoreMigratesConversationScopeVersion(t *testing.T) {
 	if legacy == nil || legacy.ScopeVersion != 0 {
 		t.Fatalf("expected legacy conversation scope version 0, got %#v", legacy)
 	}
+	if legacy.KnowledgeScope != KnowledgeScopeSelected {
+		t.Fatalf("expected legacy knowledge base conversation to migrate to selected scope, got %q", legacy.KnowledgeScope)
+	}
 
 	if err := store.SaveConversation(model.Conversation{
 		ID:              "scoped",
@@ -75,6 +78,9 @@ func TestSQLiteChatHistoryStoreMigratesConversationScopeVersion(t *testing.T) {
 	}
 	if scoped == nil || scoped.ScopeVersion != conversationScopeVersion {
 		t.Fatalf("expected scope version %d, got %#v", conversationScopeVersion, scoped)
+	}
+	if scoped.KnowledgeScope != KnowledgeScopeSelected {
+		t.Fatalf("expected scoped conversation to retain selected scope, got %q", scoped.KnowledgeScope)
 	}
 }
 

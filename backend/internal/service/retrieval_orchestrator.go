@@ -138,6 +138,13 @@ func (o *RetrievalOrchestrator) evaluateRaw(ctx context.Context, req model.ChatC
 
 	service := o.appService
 	ctx = normalizeServiceContext(ctx)
+	knowledgeScope, err := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	if err != nil {
+		return nil, err
+	}
+	if knowledgeScope == KnowledgeScopeNone {
+		return nil, nil
+	}
 	if service == nil {
 		return nil, fmt.Errorf("app service is nil")
 	}

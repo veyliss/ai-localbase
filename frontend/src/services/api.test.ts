@@ -81,6 +81,7 @@ describe('normalizeConversation', () => {
       title: '知识库会话',
       knowledgeBaseId: 'kb-school',
       documentId: 'doc-school',
+      knowledgeScope: 'selected',
       scopeVersion: 1,
       createdAt: '2026-07-27T00:00:00Z',
       updatedAt: '2026-07-27T00:00:01Z',
@@ -95,10 +96,12 @@ describe('normalizeConversation', () => {
     const conversation = normalizeConversation(backendConversation)
     expect(conversation.knowledgeBaseId).toBe('kb-school')
     expect(conversation.documentId).toBe('doc-school')
+    expect(conversation.knowledgeScope).toBe('selected')
     expect(conversation.scopeVersion).toBe(1)
     expect(serializeConversation(conversation)).toMatchObject({
       knowledgeBaseId: 'kb-school',
       documentId: 'doc-school',
+      knowledgeScope: 'selected',
     })
   })
 })

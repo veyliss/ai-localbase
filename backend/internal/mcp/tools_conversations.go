@@ -47,13 +47,14 @@ func newConversationTools(appService AppServiceReader) []ToolDefinition {
 		},
 		{
 			Name:        "save_conversation",
-			Description: "保存完整会话。参数 id、messages 为必填，可选 title、knowledgeBaseId、documentId。",
+			Description: "保存完整会话。参数 id、messages 为必填，可选 title、knowledgeScope、knowledgeBaseId、documentId。未指定范围时，无知识库 ID 的会话不会执行知识库检索。",
 			InputSchema: objectSchema(
 				map[string]any{
 					"id":              map[string]any{"type": "string", "description": "会话 ID"},
 					"title":           map[string]any{"type": "string", "description": "会话标题"},
 					"knowledgeBaseId": map[string]any{"type": "string", "description": "知识库 ID"},
 					"documentId":      map[string]any{"type": "string", "description": "文档 ID"},
+					"knowledgeScope":  map[string]any{"type": "string", "enum": []string{"none", "selected", "all"}, "description": "知识库检索范围"},
 					"messages": map[string]any{
 						"type":        "array",
 						"description": "会话消息列表",
@@ -112,6 +113,7 @@ func newConversationTools(appService AppServiceReader) []ToolDefinition {
 					Title:           optionalStringArg(args, "title"),
 					KnowledgeBaseID: optionalStringArg(args, "knowledgeBaseId"),
 					DocumentID:      optionalStringArg(args, "documentId"),
+					KnowledgeScope:  optionalStringArg(args, "knowledgeScope"),
 					Messages:        messages,
 				})
 				if err != nil {

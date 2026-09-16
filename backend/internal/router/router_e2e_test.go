@@ -1482,6 +1482,7 @@ func TestChatCompletionsSendsEmptyEvidenceBoundaryToModel(t *testing.T) {
 	resp := performJSONRequest(t, engine, http.MethodPost, "/v1/chat/completions", map[string]any{
 		"conversationId": "conv-empty-evidence-1",
 		"model":          "chat-test-model",
+		"knowledgeScope": "all",
 		"messages": []map[string]string{{
 			"role":    "user",
 			"content": "请回答一个当前知识库没有资料的问题",

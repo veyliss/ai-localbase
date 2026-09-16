@@ -4,6 +4,7 @@ import type {
   ChatSourceMetadata,
   CitationSupportMetadata,
   Conversation,
+  KnowledgeScope,
 } from '../App'
 
 export const createId = () => {
@@ -12,6 +13,28 @@ export const createId = () => {
   }
 
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+export const inferKnowledgeScope = (knowledgeBaseId = '', documentId = ''): KnowledgeScope => (
+  knowledgeBaseId.trim() || documentId.trim() ? 'selected' : 'none'
+)
+
+export const normalizeKnowledgeScope = (
+  scope: string | undefined,
+  knowledgeBaseId = '',
+  documentId = '',
+): KnowledgeScope => {
+  const normalizedScope = scope?.trim().toLowerCase()
+  if (normalizedScope === 'all' && !knowledgeBaseId.trim() && !documentId.trim()) {
+    return 'all'
+  }
+  if (normalizedScope === 'selected' && (knowledgeBaseId.trim() || documentId.trim())) {
+    return 'selected'
+  }
+  if (normalizedScope === 'none' && !knowledgeBaseId.trim() && !documentId.trim()) {
+    return 'none'
+  }
+  return inferKnowledgeScope(knowledgeBaseId, documentId)
 }
 
 export const normalizeChatMetadata = (
@@ -41,6 +64,7 @@ export const createEmptyConversation = (knowledgeBaseId = '', documentId = ''): 
     title: '新的对话',
     knowledgeBaseId,
     documentId,
+    knowledgeScope: inferKnowledgeScope(knowledgeBaseId, documentId),
     scopeVersion: 1,
     createdAt: now,
     updatedAt: now,

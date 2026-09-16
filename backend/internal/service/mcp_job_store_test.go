@@ -604,6 +604,33 @@ func TestMCPJobStoreLinkRetryIsAtomic(t *testing.T) {
 	}
 }
 
+func TestMCPJobStoreFailedRetryLinkDoesNotLeaveActiveSpeculativeChild(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	now := time.Now().UTC()
+	parent := testMCPJobRecord("job-retry-superseded-parent", now)
+	parent.Job.Status = "failed"
+	parent.Job.Retryable = false
+	child := testMCPJobRecord("job-retry-superseded-child", now.Add(time.Second))
+	child.Job.Status = "queued"
+	if err := store.Create(parent); err != nil {
+		t.Fatalf("create retry parent: %v", err)
+	}
+	if err := store.Create(child); err != nil {
+		t.Fatalf("create speculative retry child: %v", err)
+	}
+
+	if _, _, err := store.LinkRetry(parent.Job.ID, child.Job.ID, 1, parent.Job.OwnerUserID, parent.Job.OwnerAPIKeyID); err == nil {
+		t.Fatal("expected retry link to lose the parent CAS")
+	}
+	loaded, found, err := store.Get(child.Job.ID)
+	if err != nil || !found {
+		t.Fatalf("load superseded child: found=%t err=%v", found, err)
+	}
+	if loaded.Job.Status != "cancelled" || loaded.Job.Resumable || loaded.Job.Retryable || loaded.LeaseOwner != "" {
+		t.Fatalf("expected superseded child to be terminal and unleased, got %+v", loaded)
+	}
+}
+
 func TestMCPJobStorePruneKeepsNewestTerminalJobsAndActiveJobs(t *testing.T) {
 	store := newTestMCPJobStore(t)
 	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)

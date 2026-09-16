@@ -715,7 +715,31 @@ func (s *MCPJobStore) LinkRetry(parentJobID, childJobID string, retryCount int, 
 		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("inspect mcp retry parent: %w", err)
 	}
 	if affected != 1 {
-		rollback()
+		// The child is created before this transaction can atomically consume the
+		// parent retry flag. If another retry won the CAS, make this speculative
+		// child terminal while still in the same transaction so it cannot be
+		// resurrected by restart recovery.
+		if _, cleanupErr := tx.Exec(`UPDATE mcp_jobs SET
+			status = 'cancelled', progress = 0, summary = ?, error = ?, error_code = 'retry_superseded',
+			retryable = 0, resumable = 0, completed_at = ?, updated_at = ?,
+			lease_owner = '', lease_expires_at = '', last_heartbeat_at = '', next_action = ''
+			WHERE id = ? AND parent_job_id = '' AND retry_count = 0 AND status IN ('queued', 'running')`,
+			"重试请求已被其他请求取代。", "retry request was superseded", nowValue, nowValue, childJobID); cleanupErr != nil {
+			rollback()
+			return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("cancel superseded mcp retry child: %w", cleanupErr)
+		}
+		if _, cleanupErr := tx.Exec(`UPDATE mcp_job_items SET
+			status = 'cancelled', error = ?, error_code = 'retry_superseded', retryable = 0, updated_at = ?
+			WHERE job_id = ? AND status IN ('pending', 'running')`, "重试请求已被其他请求取代。", nowValue, childJobID); cleanupErr != nil {
+			rollback()
+			return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("cancel superseded mcp retry child items: %w", cleanupErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("commit superseded mcp retry child: %w", commitErr)
+		}
+		if protectErr := s.protectFilesAfterWrite("cancel superseded mcp retry child"); protectErr != nil {
+			return mcpJobStoreRecord{}, mcpJobStoreRecord{}, protectErr
+		}
 		return mcpJobStoreRecord{}, mcpJobStoreRecord{}, fmt.Errorf("mcp retry parent is no longer retryable")
 	}
 	result, err = tx.Exec(`UPDATE mcp_jobs SET

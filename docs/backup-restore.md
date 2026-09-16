@@ -1,6 +1,6 @@
 # 备份与恢复清单
 
-本文档用于自托管部署、升级前备份、迁移服务器或灾难恢复。当前版本只提供**运维清单**，不提供产品内导出/导入功能。
+本文档用于自托管部署、升级前备份、迁移服务器或灾难恢复。当前版本只提供**运维清单**，不提供产品内导出/导入功能。本文命令以生产编排 `docker-compose.prod.yml` 为例；本地开发请显式替换为对应的开发编排文件。
 
 ---
 
@@ -40,13 +40,13 @@
 Docker Compose 示例：
 
 ```bash
-docker compose stop backend frontend
+docker compose -f docker-compose.prod.yml stop backend frontend
 ```
 
 如果需要完全一致的 Qdrant 数据快照，也可以在业务暂停后停止 Qdrant 再复制数据：
 
 ```bash
-docker compose stop qdrant
+docker compose -f docker-compose.prod.yml stop qdrant
 ```
 
 ---
@@ -64,8 +64,8 @@ docker compose stop qdrant
 Docker Compose 示例：
 
 ```bash
-docker compose up -d qdrant
-docker compose up -d backend frontend
+docker compose -f docker-compose.prod.yml up -d qdrant
+docker compose -f docker-compose.prod.yml up -d backend frontend
 ```
 
 ---

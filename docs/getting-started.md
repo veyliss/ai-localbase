@@ -97,7 +97,7 @@ docker compose up --build
 | `STAGING_DIR` | `data/staging` | 上传暂存目录，生产 Docker 应位于 `/app/data` 持久化卷内 |
 | `MAX_UPLOAD_BYTES` | `26214400` | 单文件上传大小上限，默认 25 MiB |
 | `MAX_JSON_BODY_BYTES` | `4194304` | 非 multipart JSON 请求体上限，默认 4 MiB |
-| `API_REQUESTS_PER_MINUTE` | `120` | 高成本 HTTP 接口按主体/IP 计算的每分钟请求上限 |
+| `API_REQUESTS_PER_MINUTE` | `120` | 每个高成本 HTTP 资源类别按主体/IP 计算的每分钟请求上限，各类别分别计算 |
 | `API_MAX_CONCURRENT_REQUESTS` | `16` | 高成本 HTTP 接口的全局并发上限 |
 | `CHAT_MAX_CONCURRENT_REQUESTS` | `4` | 单主体 Chat 并发上限 |
 | `INDEX_MAX_CONCURRENT_REQUESTS` | `2` | 单主体索引并发上限 |
@@ -162,7 +162,7 @@ ENABLE_AUTH=true AUTH_PASSWORD=your-secure-password AI_LOCALBASE_IMAGE_TAG=v1.4.
 
 生产 Compose 默认使用已发布的固定镜像 `v1.4.10`；需要升级或回滚时显式设置 `AI_LOCALBASE_IMAGE_TAG`。本地源码修改请使用开发或本地构建编排验证。应用层按单实例运行，SQLite 聊天记录、应用状态文件和内存中的 MCP Job 不支持多个后端副本共享写入，请勿扩展 `backend` 副本数。
 
-首次启动时，如果设置了 `AUTH_PASSWORD`，后端会自动创建 root 用户并保存密码哈希。如果未设置 `AUTH_PASSWORD`，Web 页面会进入首次初始化向导。公网部署时建议至少设置 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占；如果两者都未设置，当前版本默认只允许本机回环地址完成首次初始化。
+首次启动时，如果设置了 `AUTH_PASSWORD`，后端会自动创建 root 用户并保存密码哈希；密码至少需要 8 个字符，不符合要求时后端拒绝初始化。如果未设置 `AUTH_PASSWORD`，Web 页面会进入首次初始化向导。公网部署时建议至少设置 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占；如果两者都未设置，当前版本默认只允许本机回环地址完成首次初始化。
 
 更多认证接口、API Key 和密码重置说明见 [`docs/AUTH.md`](./AUTH.md)。
 

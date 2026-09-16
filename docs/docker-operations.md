@@ -1,6 +1,6 @@
 # Docker 运行与故障恢复
 
-本文说明推荐的 Docker 启动方式、容器重启边界和外部依赖故障判断。项目默认按单机、单后端实例运行。
+本文说明推荐的 Docker 启动方式、容器重启边界和外部依赖故障判断。项目默认按单机、单后端实例运行。本文命令以生产编排 `docker-compose.prod.yml` 为例；本地开发请显式替换为对应的开发编排文件。
 
 ## 访问地址
 
@@ -30,10 +30,10 @@ docker compose -f docker-compose.prod.yml restart frontend
 修改 Dockerfile、前端代码构建产物或本地后端源码后，使用对应编排重新构建：
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-不要使用 `docker compose down -v` 做普通重启；这会删除命名 volume，可能导致 Qdrant 数据丢失。升级、迁移和灾难恢复前请先阅读 [`backup-restore.md`](backup-restore.md)。
+不要使用 `docker compose -f docker-compose.prod.yml down -v` 做普通重启；这会删除命名 volume，可能导致 Qdrant 数据丢失。升级、迁移和灾难恢复前请先阅读 [`backup-restore.md`](backup-restore.md)。
 
 ## 健康状态
 
@@ -47,7 +47,7 @@ docker compose up -d --build
 ```bash
 curl -i http://localhost:8080/livez
 curl -i http://localhost:8080/readyz
-docker compose ps
+docker compose -f docker-compose.prod.yml ps
 ```
 
 后端容器持续运行但处于 `unhealthy` 时，优先查看 `/readyz` 和日志。Qdrant 恢复后，后端会在下一次探测中恢复就绪，通常不需要删除容器或数据。
@@ -56,7 +56,7 @@ docker compose ps
 
 ### Qdrant
 
-- 查看 `docker compose logs qdrant --tail 100`，确认容器没有因为非回环绑定缺少 `QDRANT_API_KEY` 而退出。
+- 查看 `docker compose -f docker-compose.prod.yml logs qdrant --tail 100`，确认容器没有因为非回环绑定缺少 `QDRANT_API_KEY` 而退出。
 - `QDRANT_URL` 在 Compose 网络内应指向 `http://qdrant:6333`；后端连接受保护的 Qdrant 时，`QDRANT_API_KEY` 必须与服务端一致。
 - 修改 Qdrant 地址、API Key 或绑定地址后，重新创建后端和 Qdrant 容器，不要只刷新浏览器。
 - 如果出现向量维度错误，确认 `QDRANT_VECTOR_SIZE` 与 Embedding 模型一致，并按 [`backup-restore.md`](backup-restore.md) 的说明使用新的 collection 前缀或重建索引。
@@ -82,9 +82,9 @@ Docker 前端 Nginx 的 `NGINX_CLIENT_MAX_BODY_SIZE` 必须大于 `MAX_UPLOAD_BY
 ## 日志与数据
 
 ```bash
-docker compose logs backend --tail 100
-docker compose logs frontend --tail 100
-docker compose logs qdrant --tail 100
+docker compose -f docker-compose.prod.yml logs backend --tail 100
+docker compose -f docker-compose.prod.yml logs frontend --tail 100
+docker compose -f docker-compose.prod.yml logs qdrant --tail 100
 ```
 
 应用状态、聊天记录、MCP Job Store、上传文件和索引快照都在后端数据目录；Qdrant 数据在 `QDRANT_STORAGE_PATH` 或生产命名 volume 中。不要通过删除容器排查问题，先保留日志并确认备份可用。

@@ -90,16 +90,16 @@ Docker 自托管建议设置：
 
 - `ENABLE_AUTH=true`：开启 Web 登录与 API Key 鉴权。
 - `AUTH_USERNAME=root`：默认 root 用户名。
-- `AUTH_PASSWORD=<强密码>`：首次启动自动创建 root 用户。
+- `AUTH_PASSWORD=<强密码（至少 8 个字符）>`：首次启动自动创建 root 用户；不符合密码要求时后端拒绝初始化。
 - `AUTH_SETUP_TOKEN=<随机值>`：如果不使用 `AUTH_PASSWORD`，建议设置初始化保护 Token。
 - `QDRANT_BIND_ADDRESS=127.0.0.1`：默认只允许宿主机本机访问 Qdrant 端口，避免服务器部署时暴露向量库。
 - `MAX_UPLOAD_BYTES=26214400`：默认单文件上传上限为 25 MiB，可按资源情况调大。
 - `NGINX_CLIENT_MAX_BODY_SIZE=32m`：Docker 前端代理请求体上限，需要高于单文件上传上限以容纳 multipart 开销。
 - `/health`、`/livez` 和 `/readyz` 仅提供最小探针响应；登录后可在 Settings 查看详细健康诊断。
-- `API_REQUESTS_PER_MINUTE=120`：Chat、检索、评估、索引、上传和模型测试等高成本接口的主体/IP 每分钟请求上限。
+- `API_REQUESTS_PER_MINUTE=120`：Chat、检索、评估、索引、上传和模型测试等每个资源类别的主体/IP 每分钟请求上限，各类别分别计算。
 - `API_MAX_CONCURRENT_REQUESTS=16`：上述高成本接口的全局并发上限；各类别还可通过对应的 `*_MAX_CONCURRENT_REQUESTS` 单独调整。
 
-普通和生产 Docker Compose 默认启用认证；如果 `ENABLE_AUTH=true` 且未设置 `AUTH_PASSWORD`，首次访问 Web 页面会进入初始化向导。服务器部署请优先设置 `AUTH_PASSWORD` 或 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占。开发 Compose 如需免登录调试，请显式设置 `ENABLE_AUTH=false`。
+普通和生产 Docker Compose 默认启用认证；如果 `ENABLE_AUTH=true` 且未设置 `AUTH_PASSWORD`，首次访问 Web 页面会进入初始化向导。`AUTH_PASSWORD` 至少需要 8 个字符，不符合要求时后端拒绝创建 root 用户。服务器部署请优先设置 `AUTH_PASSWORD` 或 `AUTH_SETUP_TOKEN`，避免初始化窗口被他人抢占。开发 Compose 如需免登录调试，请显式设置 `ENABLE_AUTH=false`。
 
 默认服务地址：
 

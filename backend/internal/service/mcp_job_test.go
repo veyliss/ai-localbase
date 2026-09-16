@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -319,6 +320,34 @@ func TestMCPJobOwnerIsolation(t *testing.T) {
 	}
 	if _, err := service.GetMCPJobStatusAs("job-unbound", legacy); err != nil {
 		t.Fatalf("expected legacy token to read an unbound historical job: %v", err)
+	}
+}
+
+func TestMCPJobStatusDoesNotResurrectPrunedDurableJobFromMemory(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	job := testMCPJobRecord("job-pruned-cache", time.Now().UTC())
+	job.Job.Status = "succeeded"
+	if err := store.Create(job); err != nil {
+		t.Fatalf("create durable job: %v", err)
+	}
+	service := NewAppServiceWithJobStore(nil, NewAppStateStore(filepath.Join(t.TempDir(), "state.json")), nil, model.ServerConfig{}, store)
+	defer func() {
+		if err := service.ShutdownJobs(context.Background()); err != nil {
+			t.Errorf("shutdown service: %v", err)
+		}
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	}()
+
+	if _, err := service.GetMCPJobStatus(job.Job.ID); err != nil {
+		t.Fatalf("load durable job into memory: %v", err)
+	}
+	if err := store.Delete(job.Job.ID); err != nil {
+		t.Fatalf("prune durable job: %v", err)
+	}
+	if _, err := service.GetMCPJobStatus(job.Job.ID); err == nil || !strings.Contains(err.Error(), "job not found") {
+		t.Fatalf("expected pruned job to stay absent, got %v", err)
 	}
 }
 

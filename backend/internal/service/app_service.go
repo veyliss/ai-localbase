@@ -2016,36 +2016,42 @@ func (s *AppService) ensureMCPJobLoaded(jobID string) (model.MCPJob, mcpJobDescr
 	if jobID == "" {
 		return model.MCPJob{}, mcpJobDescriptor{}, false, fmt.Errorf("job id is required")
 	}
-	s.mcpJobMu.Lock()
-	s.ensureMCPJobMapsLocked()
-	if job, ok := s.mcpJobs[jobID]; ok {
-		descriptor := s.mcpJobDescriptors[jobID]
+	if s.mcpJobStore != nil {
+		// SQLite is authoritative whenever durable jobs are enabled. In-memory
+		// entries are only a worker cache and may outlive a maintenance prune or
+		// lag behind another process that updated the same job.
+		record, found, err := s.mcpJobStore.Get(jobID)
+		if err != nil || !found {
+			if !found {
+				s.mcpJobMu.Lock()
+				delete(s.mcpJobs, jobID)
+				delete(s.mcpJobDescriptors, jobID)
+				delete(s.mcpJobLeases, jobID)
+				s.mcpJobMu.Unlock()
+			}
+			return model.MCPJob{}, mcpJobDescriptor{}, found, err
+		}
+		s.mcpJobMu.Lock()
+		s.ensureMCPJobMapsLocked()
+		s.mcpJobs[jobID] = record.Job
+		s.mcpJobDescriptors[jobID] = record.Descriptor
+		if record.LeaseOwner != "" {
+			s.mcpJobLeases[jobID] = mcpJobLease{Owner: record.LeaseOwner, Attempt: record.Job.Attempt, ExpiresAt: record.LeaseExpiresAt}
+		} else {
+			delete(s.mcpJobLeases, jobID)
+		}
 		s.mcpJobMu.Unlock()
-		return job, descriptor, true, nil
+		return record.Job, record.Descriptor, true, nil
 	}
-	s.mcpJobMu.Unlock()
-	if s.mcpJobStore == nil {
+
+	s.mcpJobMu.Lock()
+	defer s.mcpJobMu.Unlock()
+	s.ensureMCPJobMapsLocked()
+	job, ok := s.mcpJobs[jobID]
+	if !ok {
 		return model.MCPJob{}, mcpJobDescriptor{}, false, nil
 	}
-	record, found, err := s.mcpJobStore.Get(jobID)
-	if err != nil || !found {
-		return model.MCPJob{}, mcpJobDescriptor{}, found, err
-	}
-	s.mcpJobMu.Lock()
-	s.ensureMCPJobMapsLocked()
-	if current, exists := s.mcpJobs[jobID]; exists {
-		job := current
-		descriptor := s.mcpJobDescriptors[jobID]
-		s.mcpJobMu.Unlock()
-		return job, descriptor, true, nil
-	}
-	s.mcpJobs[jobID] = record.Job
-	s.mcpJobDescriptors[jobID] = record.Descriptor
-	if record.LeaseOwner != "" {
-		s.mcpJobLeases[jobID] = mcpJobLease{Owner: record.LeaseOwner, Attempt: record.Job.Attempt, ExpiresAt: record.LeaseExpiresAt}
-	}
-	s.mcpJobMu.Unlock()
-	return record.Job, record.Descriptor, true, nil
+	return job, s.mcpJobDescriptors[jobID], true, nil
 }
 
 type MCPJobPage struct {
@@ -3475,7 +3481,7 @@ func mcpJobOwnerMatches(job model.MCPJob, owner AuthPrincipal) bool {
 		// read jobs created before principal binding, never another user's job.
 		return strings.TrimSpace(job.OwnerUserID) == "" && strings.TrimSpace(job.OwnerAPIKeyID) == ""
 	}
-	if owner.AuthType == "api_key" {
+	if strings.EqualFold(strings.TrimSpace(owner.AuthType), "api_key") {
 		return strings.TrimSpace(job.OwnerAPIKeyID) != "" && strings.TrimSpace(job.OwnerAPIKeyID) == strings.TrimSpace(owner.APIKeyID)
 	}
 	return strings.TrimSpace(job.OwnerAPIKeyID) == "" && strings.TrimSpace(job.OwnerUserID) != "" && strings.TrimSpace(job.OwnerUserID) == strings.TrimSpace(owner.UserID)

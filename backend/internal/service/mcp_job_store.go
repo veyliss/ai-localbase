@@ -841,7 +841,7 @@ func mcpJobOwnerFilter(owner AuthPrincipal) (string, []any) {
 		// Legacy tokens are intentionally limited to unbound historical jobs.
 		return "owner_api_key_id = '' AND owner_user_id = ''", nil
 	}
-	if owner.AuthType == "api_key" {
+	if strings.EqualFold(strings.TrimSpace(owner.AuthType), "api_key") {
 		apiKeyID := strings.TrimSpace(owner.APIKeyID)
 		if apiKeyID == "" {
 			return "1 = 0", nil

@@ -59,6 +59,16 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+  docker-compose:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose definitions
+        run: scripts/check-compose-config.sh
+
   browser-fixtures:
     runs-on: ubuntu-latest
 

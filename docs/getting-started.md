@@ -14,6 +14,8 @@
 
 部署方式、设置页面配置与 MCP 简介已放回 [`README.md`](../README.md)，避免入口信息分散。
 
+Docker 重启、健康检查和外部依赖故障处理见 [`docker-operations.md`](docker-operations.md)。
+
 ---
 
 ## 常用命令

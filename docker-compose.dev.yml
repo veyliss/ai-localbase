@@ -115,7 +115,6 @@ services:
       backend:
         condition: service_healthy
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
       VITE_DEV_PROXY_TARGET: ${VITE_DEV_PROXY_TARGET:-http://backend:8080}
       VITE_APP_VERSION: ${VITE_APP_VERSION:-}
       CHOKIDAR_USEPOLLING: "true"

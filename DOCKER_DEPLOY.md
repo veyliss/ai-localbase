@@ -223,6 +223,8 @@ A: 可以，修改 `veyliss` 为你的 GitHub 用户名，以及对应的镜像�
 
 ## 故障排除
 
+容器重启、健康检查、Qdrant/Ollama 故障判断和上传 413 处理见 [`docs/docker-operations.md`](docs/docker-operations.md)。
+
 ### 镜像拉取失败
 
 ```bash

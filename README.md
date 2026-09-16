@@ -116,6 +116,8 @@ Docker 自托管建议设置：
 
 默认数据目录由 `.env` 控制，主要包括上传文件、应用状态、聊天 SQLite 数据库和 Qdrant 持久化目录。升级或迁移前建议先备份这些路径，详见 [`docs/backup-restore.md`](docs/backup-restore.md)。
 
+Docker 重启、健康检查和外部模型/Qdrant 故障排查见 [`docs/docker-operations.md`](docs/docker-operations.md)。
+
 ### 使用预构建镜像部署
 
 如果不想本地编译，可直接使用预构建镜像：

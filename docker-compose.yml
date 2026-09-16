@@ -124,7 +124,6 @@ services:
       backend:
         condition: service_healthy
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
       NGINX_BACKEND_PORT: ${PORT:-8080}
       NGINX_TRUST_EXTERNAL_PROXY_HEADERS: ${TRUST_EXTERNAL_PROXY_HEADERS:-false}
       NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-32m}

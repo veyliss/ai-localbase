@@ -45,9 +45,8 @@ const manualChunks = (id: string) => {
 export default defineConfig({
   plugins: [react()],
   build: {
-    // The budget script enforces 500 KB for normal chunks. Mermaid's official
-    // core and parser remain non-first-screen exceptions capped at 650 KB.
-    chunkSizeWarningLimit: 650,
+    // Chunk budgets are enforced by the build script below so exceptions stay
+    // explicit and reviewable instead of being hidden by Vite's warning limit.
     rollupOptions: {
       output: {
         manualChunks,

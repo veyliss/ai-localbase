@@ -35,6 +35,7 @@ const (
 
 var ErrUploadStagingQuotaExceeded = errors.New("upload staging quota exceeded")
 var ErrUploadStagingBusy = errors.New("staged upload is being processed by another worker")
+var ErrUploadStagingFileTooLarge = errors.New("staged upload file is too large")
 
 type UploadStagingLimits struct {
 	MaxFilesPerPrincipal int
@@ -546,13 +547,14 @@ func (s *UploadStagingService) CopyToWithLeaseAttempt(uploadID, destinationDir, 
 		}
 	}()
 
-	source, err := os.Open(staged.Path)
+	source, err := openVerifiedStagedFile(staged.Path)
 	if err != nil {
 		_ = temporary.Close()
 		return "", fmt.Errorf("open staged upload: %w", err)
 	}
 	hasher := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(temporary, hasher), source)
+	identityErr := verifyStagedFileIdentity(staged.Path, source)
 	closeSourceErr := source.Close()
 	closeTemporaryErr := temporary.Close()
 	if copyErr != nil {
@@ -564,6 +566,9 @@ func (s *UploadStagingService) CopyToWithLeaseAttempt(uploadID, destinationDir, 
 	if closeTemporaryErr != nil {
 		return "", fmt.Errorf("close permanent upload: %w", closeTemporaryErr)
 	}
+	if identityErr != nil {
+		return "", fmt.Errorf("staged upload changed during copy: %w", identityErr)
+	}
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
 	if staged.Size != written || (strings.TrimSpace(staged.SHA256) != "" && !strings.EqualFold(staged.SHA256, actualChecksum)) {
 		return "", fmt.Errorf("staged upload checksum mismatch")
@@ -573,6 +578,46 @@ func (s *UploadStagingService) CopyToWithLeaseAttempt(uploadID, destinationDir, 
 	}
 	cleanupTemporary = false
 	return destination, nil
+}
+
+func openVerifiedStagedFile(path string) (*os.File, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("staged upload file is not a regular file")
+	}
+	source, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyStagedFileIdentity(path, source); err != nil {
+		_ = source.Close()
+		return nil, err
+	}
+	return source, nil
+}
+
+func verifyStagedFileIdentity(path string, source *os.File) error {
+	if source == nil {
+		return fmt.Errorf("staged upload file is nil")
+	}
+	opened, err := source.Stat()
+	if err != nil {
+		return err
+	}
+	if !opened.Mode().IsRegular() {
+		return fmt.Errorf("staged upload file is not a regular file")
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !current.Mode().IsRegular() || !os.SameFile(opened, current) {
+		return fmt.Errorf("staged upload file was replaced")
+	}
+	return nil
 }
 
 func (s *UploadStagingService) CleanupExpired() error {
@@ -677,6 +722,9 @@ func (s *UploadStagingService) stageFromReader(fileName string, sizeHint int64, 
 	if err := s.ensureManifestHealthy(); err != nil {
 		return model.StagedUpload{}, err
 	}
+	if reader == nil {
+		return model.StagedUpload{}, fmt.Errorf("staged upload reader is nil")
+	}
 	trimmedName, err := util.NormalizeFilename(fileName)
 	if err != nil {
 		return model.StagedUpload{}, err
@@ -725,8 +773,25 @@ func (s *UploadStagingService) stageFromReader(fileName string, sizeHint int64, 
 		}
 	}()
 
+	readLimit := s.limits.MaxBytes
+	if sizeHint > 0 && (readLimit <= 0 || sizeHint < readLimit) {
+		readLimit = sizeHint
+	}
+	if readLimit > 0 && sizeHint > readLimit {
+		return model.StagedUpload{}, fmt.Errorf("%w: max %s", ErrUploadStagingFileTooLarge, util.FormatFileSize(readLimit))
+	}
+	// Read one byte beyond the limit so an oversized or inconsistent source is
+	// rejected instead of being silently truncated into the staging area.
+	copyReader := reader
+	if readLimit > 0 {
+		copyLimit := readLimit
+		if copyLimit < int64(^uint64(0)>>1) {
+			copyLimit++
+		}
+		copyReader = io.LimitReader(reader, copyLimit)
+	}
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(temporary, hasher), reader)
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hasher), copyReader)
 	closeErr := temporary.Close()
 	if copyErr != nil {
 		return model.StagedUpload{}, fmt.Errorf("write staged file: %w", copyErr)
@@ -734,7 +799,13 @@ func (s *UploadStagingService) stageFromReader(fileName string, sizeHint int64, 
 	if closeErr != nil {
 		return model.StagedUpload{}, fmt.Errorf("close staged file: %w", closeErr)
 	}
-	if written == 0 && sizeHint == 0 {
+	if readLimit > 0 && written > readLimit {
+		return model.StagedUpload{}, fmt.Errorf("%w: max %s", ErrUploadStagingFileTooLarge, util.FormatFileSize(readLimit))
+	}
+	if sizeHint > 0 && written != sizeHint {
+		return model.StagedUpload{}, fmt.Errorf("staged upload size mismatch")
+	}
+	if written == 0 {
 		return model.StagedUpload{}, fmt.Errorf("staged file is empty")
 	}
 

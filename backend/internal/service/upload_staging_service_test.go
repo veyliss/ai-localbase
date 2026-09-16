@@ -330,6 +330,42 @@ func TestUploadStagingCopyToRejectsModifiedFileByChecksum(t *testing.T) {
 	}
 }
 
+func TestUploadStagingBoundsReaderAndRejectsSizeMismatch(t *testing.T) {
+	staging := NewUploadStagingServiceWithLimits(t.TempDir(), time.Hour, UploadStagingLimits{
+		MaxBytes: 4,
+	})
+	if _, err := staging.stageFromReader("large.md", 0, strings.NewReader("12345"), "test", AuthPrincipal{}); err == nil || !errors.Is(err, ErrUploadStagingFileTooLarge) {
+		t.Fatalf("expected oversized reader to be rejected, got %v", err)
+	}
+
+	sizeChecked := NewUploadStagingServiceWithLimits(t.TempDir(), time.Hour, UploadStagingLimits{
+		MaxBytes: 10,
+	})
+	if _, err := sizeChecked.stageFromReader("short.md", 5, strings.NewReader("1234"), "test", AuthPrincipal{}); err == nil || !strings.Contains(err.Error(), "size mismatch") {
+		t.Fatalf("expected source size mismatch to be rejected, got %v", err)
+	}
+}
+
+func TestUploadStagingCopyToRejectsSymlinkSource(t *testing.T) {
+	rootDir := t.TempDir()
+	destinationDir := t.TempDir()
+	staging := NewUploadStagingService(rootDir, time.Hour)
+	staged, err := staging.StageBytes("symlink.md", []byte("source"), "test")
+	if err != nil {
+		t.Fatalf("stage upload: %v", err)
+	}
+	if err := os.Remove(staged.Path); err != nil {
+		t.Fatalf("remove staged source: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "outside.md"), staged.Path); err != nil {
+		t.Fatalf("replace staged source with symlink: %v", err)
+	}
+
+	if _, err := staging.CopyTo(staged.ID, destinationDir); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("expected symlink source to be rejected, got %v", err)
+	}
+}
+
 func TestUploadStagingRejectsManifestPathTraversal(t *testing.T) {
 	rootDir := t.TempDir()
 	manifest := stagedUploadManifest{

@@ -68,6 +68,49 @@ func TestWithCurrentIndexFenceFilterUsesValidTopLevelComposition(t *testing.T) {
 	}
 }
 
+func TestRetrievalCacheScopeChangesWithIndexGeneration(t *testing.T) {
+	state := &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-cache": {
+			ID: "kb-cache",
+			Documents: []model.Document{{
+				ID:         "doc-1",
+				Status:     "indexed",
+				IndexFence: "index:old",
+			}},
+		},
+	}}
+	service := &AppService{state: state, serverConfig: model.ServerConfig{QdrantVectorSize: 768}}
+	req := model.ChatCompletionRequest{KnowledgeBaseID: "kb-cache", KnowledgeScope: KnowledgeScopeSelected}
+	before := service.retrievalCacheScope(req, []string{"kb-cache"})
+
+	state.Mu.Lock()
+	document := state.KnowledgeBases["kb-cache"].Documents[0]
+	document.IndexFence = "index:new"
+	state.KnowledgeBases["kb-cache"].Documents[0] = document
+	state.Mu.Unlock()
+
+	after := service.retrievalCacheScope(req, []string{"kb-cache"})
+	if before == after {
+		t.Fatal("expected index generation change to invalidate retrieval cache scope")
+	}
+}
+
+func TestRetrievalCacheScopeChangesWithEmbeddingConfig(t *testing.T) {
+	service := &AppService{state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+		"kb-cache": {ID: "kb-cache"},
+	}}, serverConfig: model.ServerConfig{QdrantVectorSize: 768}}
+	req := model.ChatCompletionRequest{KnowledgeBaseID: "kb-cache", KnowledgeScope: KnowledgeScopeSelected}
+	req.Embedding.Provider = "ollama"
+	req.Embedding.BaseURL = "http://localhost:11434"
+	req.Embedding.Model = "nomic-embed-text"
+	before := service.retrievalCacheScope(req, []string{"kb-cache"})
+	req.Embedding.Model = "embedding-model-v2"
+	after := service.retrievalCacheScope(req, []string{"kb-cache"})
+	if before == after {
+		t.Fatal("expected embedding config change to invalidate retrieval cache scope")
+	}
+}
+
 func TestAppendIndexFenceMustUsesEmptyConditionForLegacyDocument(t *testing.T) {
 	filter := appendIndexFenceMust(map[string]any{
 		"must": []map[string]any{{"key": "document_id"}},

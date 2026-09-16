@@ -126,6 +126,17 @@ func (c *SemanticCache) Set(scope string, queryEmbedding []float32, query string
 	}
 }
 
+// Clear removes all cached retrieval results. Cache entries are process-local
+// and must not survive a configuration or index-generation change.
+func (c *SemanticCache) Clear() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.entries = c.entries[:0]
+	c.mu.Unlock()
+}
+
 // Stats 返回缓存统计（总条目数、命中次数等）
 func (c *SemanticCache) Stats() map[string]interface{} {
 	if c == nil {

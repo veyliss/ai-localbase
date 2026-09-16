@@ -81,6 +81,16 @@ func TestSemanticCacheDoesNotCrossScopes(t *testing.T) {
 	}
 }
 
+func TestSemanticCacheClear(t *testing.T) {
+	cache := NewSemanticCache(0.92, 10, time.Minute)
+	cache.Set("kb=kb-1", normalizeFloat32Vector([]float32{1, 0, 0}), "query-a", nil)
+	cache.Clear()
+
+	if len(cache.entries) != 0 {
+		t.Fatalf("expected cache entries to be cleared, got %d", len(cache.entries))
+	}
+}
+
 func normalizeFloat32Vector(vec []float32) []float32 {
 	var sum float64
 	for _, v := range vec {

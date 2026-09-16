@@ -4212,6 +4212,7 @@ func (s *AppService) UpdateConfig(req model.ConfigUpdateRequest) (model.AppConfi
 		s.state.Mu.Unlock()
 		return model.AppConfig{}, err
 	}
+	s.invalidateSemanticCache()
 	return nextConfig, nil
 }
 
@@ -4387,6 +4388,7 @@ func (s *AppService) DeleteKnowledgeBase(id string) (int, error) {
 		return remaining, err
 	}
 
+	s.invalidateSemanticCache()
 	return remaining, nil
 }
 
@@ -5634,6 +5636,13 @@ func (s *AppService) SetSemanticCache(cache *SemanticCache) {
 	s.semanticCache = cache
 }
 
+func (s *AppService) invalidateSemanticCache() {
+	if s == nil || s.semanticCache == nil {
+		return
+	}
+	s.semanticCache.Clear()
+}
+
 func (s *AppService) SetContextCompressor(compressor ContextCompressor) {
 	s.contextCompressor = compressor
 	if setter, ok := compressor.(interface {
@@ -6047,17 +6056,95 @@ func (s *AppService) retrievalCacheScope(req model.ChatCompletionRequest, knowle
 	ids := append([]string(nil), knowledgeBaseIDs...)
 	sort.Strings(ids)
 	cfg := s.retrievalConfigForRequest(req)
+	embeddingCfg := s.resolveEmbeddingConfig(req)
 	knowledgeScope, _ := ResolveKnowledgeScope(req.KnowledgeScope, req.KnowledgeBaseID, req.DocumentID)
+	retrievalSignature := retrievalCacheSignature(
+		cfg.DefaultSearchMode,
+		fmt.Sprintf("%t", cfg.HybridSearchEnabled),
+		cfg.RerankStrategy,
+		fmt.Sprintf("%t", cfg.EnableQueryRewrite),
+		fmt.Sprintf("%d", cfg.QueryRewriteMaxVariants),
+		fmt.Sprintf("%d", cfg.TopKDocument),
+		fmt.Sprintf("%d", cfg.CandidateTopKDocument),
+		fmt.Sprintf("%d", cfg.TopKKnowledgeBase),
+		fmt.Sprintf("%d", cfg.CandidateTopKAllDocs),
+		fmt.Sprintf("%d", cfg.MaxChunksPerDocument),
+		fmt.Sprintf("%d", cfg.MaxContextChars),
+		fmt.Sprintf("%t", cfg.EnableLowConfidenceBoost),
+	)
+	embeddingSignature := retrievalCacheSignature(
+		embeddingCfg.Provider,
+		embeddingCfg.BaseURL,
+		embeddingCfg.Model,
+		fmt.Sprintf("%d", s.qdrantVectorSize()),
+	)
+	indexSignature := s.retrievalIndexSignature(ids)
 	return fmt.Sprintf(
-		"scope=%s|kb=%s|doc=%s|mode=%s|rerank=%s|rewrite=%t|variants=%d",
+		"scope=%s|kb=%s|doc=%s|retrieval=%s|embedding=%s|index=%s",
 		knowledgeScope,
 		strings.Join(ids, ","),
 		strings.TrimSpace(req.DocumentID),
-		s.resolvedRetrievalSearchMode(req),
-		cfg.RerankStrategy,
-		cfg.EnableQueryRewrite,
-		cfg.QueryRewriteMaxVariants,
+		retrievalSignature,
+		embeddingSignature,
+		indexSignature,
 	)
+}
+
+func retrievalCacheSignature(parts ...string) string {
+	digest := sha256.New()
+	for _, part := range parts {
+		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write([]byte(part))
+	}
+	encoded := digest.Sum(nil)
+	return hex.EncodeToString(encoded[:16])
+}
+
+func (s *AppService) retrievalIndexSignature(knowledgeBaseIDs []string) string {
+	digest := sha256.New()
+	if s == nil || s.state == nil {
+		encoded := digest.Sum(nil)
+		return hex.EncodeToString(encoded[:16])
+	}
+
+	s.state.Mu.RLock()
+	defer s.state.Mu.RUnlock()
+	for _, knowledgeBaseID := range knowledgeBaseIDs {
+		knowledgeBaseID = strings.TrimSpace(knowledgeBaseID)
+		knowledgeBase, ok := s.state.KnowledgeBases[knowledgeBaseID]
+		if !ok {
+			writeCacheSignaturePart(digest, "missing", knowledgeBaseID)
+			continue
+		}
+
+		documents := append([]model.Document(nil), knowledgeBase.Documents...)
+		sort.Slice(documents, func(i, j int) bool {
+			return strings.TrimSpace(documents[i].ID) < strings.TrimSpace(documents[j].ID)
+		})
+		writeCacheSignaturePart(digest, knowledgeBaseID, knowledgeBase.UpdatedAt, fmt.Sprintf("%d", knowledgeBase.CurrentIndexVersion))
+		for _, document := range documents {
+			writeCacheSignaturePart(
+				digest,
+				document.ID,
+				document.Status,
+				fmt.Sprintf("%d", document.Version),
+				document.IndexFence,
+				document.IndexOperationFence,
+				document.IndexOperationOwner,
+				fmt.Sprintf("%d", document.IndexOperationAttempt),
+				fmt.Sprintf("%t", document.DeletionPending),
+			)
+		}
+	}
+	encoded := digest.Sum(nil)
+	return hex.EncodeToString(encoded[:16])
+}
+
+func writeCacheSignaturePart(digest interface{ Write([]byte) (int, error) }, parts ...string) {
+	for _, part := range parts {
+		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write([]byte(part))
+	}
 }
 
 func (s *AppService) filterRetrievedChunksToScope(req model.ChatCompletionRequest, knowledgeBaseIDs []string, chunks []RetrievedChunk) []RetrievedChunk {

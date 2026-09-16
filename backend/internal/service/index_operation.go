@@ -324,6 +324,7 @@ func (s *AppService) commitIndexOperation(
 		s.state.Mu.Unlock()
 		return model.Document{}, fmt.Errorf("persist indexed document: %w", err)
 	}
+	s.invalidateSemanticCache()
 	return indexed, nil
 }
 

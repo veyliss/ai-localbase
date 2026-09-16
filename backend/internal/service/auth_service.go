@@ -158,6 +158,9 @@ func (s *AuthService) initialize() error {
 		log.Printf("authentication enabled, setup required for username: %s", s.defaultUsername())
 		return nil
 	}
+	if err := validateInteractivePassword(s.serverConfig.AuthPassword); err != nil {
+		return fmt.Errorf("invalid AUTH_PASSWORD: %w", err)
+	}
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(s.serverConfig.AuthPassword), authPasswordHashCost)
 	if err != nil {
@@ -184,9 +187,6 @@ func (s *AuthService) initialize() error {
 	}
 	s.app.state.Auth.Users[user.ID] = user
 	appendSecurityEventLocked(&s.app.state.Auth, "root_bootstrapped_from_env", username, "", "", "Root user created from AUTH_PASSWORD.")
-	if len([]rune(s.serverConfig.AuthPassword)) < authMinPasswordLength {
-		appendSecurityEventLocked(&s.app.state.Auth, "weak_env_password", username, "", "", "AUTH_PASSWORD is shorter than the recommended length.")
-	}
 	s.app.state.Mu.Unlock()
 
 	if err := s.app.saveState(); err != nil {

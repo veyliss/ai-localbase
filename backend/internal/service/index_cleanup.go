@@ -266,6 +266,7 @@ func (s *AppService) finalizeDocumentCleanup(task model.IndexCleanupTask) error 
 		s.state.Mu.Unlock()
 		return err
 	}
+	s.invalidateSemanticCache()
 	return nil
 }
 

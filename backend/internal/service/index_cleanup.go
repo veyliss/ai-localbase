@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -65,11 +68,88 @@ func generationCleanupTask(receipt indexGenerationReceipt) model.IndexCleanupTas
 }
 
 func generationCleanupTaskFor(knowledgeBaseID, documentID, indexFence string, pointIDs []any) model.IndexCleanupTask {
+	pointIDs = uniqueIndexPointIDs(pointIDs)
 	task := newIndexCleanupTask(indexCleanupTypeGeneration, knowledgeBaseID)
+	task.ID = stableGenerationCleanupTaskID(knowledgeBaseID, documentID, indexFence, pointIDs)
 	task.DocumentID = strings.TrimSpace(documentID)
 	task.IndexFence = strings.TrimSpace(indexFence)
-	task.PointIDs = uniqueIndexPointIDs(pointIDs)
+	task.PointIDs = pointIDs
 	return task
+}
+
+// stableGenerationCleanupTaskID makes the outbox idempotent across retries and
+// process restarts. Point IDs are part of the identity so a later exact
+// deletion set cannot be silently collapsed into an older task.
+func stableGenerationCleanupTaskID(knowledgeBaseID, documentID, indexFence string, pointIDs []any) string {
+	key := strings.Builder{}
+	key.WriteString(strings.TrimSpace(knowledgeBaseID))
+	key.WriteByte(0)
+	key.WriteString(strings.TrimSpace(documentID))
+	key.WriteByte(0)
+	key.WriteString(strings.TrimSpace(indexFence))
+	key.WriteByte(0)
+	for _, pointID := range pointIDs {
+		encoded, err := json.Marshal(pointID)
+		if err != nil {
+			fmt.Fprintf(&key, "%T:%v", pointID, pointID)
+		} else {
+			key.Write(encoded)
+		}
+		key.WriteByte(0)
+	}
+	digest := sha256.Sum256([]byte(key.String()))
+	return "index-cleanup-" + hex.EncodeToString(digest[:16])
+}
+
+func generationRetirementCleanupTasks(receipt indexGenerationReceipt) []model.IndexCleanupTask {
+	tasks := make([]model.IndexCleanupTask, 0, 2)
+	if strings.TrimSpace(receipt.PreviousFence) != "" || len(receipt.PreviousPointIDs) > 0 {
+		tasks = append(tasks, generationCleanupTaskFor(
+			receipt.KnowledgeBaseID,
+			receipt.DocumentID,
+			receipt.PreviousFence,
+			receipt.PreviousPointIDs,
+		))
+	}
+	if strings.TrimSpace(receipt.SupersededFence) != "" || len(receipt.SupersededPointIDs) > 0 {
+		tasks = append(tasks, generationCleanupTaskFor(
+			receipt.KnowledgeBaseID,
+			receipt.DocumentID,
+			receipt.SupersededFence,
+			receipt.SupersededPointIDs,
+		))
+	}
+	return tasks
+}
+
+func generationAbortCleanupTasks(receipt indexGenerationReceipt) []model.IndexCleanupTask {
+	tasks := make([]model.IndexCleanupTask, 0, 2)
+	if strings.TrimSpace(receipt.Fence) != "" || len(receipt.WrittenPointIDs) > 0 || len(receipt.SupersededPointIDs) > 0 {
+		tasks = append(tasks, generationCleanupTask(receipt))
+	}
+	if strings.TrimSpace(receipt.SupersededFence) != "" && receipt.SupersededFence != receipt.Fence {
+		tasks = append(tasks, generationCleanupTaskFor(
+			receipt.KnowledgeBaseID,
+			receipt.DocumentID,
+			receipt.SupersededFence,
+			receipt.SupersededPointIDs,
+		))
+	}
+	return tasks
+}
+
+func (s *AppService) queueIndexCleanupTasks(tasks []model.IndexCleanupTask) {
+	for _, task := range tasks {
+		s.queueIndexCleanupTask(task)
+	}
+}
+
+func (s *AppService) removeIndexCleanupTasks(tasks []model.IndexCleanupTask) {
+	for _, task := range tasks {
+		if err := s.removeIndexCleanupTask(task.ID); err != nil {
+			fmt.Printf("remove index cleanup task failed: %v\n", err)
+		}
+	}
 }
 
 func (s *AppService) queueIndexCleanupTask(task model.IndexCleanupTask) {

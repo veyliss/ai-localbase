@@ -75,7 +75,7 @@ func (s *AppService) IndexDocumentWithContext(ctx context.Context, document mode
 		_ = s.failIndexOperation(ctx, operation, "upload", startedAt, err)
 		return model.Document{}, err
 	}
-	indexed, err = s.commitIndexOperation(ctx, operation, indexed, "upload", startedAt)
+	indexed, err = s.commitIndexOperation(ctx, operation, indexed, generation, "upload", startedAt)
 	if err != nil {
 		_ = s.abortIndexGeneration(ctx, generation)
 		return model.Document{}, err
@@ -144,7 +144,7 @@ func (s *AppService) reindexDocumentWithContext(ctx context.Context, knowledgeBa
 		_ = s.failIndexOperation(ctx, operation, trigger, startedAt, err)
 		return model.Document{}, err
 	}
-	indexed, err = s.commitIndexOperation(ctx, operation, indexed, trigger, startedAt)
+	indexed, err = s.commitIndexOperation(ctx, operation, indexed, generation, trigger, startedAt)
 	if err != nil {
 		_ = s.abortIndexGeneration(ctx, generation)
 		return model.Document{}, err

@@ -230,6 +230,7 @@ func (s *AppService) commitIndexOperation(
 	ctx context.Context,
 	op indexOperation,
 	indexed model.Document,
+	generation indexGenerationReceipt,
 	trigger string,
 	startedAt time.Time,
 ) (model.Document, error) {
@@ -261,6 +262,8 @@ func (s *AppService) commitIndexOperation(
 		return model.Document{}, fmt.Errorf("knowledge base not found")
 	}
 	previousKB := cloneKnowledgeBases(map[string]model.KnowledgeBase{op.KnowledgeBaseID: kb})[op.KnowledgeBaseID]
+	previousCleanupTasks := cloneIndexCleanupTasks(s.state.IndexCleanupTasks)
+	cleanupTasks := generationRetirementCleanupTasks(generation)
 	updated := false
 	for index, current := range kb.Documents {
 		if strings.TrimSpace(current.ID) != op.DocumentID {
@@ -298,8 +301,12 @@ func (s *AppService) commitIndexOperation(
 		kb.IndexHistory = kb.IndexHistory[:maxIndexHistoryRecords]
 	}
 	s.state.KnowledgeBases[op.KnowledgeBaseID] = kb
+	for _, cleanupTask := range cleanupTasks {
+		s.state.IndexCleanupTasks = appendIndexCleanupTaskLocked(s.state.IndexCleanupTasks, cleanupTask)
+	}
 	if err := s.ensureIndexOperationLease(ctx); err != nil {
 		s.state.KnowledgeBases[op.KnowledgeBaseID] = previousKB
+		s.state.IndexCleanupTasks = previousCleanupTasks
 		s.state.Mu.Unlock()
 		return model.Document{}, err
 	}
@@ -313,6 +320,7 @@ func (s *AppService) commitIndexOperation(
 			}
 			s.state.KnowledgeBases[op.KnowledgeBaseID] = currentKB
 		}
+		s.state.IndexCleanupTasks = previousCleanupTasks
 		s.state.Mu.Unlock()
 		return model.Document{}, fmt.Errorf("persist indexed document: %w", err)
 	}
@@ -493,6 +501,10 @@ func (s *AppService) abortIndexGeneration(ctx context.Context, receipt indexGene
 	if s == nil {
 		return nil
 	}
+	cleanupTasks := generationAbortCleanupTasks(receipt)
+	// Record the exact cleanup intent before touching external storage. A
+	// process crash during deletion must leave a durable retryable outbox entry.
+	s.queueIndexCleanupTasks(cleanupTasks)
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	var firstErr error
@@ -513,19 +525,23 @@ func (s *AppService) abortIndexGeneration(ctx context.Context, receipt indexGene
 		}
 	}
 	if firstErr != nil {
-		s.queueIndexCleanupTask(generationCleanupTask(receipt))
-		if strings.TrimSpace(receipt.SupersededFence) != "" && receipt.SupersededFence != receipt.Fence {
-			s.queueIndexCleanupTask(generationCleanupTaskFor(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.SupersededFence, receipt.SupersededPointIDs))
-		}
+		_ = ctx
+		return firstErr
 	}
+	s.removeIndexCleanupTasks(cleanupTasks)
 	_ = ctx
-	return firstErr
+	return nil
 }
 
 func (s *AppService) retirePreviousGeneration(ctx context.Context, receipt indexGenerationReceipt) error {
 	if s == nil {
 		return nil
 	}
+	cleanupTasks := generationRetirementCleanupTasks(receipt)
+	// This method is also used by older internal paths that may not have
+	// committed the task with metadata. Idempotent enqueue keeps those paths
+	// recoverable without creating duplicate work.
+	s.queueIndexCleanupTasks(cleanupTasks)
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	var firstErr error
@@ -546,15 +562,12 @@ func (s *AppService) retirePreviousGeneration(ctx context.Context, receipt index
 		}
 	}
 	if firstErr != nil {
-		if strings.TrimSpace(receipt.PreviousFence) != "" || len(receipt.PreviousPointIDs) > 0 {
-			s.queueIndexCleanupTask(generationCleanupTaskFor(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.PreviousFence, receipt.PreviousPointIDs))
-		}
-		if strings.TrimSpace(receipt.SupersededFence) != "" || len(receipt.SupersededPointIDs) > 0 {
-			s.queueIndexCleanupTask(generationCleanupTaskFor(receipt.KnowledgeBaseID, receipt.DocumentID, receipt.SupersededFence, receipt.SupersededPointIDs))
-		}
+		_ = ctx
+		return firstErr
 	}
+	s.removeIndexCleanupTasks(cleanupTasks)
 	_ = ctx
-	return firstErr
+	return nil
 }
 
 func uniqueIndexPointIDs(groups ...[]any) []any {

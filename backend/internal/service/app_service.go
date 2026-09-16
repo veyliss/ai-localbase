@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -2808,7 +2809,7 @@ func (s *AppService) runMCPJobWorkerWithHeartbeatInterval(jobID string, ctx cont
 	}
 	workerCtx := normalizeServiceContext(ctx)
 	lease, hasLease := s.currentMCPJobLease(jobID)
-	leaseLost := false
+	var leaseLost atomic.Bool
 	if hasLease {
 		// The token is captured once. A later recovery attempt may replace the
 		// jobID entry in mcpJobLeases, but it must never change this worker's
@@ -2826,7 +2827,7 @@ func (s *AppService) runMCPJobWorkerWithHeartbeatInterval(jobID string, ctx cont
 			select {
 			case <-ticker.C:
 				if hasLease && (!s.renewMCPJobLeaseForLease(jobID, lease) || !s.renewMCPJobStagingLeasesForLease(jobID, lease)) {
-					leaseLost = true
+					leaseLost.Store(true)
 					cancel()
 					return
 				}
@@ -2844,7 +2845,7 @@ func (s *AppService) runMCPJobWorkerWithHeartbeatInterval(jobID string, ctx cont
 		} else {
 			s.releaseMCPJobLease(jobID)
 		}
-	} else if leaseLost {
+	} else if leaseLost.Load() {
 		// A stale worker cannot release the durable job lease after takeover, but
 		// it can still release the staged uploads fenced to its own lease. This
 		// prevents a lost worker from holding sources until lease expiry while

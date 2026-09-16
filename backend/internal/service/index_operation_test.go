@@ -52,7 +52,7 @@ func TestIndexOperationCommitRejectsSupersededWorker(t *testing.T) {
 		Version:         1,
 		Status:          "indexed",
 		IndexFence:      first.Fence,
-	}, "reindex", nowForIndexOperationTest())
+	}, indexGenerationReceipt{}, "reindex", nowForIndexOperationTest())
 	if !errors.Is(err, ErrIndexOperationSuperseded) {
 		t.Fatalf("expected stale operation commit to be rejected, got %v", err)
 	}
@@ -68,6 +68,104 @@ func TestIndexOperationCommitRejectsSupersededWorker(t *testing.T) {
 
 func nowForIndexOperationTest() (now time.Time) {
 	return time.Now().UTC()
+}
+
+func TestIndexOperationCommitPersistsGenerationCleanupWithMetadata(t *testing.T) {
+	root := t.TempDir()
+	store := NewAppStateStore(filepath.Join(root, "state.json"))
+	previous := model.Document{
+		ID:              "doc-generation-cleanup",
+		KnowledgeBaseID: "kb-generation-cleanup",
+		Name:            "notes.txt",
+		Version:         1,
+		Status:          "indexed",
+		IndexFence:      "generation-old",
+	}
+	service := &AppService{
+		store: store,
+		state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+			previous.KnowledgeBaseID: {
+				ID:        previous.KnowledgeBaseID,
+				Documents: []model.Document{previous},
+			},
+		}},
+	}
+	operation, err := service.beginIndexOperation(t.Context(), previous)
+	if err != nil {
+		t.Fatalf("begin index operation: %v", err)
+	}
+	receipt := indexGenerationReceipt{
+		KnowledgeBaseID: previous.KnowledgeBaseID,
+		DocumentID:      previous.ID,
+		Fence:           operation.Fence,
+		PreviousFence:   previous.IndexFence,
+		PreviousPointIDs: []any{
+			int64(101),
+			"old-point",
+		},
+	}
+	indexed := previous
+	indexed.Status = "indexed"
+	indexed.IndexFence = operation.Fence
+	indexed.ContentPreview = "新一代内容"
+	if _, err := service.commitIndexOperation(t.Context(), operation, indexed, receipt, "reindex", time.Now()); err != nil {
+		t.Fatalf("commit index operation: %v", err)
+	}
+
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+	if len(loaded.IndexCleanupTasks) != 1 {
+		t.Fatalf("expected one generation cleanup task, got %#v", loaded.IndexCleanupTasks)
+	}
+	task := loaded.IndexCleanupTasks[0]
+	if task.Type != indexCleanupTypeGeneration || task.KnowledgeBaseID != previous.KnowledgeBaseID || task.DocumentID != previous.ID || task.IndexFence != previous.IndexFence {
+		t.Fatalf("unexpected generation cleanup task: %+v", task)
+	}
+	if len(task.PointIDs) != 2 || fmt.Sprint(task.PointIDs[0]) != "101" || fmt.Sprint(task.PointIDs[1]) != "old-point" {
+		t.Fatalf("expected exact previous point IDs, got %#v", task.PointIDs)
+	}
+	if task.ID != stableGenerationCleanupTaskID(task.KnowledgeBaseID, task.DocumentID, task.IndexFence, task.PointIDs) {
+		t.Fatalf("expected stable cleanup task ID, got %q", task.ID)
+	}
+}
+
+func TestAbortIndexGenerationPersistsCleanupBeforeExternalDelete(t *testing.T) {
+	qdrantServer := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "qdrant unavailable", http.StatusServiceUnavailable)
+	}))
+	root := t.TempDir()
+	statePath := filepath.Join(root, "state.json")
+	store := NewAppStateStore(statePath)
+	service := &AppService{
+		store:  store,
+		qdrant: NewQdrantService(model.ServerConfig{QdrantURL: qdrantServer.URL, QdrantVectorSize: 2}),
+		state: &model.AppState{KnowledgeBases: map[string]model.KnowledgeBase{
+			"kb-abort-cleanup": {ID: "kb-abort-cleanup"},
+		}},
+	}
+	receipt := indexGenerationReceipt{
+		KnowledgeBaseID: "kb-abort-cleanup",
+		DocumentID:      "doc-abort-cleanup",
+		Fence:           "generation-aborted",
+		WrittenPointIDs: []any{"point-written"},
+	}
+	if err := service.abortIndexGeneration(t.Context(), receipt); err == nil {
+		t.Fatal("expected external cleanup to fail")
+	}
+
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+	if len(loaded.IndexCleanupTasks) != 1 {
+		t.Fatalf("expected durable cleanup task after failed abort, got %#v", loaded.IndexCleanupTasks)
+	}
+	task := loaded.IndexCleanupTasks[0]
+	if task.IndexFence != receipt.Fence || len(task.PointIDs) != 1 || fmt.Sprint(task.PointIDs[0]) != "point-written" {
+		t.Fatalf("expected exact aborted generation cleanup intent, got %+v", task)
+	}
 }
 
 func newIPv4TestServer(t *testing.T, handler http.Handler) *httptest.Server {
@@ -227,7 +325,7 @@ func TestIndexOperationCommitRollbackClearsMarkerAfterStateSaveFailure(t *testin
 		Status:          "indexed",
 		IndexFence:      op.Fence,
 		ContentPreview:  "新内容",
-	}, "reindex", time.Now().Add(-time.Second))
+	}, indexGenerationReceipt{}, "reindex", time.Now().Add(-time.Second))
 	if err == nil {
 		t.Fatal("expected commit persistence failure")
 	}
@@ -348,7 +446,7 @@ func TestIndexOperationRejectsExpiredLeaseAfterTakeover(t *testing.T) {
 	if err := service.ensureIndexOperationActive(oldContext, oldOperation); !errors.Is(err, ErrMCPJobLeaseLost) {
 		t.Fatalf("expected old worker lease to be fenced, got %v", err)
 	}
-	if _, err := service.commitIndexOperation(oldContext, oldOperation, model.Document{ID: previous.ID, KnowledgeBaseID: previous.KnowledgeBaseID}, "reindex", time.Now()); !errors.Is(err, ErrMCPJobLeaseLost) {
+	if _, err := service.commitIndexOperation(oldContext, oldOperation, model.Document{ID: previous.ID, KnowledgeBaseID: previous.KnowledgeBaseID}, indexGenerationReceipt{}, "reindex", time.Now()); !errors.Is(err, ErrMCPJobLeaseLost) {
 		t.Fatalf("expected old worker commit to be rejected, got %v", err)
 	}
 

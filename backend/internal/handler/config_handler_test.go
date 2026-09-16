@@ -144,6 +144,22 @@ func TestReadinessReturnsUnavailableWhenStagingManifestIsCorrupt(t *testing.T) {
 	}
 }
 
+func TestReadinessRequiresMCPJobStoreWhenMCPIsEnabled(t *testing.T) {
+	serverConfig := model.ServerConfig{EnableMCP: true}
+	appService := service.NewAppService(nil, nil, nil, serverConfig)
+	handler := NewConfigHandler(appService, nil)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	handler.Readiness(context)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected readiness status 503 without MCP job store, got %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestHealthAndLivenessExposeOnlyProbeStatus(t *testing.T) {
 	appService := service.NewAppService(nil, nil, nil, model.ServerConfig{EnableAuth: true})
 	appHandler := NewAppHandler(model.ServerConfig{EnableAuth: true}, appService, nil)

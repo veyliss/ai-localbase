@@ -647,6 +647,9 @@ func (s *AppService) GetMCPJobStoreHealth() MCPJobStoreHealth {
 	health.LeasedJobs = stats.LeasedJobs
 	health.ExpiredLeaseJobs = stats.ExpiredLeaseJobs
 	health.TerminalJobs = stats.TerminalJobs
+	if health.PersistenceFailures > 0 {
+		health.Status = "warning"
+	}
 	return health
 }
 
@@ -3010,6 +3013,7 @@ func (s *AppService) renewMCPJobLeaseForLease(jobID string, lease mcpJobLease) b
 	renewed, err := s.mcpJobStore.RenewLease(jobID, lease.Owner, lease.Attempt, mcpJobLeaseDuration, time.Now().UTC())
 	if err != nil {
 		log.Printf("failed to renew MCP job lease %s: %v", jobID, err)
+		s.recordMCPJobPersistenceFailure()
 		return false
 	}
 	if renewed {
@@ -3078,6 +3082,7 @@ func (s *AppService) releaseMCPJobLeaseForLease(jobID string, expectedLease mcpJ
 	if updated, err := s.mcpJobStore.Update(record, lease.Owner, lease.Attempt); err != nil || !updated {
 		if err != nil {
 			log.Printf("failed to release MCP job lease %s: %v", jobID, err)
+			s.recordMCPJobPersistenceFailure()
 		}
 		return
 	}

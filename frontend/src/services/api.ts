@@ -150,6 +150,7 @@ export interface HealthSummaryResponse {
   embedding_model: ComponentHealthResponse
   storage: ComponentHealthResponse
   auth: ComponentHealthResponse
+  mcp_job_store: ComponentHealthResponse
 }
 
 export interface BackendConversationListItem {

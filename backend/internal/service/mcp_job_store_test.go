@@ -776,3 +776,27 @@ func TestMCPJobStoreStatsRejectsClosedStore(t *testing.T) {
 		t.Fatal("expected closed job store stats to fail")
 	}
 }
+
+func TestMCPJobStoreHealthReportsPersistenceFailures(t *testing.T) {
+	store := newTestMCPJobStore(t)
+	service := &AppService{mcpJobStore: store}
+
+	health := service.GetMCPJobStoreHealth()
+	if health.Status != "ok" || !health.Writable {
+		t.Fatalf("expected healthy writable job store, got %+v", health)
+	}
+
+	service.recordMCPJobPersistenceFailure()
+	health = service.GetMCPJobStoreHealth()
+	if health.Status != "warning" || health.PersistenceFailures != 1 || health.LastPersistenceFailure == "" {
+		t.Fatalf("expected persistence warning with timestamp, got %+v", health)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close mcp job store: %v", err)
+	}
+	health = service.GetMCPJobStoreHealth()
+	if health.Status != "error" || health.PersistenceFailures != 1 {
+		t.Fatalf("expected unavailable job store to remain observable, got %+v", health)
+	}
+}

@@ -2178,6 +2178,135 @@ func TestChatCompletionsNormalizesKnowledgeScopeIdentifiers(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsStreamNormalizesKnowledgeScopeIdentifiers(t *testing.T) {
+	modelHandler := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = io.WriteString(w, `{"model":"chat-test-model","message":{"role":"assistant","content":"Redis 是高性能内存数据库"},"done":false}`+"\n")
+			_, _ = io.WriteString(w, `{"model":"chat-test-model","message":{"role":"assistant","content":"。"},"done":true}`+"\n")
+			return
+		}
+		handleModelAPI(w, r)
+	}
+
+	engine, modelBaseURL, cleanup := newTestRouterWithModelHandler(t, nil, modelHandler)
+	defer cleanup()
+
+	listResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list knowledge bases: status=%d body=%s", listResp.Code, listResp.Body.String())
+	}
+	var kbList struct {
+		Items []model.KnowledgeBase `json:"items"`
+	}
+	decodeJSONResponse(t, listResp.Body.Bytes(), &kbList)
+	if len(kbList.Items) == 0 {
+		t.Fatal("expected default knowledge base")
+	}
+	knowledgeBaseID := kbList.Items[0].ID
+
+	resp := performJSONRequest(t, engine, http.MethodPost, "/v1/chat/completions/stream", map[string]any{
+		"conversationId":  " conv-stream-scope-normalization ",
+		"knowledgeBaseId": " " + knowledgeBaseID + " ",
+		"knowledgeScope":  " selected ",
+		"config": map[string]any{
+			"provider": "ollama",
+			"baseUrl":  modelBaseURL,
+			"model":    "chat-test-model",
+		},
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "请介绍 Redis",
+		}},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected stream status 200, got %d, body=%s", resp.Code, resp.Body.String())
+	}
+
+	body := resp.Body.String()
+	for _, required := range []string{
+		"event:meta",
+		"event:done",
+		`"knowledgeBaseId":"` + knowledgeBaseID + `"`,
+		`"knowledgeScope":"selected"`,
+		"Redis 是高性能内存数据库",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("expected stream response to include %q, got %s", required, body)
+		}
+	}
+	if strings.Contains(body, `"knowledgeScope":" selected "`) || strings.Contains(body, `"knowledgeBaseId":" `+knowledgeBaseID+` "`) {
+		t.Fatalf("stream response must not retain padded knowledge scope identifiers, got %s", body)
+	}
+}
+
+func TestRegenerateMessagePreservesNormalizedKnowledgeScope(t *testing.T) {
+	engine, _, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	listResp := performRequest(t, engine, http.MethodGet, "/api/knowledge-bases", nil, "")
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list knowledge bases: status=%d body=%s", listResp.Code, listResp.Body.String())
+	}
+	var kbList struct {
+		Items []model.KnowledgeBase `json:"items"`
+	}
+	decodeJSONResponse(t, listResp.Body.Bytes(), &kbList)
+	if len(kbList.Items) == 0 {
+		t.Fatal("expected default knowledge base")
+	}
+	knowledgeBaseID := kbList.Items[0].ID
+	conversationID := "conv-regenerate-scope-normalization"
+	assistantMessageID := "assistant-message-to-regenerate"
+
+	saveResp := performJSONRequest(t, engine, http.MethodPut, "/api/conversations/"+conversationID, map[string]any{
+		"knowledgeBaseId": " " + knowledgeBaseID + " ",
+		"knowledgeScope":  " selected ",
+		"messages": []model.StoredChatMessage{
+			{ID: "user-message", Role: "user", Content: "请介绍 Redis"},
+			{ID: assistantMessageID, Role: "assistant", Content: "旧回答"},
+		},
+	})
+	if saveResp.Code != http.StatusOK {
+		t.Fatalf("save conversation: status=%d body=%s", saveResp.Code, saveResp.Body.String())
+	}
+
+	var savedConversation model.Conversation
+	decodeJSONResponse(t, saveResp.Body.Bytes(), &savedConversation)
+	if savedConversation.KnowledgeBaseID != knowledgeBaseID || savedConversation.KnowledgeScope != service.KnowledgeScopeSelected {
+		t.Fatalf("expected saved conversation scope to be normalized, got %+v", savedConversation)
+	}
+
+	regenResp := performJSONRequest(
+		t,
+		engine,
+		http.MethodPost,
+		"/api/conversations/"+conversationID+"/messages/"+assistantMessageID+"/regenerate",
+		nil,
+	)
+	if regenResp.Code != http.StatusOK {
+		t.Fatalf("regenerate conversation: status=%d body=%s", regenResp.Code, regenResp.Body.String())
+	}
+
+	var regenerateResult struct {
+		Conversation model.Conversation           `json:"conversation"`
+		Response     model.ChatCompletionResponse `json:"response"`
+	}
+	decodeJSONResponse(t, regenResp.Body.Bytes(), &regenerateResult)
+	if got := regenerateResult.Response.Metadata["knowledgeBaseId"]; got != knowledgeBaseID {
+		t.Fatalf("expected regenerated response knowledge base id %q, got %#v", knowledgeBaseID, got)
+	}
+	if got := regenerateResult.Response.Metadata["knowledgeScope"]; got != service.KnowledgeScopeSelected {
+		t.Fatalf("expected regenerated response knowledge scope %q, got %#v", service.KnowledgeScopeSelected, got)
+	}
+	if regenerateResult.Conversation.KnowledgeBaseID != knowledgeBaseID || regenerateResult.Conversation.KnowledgeScope != service.KnowledgeScopeSelected {
+		t.Fatalf("expected regenerated conversation scope to remain normalized, got %+v", regenerateResult.Conversation)
+	}
+	if len(regenerateResult.Response.Choices) == 0 || !strings.Contains(regenerateResult.Response.Choices[0].Message.Content, "Redis") {
+		t.Fatalf("expected regenerated model response, got %+v", regenerateResult.Response.Choices)
+	}
+}
+
 func TestRouterStructuredCSVCountQuestionUsesCondensedAnswerRules(t *testing.T) {
 	engine, modelBaseURL, cleanup := newTestRouter(t)
 	defer cleanup()

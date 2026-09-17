@@ -43,7 +43,7 @@ services:
     pids_limit: ${QDRANT_PIDS_LIMIT:-512}
 
   backend:
-    image: ghcr.io/veyliss/ai-localbase-backend:${AI_LOCALBASE_IMAGE_TAG:-v1.4.10}
+    image: ghcr.io/veyliss/ai-localbase-backend:${AI_LOCALBASE_IMAGE_TAG:-v1.4.11}
     container_name: ai-localbase-backend
     restart: unless-stopped
     ports:
@@ -120,7 +120,7 @@ services:
     pids_limit: ${BACKEND_PIDS_LIMIT:-256}
 
   frontend:
-    image: ghcr.io/veyliss/ai-localbase-frontend:${AI_LOCALBASE_IMAGE_TAG:-v1.4.10}
+    image: ghcr.io/veyliss/ai-localbase-frontend:${AI_LOCALBASE_IMAGE_TAG:-v1.4.11}
     container_name: ai-localbase-frontend
     restart: unless-stopped
     ports:
